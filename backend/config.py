@@ -1,24 +1,53 @@
-"""Application configuration (BS-014).
+"""Typed application settings (BS-015).
 
-Reads settings from the environment. Keep this thin — only what the app
-needs to boot. Provider keys and richer config arrive in later tickets.
+All configuration and secrets are loaded from the environment (and a local
+`.env` in dev) via pydantic-settings. Keys live server-side only and are never
+exposed to the frontend. Required vars fail fast at startup with a clear error.
+
+Documented vars mirror the table in docs/README.md §Environment variables.
 """
-import os
+from functools import lru_cache
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-def _split_origins(raw: str) -> list[str]:
-    """Parse a comma-separated origins list into a clean list."""
-    return [o.strip() for o in raw.split(",") if o.strip()]
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    # --- Required ---------------------------------------------------------
+    # No default: a missing DATABASE_URL raises a clear ValidationError at
+    # startup rather than failing later with an obscure connection error.
+    database_url: str
+
+    # --- CORS -------------------------------------------------------------
+    # Comma-separated allowed frontend origins. No wildcard (docs/api.md §CORS).
+    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+
+    # --- Provider keys (server-side only) --------------------------------
+    # Conditionally required at request time (car / air mode), not at startup,
+    # so they are optional here and validated by the services that use them.
+    ors_api_key: str | None = None            # OpenRouteService — car routing
+    travelpayouts_token: str | None = None    # flight prices — air mode
+    public_transport_api_key: str | None = None  # bus/train — fallback exists
+    opentripmap_api_key: str | None = None    # POIs — Overpass fallback needs no key
+    apify_token: str | None = None            # Inside Airbnb scraping
+
+    # --- LLM (explanation layer; Ollama needs no key) --------------------
+    llm_provider: str = "ollama"
+    llm_api_key: str | None = None
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        """CORS origins as a clean list for the FastAPI middleware."""
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
 
-# Database connection string. Matches the compose service ('db') by default.
-DATABASE_URL: str = os.getenv(
-    "DATABASE_URL",
-    "postgresql+psycopg://budgetswarm:change_me@db:5432/budgetswarm",
-)
-
-# Allowed frontend origin(s) for CORS. No wildcard — see docs/api.md §CORS.
-# Override with CORS_ORIGINS="https://foo.com,https://bar.com".
-CORS_ORIGINS: list[str] = _split_origins(
-    os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
-)
+@lru_cache
+def get_settings() -> Settings:
+    """Return the process-wide settings singleton (cached after first load)."""
+    return Settings()

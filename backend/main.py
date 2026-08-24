@@ -9,9 +9,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.health import router as health_router
-from config import CORS_ORIGINS
+from config import get_settings
 
 logging.basicConfig(level=logging.INFO)
+
+# Load and validate settings at startup — fails fast if a required var
+# (e.g. DATABASE_URL) is missing, before the app begins serving.
+settings = get_settings()
 
 app = FastAPI(
     title="BudgetSwarm API",
@@ -21,7 +25,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=CORS_ORIGINS,
+    allow_origins=settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

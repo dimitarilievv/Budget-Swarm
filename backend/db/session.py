@@ -1,26 +1,34 @@
-"""Database engine + connectivity check (BS-014).
+"""Database engine + connectivity check (BS-014, settings via BS-015).
 
 Table mapping and the ORM session live in BS-028 (db/models.py). For now this
 module only provides a lightweight liveness check used by GET /api/health.
 """
+from functools import lru_cache
+
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
-from config import DATABASE_URL
+from config import get_settings
 
-# A small pool with a short connect timeout so the health endpoint stays
-# responsive even when the database is unreachable.
-_engine: Engine = create_engine(
-    DATABASE_URL,
-    pool_pre_ping=True,
-    connect_args={"connect_timeout": 2},
-)
+
+@lru_cache
+def _get_engine() -> Engine:
+    """Create the engine lazily on first use.
+
+    Short connect timeout + pool_pre_ping keep the health endpoint responsive
+    even when the database is unreachable.
+    """
+    return create_engine(
+        get_settings().database_url,
+        pool_pre_ping=True,
+        connect_args={"connect_timeout": 2},
+    )
 
 
 def ping() -> bool:
     """Return True if a trivial query against the database succeeds."""
     try:
-        with _engine.connect() as conn:
+        with _get_engine().connect() as conn:
             conn.execute(text("SELECT 1"))
         return True
     except Exception:
