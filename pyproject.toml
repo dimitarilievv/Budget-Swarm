@@ -22,3 +22,6 @@ ignore = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["backend/tests"]
+markers = [
+    "integration: tests that require a live database (skipped when none is reachable)",
+]

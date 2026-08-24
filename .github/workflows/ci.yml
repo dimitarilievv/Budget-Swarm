@@ -11,6 +11,22 @@ jobs:
     defaults:
       run:
         working-directory: backend
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: budgetswarm
+          POSTGRES_PASSWORD: budgetswarm
+          POSTGRES_DB: budgetswarm_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U budgetswarm"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://budgetswarm:budgetswarm@localhost:5432/budgetswarm_test
     steps:
       - uses: actions/checkout@v4
 
@@ -31,10 +47,14 @@ jobs:
         run: black --check .
         working-directory: .
 
+      - name: Alembic — apply baseline migration on fresh DB
+        run: alembic upgrade head
+
+      - name: Alembic — verify downgrade is reversible
+        run: alembic downgrade base
+
       - name: Pytest
         run: pytest -q
-        env:
-          DATABASE_URL: postgresql+psycopg://test:test@localhost:5432/test
 
   frontend:
     name: Frontend (lint + tests + build)
