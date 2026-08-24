@@ -3,12 +3,12 @@
 Table mapping and the ORM session live in BS-028 (db/models.py). For now this
 module only provides a lightweight liveness check used by GET /api/health.
 """
+
 from functools import lru_cache
 
+from config import get_settings
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
-
-from config import get_settings
 
 
 @lru_cache

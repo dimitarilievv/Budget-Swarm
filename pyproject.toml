@@ -1,0 +1,24 @@
+# Python code-quality config (BS-017) — covers backend/ and ai_engine/.
+# ruff = linting, black = formatting. Run from the repo root.
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["**/__pycache__", ".venv", "venv"]
+
+[tool.ruff.lint]
+# E/W: pycodestyle, F: pyflakes, I: isort, UP: pyupgrade, B: bugbear.
+select = ["E", "W", "F", "I", "UP", "B"]
+# Black owns line length; don't double-report long lines.
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests may re-import/shadow freely; placeholders may keep unused stubs.
+"**/tests/**" = ["F811", "F401"]
+
+[tool.pytest.ini_options]
+testpaths = ["backend/tests"]

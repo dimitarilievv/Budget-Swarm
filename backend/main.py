@@ -3,13 +3,13 @@
 Thin FastAPI layer: CORS, health endpoint, and (later) the generate-trip
 routes. All decision logic lives in the AI engine, not here.
 """
-import logging
 
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+import logging
 
 from api.health import router as health_router
 from config import get_settings
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 logging.basicConfig(level=logging.INFO)
 

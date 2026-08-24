@@ -3,9 +3,9 @@
 Liveness/readiness check for Docker and monitoring. Reports API status and
 database connectivity per docs/api.md §GET /api/health.
 """
-from fastapi import APIRouter
 
 from db.session import ping
+from fastapi import APIRouter
 
 router = APIRouter()
 

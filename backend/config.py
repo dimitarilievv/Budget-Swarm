@@ -6,6 +6,7 @@ exposed to the frontend. Required vars fail fast at startup with a clear error.
 
 Documented vars mirror the table in docs/README.md §Environment variables.
 """
+
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -31,11 +32,11 @@ class Settings(BaseSettings):
     # --- Provider keys (server-side only) --------------------------------
     # Conditionally required at request time (car / air mode), not at startup,
     # so they are optional here and validated by the services that use them.
-    ors_api_key: str | None = None            # OpenRouteService — car routing
-    travelpayouts_token: str | None = None    # flight prices — air mode
+    ors_api_key: str | None = None  # OpenRouteService — car routing
+    travelpayouts_token: str | None = None  # flight prices — air mode
     public_transport_api_key: str | None = None  # bus/train — fallback exists
-    opentripmap_api_key: str | None = None    # POIs — Overpass fallback needs no key
-    apify_token: str | None = None            # Inside Airbnb scraping
+    opentripmap_api_key: str | None = None  # POIs — Overpass fallback needs no key
+    apify_token: str | None = None  # Inside Airbnb scraping
 
     # --- LLM (explanation layer; Ollama needs no key) --------------------
     llm_provider: str = "ollama"

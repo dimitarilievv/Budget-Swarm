@@ -1,8 +1,8 @@
 """Unit tests for typed settings loading (BS-015)."""
-import pytest
-from pydantic import ValidationError
 
+import pytest
 from config import Settings
+from pydantic import ValidationError
 
 
 def test_settings_load_from_env(monkeypatch):

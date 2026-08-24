@@ -3,9 +3,9 @@
 The DB connectivity check is patched so the test does not require a running
 PostgreSQL instance — it verifies the endpoint contract, not the database.
 """
-from fastapi.testclient import TestClient
 
 import api.health as health_module
+from fastapi.testclient import TestClient
 from main import app
 
 client = TestClient(app)
