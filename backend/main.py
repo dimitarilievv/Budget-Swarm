@@ -1,12 +1,37 @@
-"""BudgetSwarm API — BS-013 boot skeleton.
-Minimal app so the container starts and compose comes up.
-BS-014 replaces this with the real app (CORS, GET /api/health, DB status).
+"""BudgetSwarm API — application entrypoint (BS-014).
+
+Thin FastAPI layer: CORS, health endpoint, and (later) the generate-trip
+routes. All decision logic lives in the AI engine, not here.
 """
+import logging
+
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
-app = FastAPI(title="BudgetSwarm API (skeleton)")
+from api.health import router as health_router
+from config import CORS_ORIGINS
+
+logging.basicConfig(level=logging.INFO)
+
+app = FastAPI(
+    title="BudgetSwarm API",
+    description="Budget-constrained trip planner — thin HTTP layer over the AI engine.",
+    version="0.1.0",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Health lives under /api/health (docs/api.md). Trip routes join in BS-040.
+app.include_router(health_router, prefix="/api")
 
 
-@app.get("/")
-def root():
+@app.get("/", tags=["health"])
+def root() -> dict[str, str]:
+    """Simple liveness marker used by the compose healthcheck."""
     return {"service": "budgetswarm-backend", "status": "up"}
