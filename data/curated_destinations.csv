@@ -1,0 +1,31 @@
+city,country,country_code,lat,lon
+Sofia,Bulgaria,BG,42.6977,23.3219
+Plovdiv,Bulgaria,BG,42.1354,24.7453
+Belgrade,Serbia,RS,44.7866,20.4489
+Novi Sad,Serbia,RS,45.2671,19.8335
+Bucharest,Romania,RO,44.4268,26.1025
+Cluj-Napoca,Romania,RO,46.7712,23.6236
+Budapest,Hungary,HU,47.4979,19.0402
+Prague,Czechia,CZ,50.0755,14.4378
+Brno,Czechia,CZ,49.1951,16.6068
+Krakow,Poland,PL,50.0647,19.9450
+Warsaw,Poland,PL,52.2297,21.0122
+Bratislava,Slovakia,SK,48.1486,17.1077
+Ljubljana,Slovenia,SI,46.0569,14.5058
+Zagreb,Croatia,HR,45.8150,15.9819
+Split,Croatia,HR,43.5081,16.4402
+Sarajevo,Bosnia and Herzegovina,BA,43.8563,18.4131
+Skopje,North Macedonia,MK,41.9981,21.4254
+Tirana,Albania,AL,41.3275,19.8187
+Podgorica,Montenegro,ME,42.4304,19.2594
+Thessaloniki,Greece,GR,40.6401,22.9444
+Athens,Greece,GR,37.9838,23.7275
+Istanbul,Turkey,TR,41.0082,28.9784
+Vienna,Austria,AT,48.2082,16.3738
+Naples,Italy,IT,40.8518,14.2681
+Porto,Portugal,PT,41.1579,-8.6291
+Lisbon,Portugal,PT,38.7223,-9.1393
+Valencia,Spain,ES,39.4699,-0.3763
+Vilnius,Lithuania,LT,54.6872,25.2797
+Riga,Latvia,LV,56.9496,24.1052
+Tallinn,Estonia,EE,59.4370,24.7536
