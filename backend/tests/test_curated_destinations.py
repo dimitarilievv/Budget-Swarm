@@ -54,9 +54,9 @@ def test_every_field_populated(rows):
 def test_country_code_is_iso_alpha2(rows):
     for i, row in enumerate(rows, start=2):
         cc = row["country_code"]
-        assert len(cc) == 2 and cc.isalpha() and cc.isupper(), (
-            f"row {i}: {cc!r} is not an uppercase ISO 3166-1 alpha-2 code"
-        )
+        assert (
+            len(cc) == 2 and cc.isalpha() and cc.isupper()
+        ), f"row {i}: {cc!r} is not an uppercase ISO 3166-1 alpha-2 code"
 
 
 def test_coordinates_parse_and_are_within_europe(rows):
