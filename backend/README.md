@@ -21,3 +21,21 @@ alembic revision -m "msg"   # create a new migration
 
 The integration test (`tests/test_migrations.py`) applies the migration on a
 fresh DB; it is skipped automatically when no database is reachable.
+
+## Data ingestion (BS-030)
+
+Load the curated destinations dataset (`data/curated_destinations.csv`, from
+BS-029) into the `destinations` table. The load is **idempotent** — rows are
+upserted on `(city, country)`, so re-running never creates duplicates; it
+refreshes coordinates/country code instead. Malformed rows are logged and
+skipped rather than aborting the load.
+
+```bash
+# Run from backend/ with DATABASE_URL set and migrations applied
+python -m scripts.ingest_destinations              # load the default CSV
+python -m scripts.ingest_destinations --csv other.csv
+python -m scripts.ingest_destinations --dry-run    # validate only, no writes
+```
+
+Covered by `tests/test_ingest_destinations.py` (unit validation always; an
+`integration` group that runs the real upsert against a live DB).
