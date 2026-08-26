@@ -39,6 +39,7 @@ The thesis stands on: a **working multi-agent pipeline** + **real constraint opt
 - [ ] Fuel prices ingested and cached
 - [ ] Docker Compose brings up frontend + backend + DB
 - [ ] Caching for weather/routes
+- [ ] User accounts + saved trip history (`users` table + nullable `trips.user_id`; trips still work anonymously — see ADR-012)
 
 ### Evaluation (needed for the thesis chapter)
 - [ ] Budget-constraint satisfaction measured (should be 100%)
@@ -54,7 +55,6 @@ The thesis stands on: a **working multi-agent pipeline** + **real constraint opt
 - [ ] Transport: **bus/train** path (Rome2Rio/Omio wrapper) — high-risk, cache hard
 - [ ] OpenTripMap as primary POI source (with Overpass fallback)
 - [ ] Makcorps live hotel-price touch for the demo
-- [ ] User accounts + saved trip history
 - [ ] Wikipedia enrichment (descriptions/images) on the results page
 - [ ] Nicer explanation prompts / multiple explanation styles
 

@@ -127,3 +127,14 @@ Status values: **Accepted** · **Superseded** · **Proposed**
 - All of these are unofficial → cache per city-pair, keep non-commercial, never depend on them (fallback always present), and disclose scraping as a limitation.
 
 **Consequences.** (+) The project stays buildable for free without chasing partner approvals that won't come. (+) FlixBus/FlixTrain gives real, wide European coverage for the most budget-relevant transport modes. (+) Every rejected option is recorded with a reason, which is defensible in the thesis. (−) Prices remain indicative and some sources are unofficial/fragile — mitigated by caching and the mandatory fallback chain (ADR-005). (−) Coverage gaps outside the Flix network fall back to broader wrappers or estimates.
+
+---
+
+## ADR-012 — Authenticated user accounts are in scope for the MVP (trips remain optionally anonymous)
+**Status:** Accepted (supersedes the "nice to have" treatment of accounts in mvp-scope.md)
+
+**Context.** The schema already defines a `users` table (`email` unique, `password_hash`) and `trips.user_id` as a *nullable* FK (`ON DELETE SET NULL`). The original scope framing treated accounts as "nice to have" and assumed the pipeline runs anonymously. A decision was required on whether authenticated accounts are part of the MVP or deferred.
+
+**Decision.** Authenticated user accounts **are in scope** for the MVP. The `users` table stays active and trips are associated with a user through the nullable `trips.user_id` FK. Because `user_id` is nullable, trips can still be generated **anonymously** (no login required to use the core pipeline); signing in additionally lets a user own and revisit their trip history. Credentials are stored only as a hash (`password_hash`) — never plaintext. This decision fixes the *data model and scope*; the authentication flow itself (registration / login / session) is implemented under separate tickets.
+
+**Consequences.** (+) Users can save and revisit trip history. (+) The nullable FK keeps the core pipeline usable without an account, so anonymous demo flows still work. (+) `SET NULL` on user deletion preserves historical trips while detaching them from a removed account. (−) Adds authentication/session work (and its security responsibilities: hashing, no secret leakage) to the MVP surface, tracked as separate tickets. (−) Slightly widens the MVP versus the original "anonymous-only" framing — recorded here deliberately.
