@@ -1,0 +1,215 @@
+"""Repository/session layer over the ORM models (BS-028).
+
+A thin repository per table gives backend and agents a single, typed place to
+read and write, instead of scattering raw SQL. Each repository wraps a
+SQLAlchemy ``Session`` (obtained from the FastAPI ``get_db`` dependency in
+``db.session``) and exposes generic CRUD plus a few table-specific finders.
+
+Write methods ``flush`` (not ``commit``) so several repository calls compose
+inside one request/transaction; committing is the caller's decision — typically
+the ``get_db`` request scope or an explicit ``session.commit()``.
+"""
+
+from __future__ import annotations
+
+import logging
+from datetime import UTC, datetime
+from typing import Generic, TypeVar
+
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from db.models import (
+    Accommodation,
+    ApiCache,
+    Attraction,
+    Destination,
+    DestinationFeature,
+    FuelPrice,
+    TransportOption,
+    Trip,
+    TripActivity,
+    User,
+    WeatherForecast,
+)
+from db.session import Base
+
+logger = logging.getLogger(__name__)
+
+ModelT = TypeVar("ModelT", bound=Base)
+
+
+class Repository(Generic[ModelT]):
+    """Generic CRUD over a single mapped model.
+
+    Subclasses set ``model``; instances hold the active ``Session``.
+    """
+
+    model: type[ModelT]
+
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def add(self, obj: ModelT) -> ModelT:
+        """Persist a new (or attached) instance and flush so its PK is populated."""
+        self.session.add(obj)
+        self.session.flush()
+        return obj
+
+    def get(self, pk: object) -> ModelT | None:
+        """Return the row by primary key, or None."""
+        return self.session.get(self.model, pk)
+
+    def list(self, *, limit: int | None = None, offset: int | None = None) -> list[ModelT]:
+        """Return rows, optionally paginated."""
+        stmt = select(self.model)
+        if offset is not None:
+            stmt = stmt.offset(offset)
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        return list(self.session.scalars(stmt).all())
+
+    def count(self) -> int:
+        """Return the number of rows in the table."""
+        return self.session.scalar(select(func.count()).select_from(self.model)) or 0
+
+    def delete(self, obj: ModelT) -> None:
+        """Delete an instance and flush."""
+        self.session.delete(obj)
+        self.session.flush()
+
+
+class DestinationRepository(Repository[Destination]):
+    model = Destination
+
+    def get_by_city_country(self, city: str, country: str) -> Destination | None:
+        stmt = select(Destination).where(Destination.city == city, Destination.country == country)
+        return self.session.scalars(stmt).first()
+
+
+class DestinationFeatureRepository(Repository[DestinationFeature]):
+    model = DestinationFeature
+
+
+class FuelPriceRepository(Repository[FuelPrice]):
+    model = FuelPrice
+
+    def get_by_country(self, country_code: str) -> FuelPrice | None:
+        return self.get(country_code)
+
+
+class AccommodationRepository(Repository[Accommodation]):
+    model = Accommodation
+
+    def list_by_destination(self, destination_id: int) -> list[Accommodation]:
+        stmt = (
+            select(Accommodation)
+            .where(Accommodation.destination_id == destination_id)
+            .order_by(Accommodation.price_per_night)
+        )
+        return list(self.session.scalars(stmt).all())
+
+
+class AttractionRepository(Repository[Attraction]):
+    model = Attraction
+
+    def list_by_destination(
+        self, destination_id: int, *, indoor_outdoor: str | None = None
+    ) -> list[Attraction]:
+        stmt = select(Attraction).where(Attraction.destination_id == destination_id)
+        if indoor_outdoor is not None:
+            stmt = stmt.where(Attraction.indoor_outdoor == indoor_outdoor)
+        return list(self.session.scalars(stmt).all())
+
+
+class TransportOptionRepository(Repository[TransportOption]):
+    model = TransportOption
+
+    def find(self, origin_label: str, destination_id: int, mode: str) -> TransportOption | None:
+        """Look up a cached option by its conceptual key, newest first."""
+        stmt = (
+            select(TransportOption)
+            .where(
+                TransportOption.origin_label == origin_label,
+                TransportOption.destination_id == destination_id,
+                TransportOption.mode == mode,
+            )
+            .order_by(TransportOption.fetched_at.desc())
+        )
+        return self.session.scalars(stmt).first()
+
+
+class WeatherForecastRepository(Repository[WeatherForecast]):
+    model = WeatherForecast
+
+    def get_for_date(self, destination_id: int, forecast_date: object) -> WeatherForecast | None:
+        stmt = select(WeatherForecast).where(
+            WeatherForecast.destination_id == destination_id,
+            WeatherForecast.forecast_date == forecast_date,
+        )
+        return self.session.scalars(stmt).first()
+
+
+class UserRepository(Repository[User]):
+    model = User
+
+    def get_by_email(self, email: str) -> User | None:
+        return self.session.scalars(select(User).where(User.email == email)).first()
+
+
+class TripRepository(Repository[Trip]):
+    model = Trip
+
+    def list_for_user(self, user_id: int) -> list[Trip]:
+        stmt = select(Trip).where(Trip.user_id == user_id).order_by(Trip.created_at.desc())
+        return list(self.session.scalars(stmt).all())
+
+
+class TripActivityRepository(Repository[TripActivity]):
+    model = TripActivity
+
+    def list_for_trip(self, trip_id: int) -> list[TripActivity]:
+        stmt = (
+            select(TripActivity)
+            .where(TripActivity.trip_id == trip_id)
+            .order_by(TripActivity.day_number, TripActivity.slot_order)
+        )
+        return list(self.session.scalars(stmt).all())
+
+
+class ApiCacheRepository(Repository[ApiCache]):
+    model = ApiCache
+
+    def find(self, provider: str, query_signature: str) -> ApiCache | None:
+        """Return the cache row for a provider/signature pair, if any."""
+        stmt = select(ApiCache).where(
+            ApiCache.provider == provider,
+            ApiCache.query_signature == query_signature,
+        )
+        return self.session.scalars(stmt).first()
+
+    def find_fresh(self, provider: str, query_signature: str) -> ApiCache | None:
+        """Return the cached row only if it has not expired (NULL expiry = long-lived)."""
+        now = datetime.now(UTC)
+        stmt = select(ApiCache).where(
+            ApiCache.provider == provider,
+            ApiCache.query_signature == query_signature,
+            (ApiCache.expires_at.is_(None)) | (ApiCache.expires_at > now),
+        )
+        return self.session.scalars(stmt).first()
+
+
+__all__ = [
+    "AccommodationRepository",
+    "ApiCacheRepository",
+    "AttractionRepository",
+    "DestinationFeatureRepository",
+    "DestinationRepository",
+    "FuelPriceRepository",
+    "Repository",
+    "TransportOptionRepository",
+    "TripActivityRepository",
+    "TripRepository",
+    "UserRepository",
+    "WeatherForecastRepository",
+]

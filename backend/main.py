@@ -6,6 +6,7 @@ routes. All decision logic lives in the AI engine, not here.
 
 import logging
 
+from api.destinations import router as destinations_router
 from api.health import router as health_router
 from config import get_settings
 from fastapi import FastAPI
@@ -33,6 +34,7 @@ app.add_middleware(
 
 # Health lives under /api/health (docs/api.md). Trip routes join in BS-040.
 app.include_router(health_router, prefix="/api")
+app.include_router(destinations_router, prefix="/api")
 
 
 @app.get("/", tags=["health"])

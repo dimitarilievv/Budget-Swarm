@@ -20,6 +20,12 @@ ignore = ["E501"]
 # Tests may re-import/shadow freely; placeholders may keep unused stubs.
 "**/tests/**" = ["F811", "F401"]
 
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency-injection markers are meant to be called in argument
+# defaults (Depends(...), Query(...)) — treat them as immutable so B008 doesn't
+# flag the idiom.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query"]
+
 [tool.pytest.ini_options]
 testpaths = ["backend/tests"]
 markers = [
