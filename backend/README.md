@@ -39,3 +39,26 @@ python -m scripts.ingest_destinations --dry-run    # validate only, no writes
 
 Covered by `tests/test_ingest_destinations.py` (unit validation always; an
 `integration` group that runs the real upsert against a live DB).
+
+## Feature engineering (BS-031)
+
+Compute the normalized `destination_features` that drive Scout ranking from the
+curated raw indicators (`data/destination_features_raw.csv`). Each factor
+(culture/nature/nightlife/food/tourism) and the cost-of-living index are min–max
+normalized to `[0,1]` across the destination set; `season_score` is derived from
+each destination's climate class and the travel window, so it **varies by
+month**. Rows are upserted on `destination_id`, so re-running is idempotent.
+Destinations must be loaded first (see *Data ingestion* above). Full methodology:
+`data/FEATURES_METHODOLOGY.md`.
+
+```bash
+# Run from backend/ with DATABASE_URL set, migrations applied, destinations loaded
+python -m scripts.compute_destination_features                 # current month
+python -m scripts.compute_destination_features --month 7       # July travel window
+python -m scripts.compute_destination_features --month 6 --window-months 3
+python -m scripts.compute_destination_features --dry-run       # compute only, no writes
+```
+
+Covered by `tests/test_compute_destination_features.py` (unit: normalization
+bounds, season model, validation; an `integration` group that computes + stores
+against a live DB).
