@@ -36,6 +36,8 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
+from scripts.cost_of_living import ProviderResult
+
 logger = logging.getLogger(__name__)
 
 # backend/scripts/wherenext.py -> repo root is two parents up.
@@ -211,3 +213,43 @@ def _meta(payload: object) -> dict[str, object]:
     if isinstance(payload, dict) and isinstance(payload.get("meta"), dict):
         return dict(payload["meta"])
     return {}
+
+
+class WhereNextProvider:
+    """WhereNext as a :class:`~scripts.cost_of_living.CostOfLivingProvider`.
+
+    Thin adapter over :func:`load_cost_index` so WhereNext plugs into
+    :func:`~scripts.cost_of_living.resolve_cost_index` alongside any other source.
+    Construction mirrors ``load_cost_index`` (session, ``source``, cache options);
+    ``load()`` runs it and tags the provenance ``wherenext:<source>``.
+    """
+
+    name = "wherenext"
+
+    def __init__(
+        self,
+        session: Session | None = None,
+        *,
+        source: str = "auto",
+        timeout: float = 15.0,
+        snapshot_path: Path = SNAPSHOT_PATH,
+        ttl: timedelta = DEFAULT_TTL,
+        write_cache: bool = True,
+    ) -> None:
+        self.session = session
+        self.source = source
+        self.timeout = timeout
+        self.snapshot_path = snapshot_path
+        self.ttl = ttl
+        self.write_cache = write_cache
+
+    def load(self) -> ProviderResult:
+        result = load_cost_index(
+            self.session,
+            source=self.source,
+            timeout=self.timeout,
+            snapshot_path=self.snapshot_path,
+            ttl=self.ttl,
+            write_cache=self.write_cache,
+        )
+        return ProviderResult(result.mapping, f"wherenext:{result.source}", result.meta)

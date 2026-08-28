@@ -11,9 +11,10 @@ Pipeline:
 * **Read + validate** the raw CSV (one row per curated destination): five factor
   indices (culture/nature/nightlife/food/tourism), the ISO ``country_code`` join
   key, and a climate class. Malformed rows are logged and skipped, never fatal.
-* **Cost-of-living** is resolved per country from **WhereNext** (BS-011) via
-  ``scripts.wherenext`` and joined onto each destination by ``country_code`` —
-  it is not a CSV column.
+* **Cost-of-living** is resolved per country through a provider chain
+  (``scripts.cost_of_living``): WhereNext primary (BS-011), then an optional CSV
+  fallback, then a regional-average floor. It is joined onto each destination by
+  ``country_code`` — never a CSV column of the raw features file.
 * **Normalize** every factor and the WhereNext cost index to ``[0,1]`` with
   min-max normalization across the destination set (§14.2). A constant column
   maps to ``0.5`` instead of dividing by zero.
@@ -53,6 +54,12 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from scripts import wherenext
+from scripts.cost_of_living import (
+    EUROPEAN_SUBREGIONS,
+    CsvCostOfLivingProvider,
+    resolve_cost_index,
+)
+from scripts.wherenext import WhereNextProvider
 
 logger = logging.getLogger(__name__)
 
@@ -103,9 +110,9 @@ class FeatureComputeSummary:
     matched: int = 0  # destinations found in the DB and upserted
     unmatched: int = 0  # valid rows with no destinations row (logged, skipped)
     months: tuple[int, ...] = ()
-    cost_source: str = ""  # where WhereNext cost data came from (live/cache/snapshot)
-    cost_countries: int = 0  # countries resolved from WhereNext
-    cost_missing: int = 0  # valid rows whose country had no WhereNext cost_index
+    cost_source: str = ""  # provider chain provenance, e.g. "wherenext:live"
+    cost_countries: int = 0  # countries resolved across the provider chain
+    cost_missing: int = 0  # needed countries no provider (or region fill) covered
     skipped_reasons: list[str] = field(default_factory=list)
 
 
@@ -354,15 +361,19 @@ def compute_and_store(
     *,
     months: Iterable[int] = (),
     cost_source: str = "auto",
+    cost_fallback_csv: Path | None = None,
     dry_run: bool = False,
 ) -> FeatureComputeSummary:
     """Compute features from ``path`` and upsert them through ``session``.
 
     ``months`` is the travel window (each 1-12); it defaults to the current
-    month. ``cost_source`` selects where WhereNext cost data is read from
-    (``auto`` / ``live`` / ``cache`` / ``snapshot``; see ``scripts.wherenext``).
-    The caller owns the transaction: this flushes but does not commit, so tests
-    can roll back and the CLI can commit once at the end.
+    month. Cost-of-living is resolved through a provider chain (see
+    ``scripts.cost_of_living``): WhereNext first (``cost_source`` selects its
+    ``auto`` / ``live`` / ``cache`` / ``snapshot`` mode), then an optional
+    ``cost_fallback_csv`` source (e.g. a Kaggle export), then a regional-average
+    floor for any still-uncovered country. The caller owns the transaction: this
+    flushes but does not commit, so tests can roll back and the CLI can commit
+    once at the end.
     """
     months = tuple(months) or (date.today().month,)
     rows, skip_reasons, total = read_raw_csv(path)
@@ -375,16 +386,22 @@ def compute_and_store(
         skipped_reasons=skip_reasons,
     )
 
-    # Resolve WhereNext cost-of-living. On a dry run we pass no session so the
-    # cache is neither read nor written (auto still tries live, then snapshot).
-    cost = wherenext.load_cost_index(
-        None if dry_run else session, source=cost_source, write_cache=not dry_run
-    )
-    summary.cost_source = cost.source
-    summary.cost_countries = cost.count
-    summary.cost_missing = sum(1 for r in rows if r.country_code not in cost.mapping)
+    # Resolve cost-of-living through the provider chain. WhereNext is primary; a
+    # CSV source (Kaggle etc.) and a regional average fill any gaps. On a dry run
+    # WhereNext gets no session, so the cache is neither read nor written.
+    providers: list = [
+        WhereNextProvider(None if dry_run else session, source=cost_source, write_cache=not dry_run)
+    ]
+    if cost_fallback_csv is not None:
+        providers.append(CsvCostOfLivingProvider(cost_fallback_csv, name="fallback"))
 
-    features = compute_features(rows, months, cost.mapping)
+    needed = {r.country_code for r in rows}
+    resolved = resolve_cost_index(providers, needed=needed, region_by_country=EUROPEAN_SUBREGIONS)
+    summary.cost_source = "+".join(resolved.provider_labels)
+    summary.cost_countries = len(resolved.mapping)
+    summary.cost_missing = sum(1 for code in needed if code not in resolved.mapping)
+
+    features = compute_features(rows, months, resolved.mapping)
     if dry_run:
         summary.matched = len(features)  # nothing resolved against the DB
         return summary
@@ -430,6 +447,12 @@ def main(argv: list[str] | None = None) -> int:
         help="where WhereNext cost data comes from: auto (default), live, cache, snapshot",
     )
     parser.add_argument(
+        "--cost-fallback-csv",
+        type=Path,
+        default=None,
+        help="optional country_code,cost_index CSV used for countries WhereNext misses",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="compute and report without writing to the database",
@@ -448,7 +471,12 @@ def main(argv: list[str] | None = None) -> int:
         session = SessionLocal(bind=get_engine())
         try:
             summary = compute_and_store(
-                session, args.csv, months=months, cost_source=args.cost_source, dry_run=args.dry_run
+                session,
+                args.csv,
+                months=months,
+                cost_source=args.cost_source,
+                cost_fallback_csv=args.cost_fallback_csv,
+                dry_run=args.dry_run,
             )
             if not args.dry_run:
                 session.commit()

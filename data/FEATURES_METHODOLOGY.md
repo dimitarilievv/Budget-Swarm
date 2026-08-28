@@ -149,3 +149,25 @@ loaded into the database are logged and skipped; the run does not abort.
 - The season curves use climate-class archetypes, not per-city climate normals.
 - Min–max normalization is sensitive to outliers by construction; with a
   curated, bounded set this is acceptable and keeps the [0,1] guarantee exact.
+
+## 6. Adding another cost-of-living source
+
+Cost-of-living sits behind a small provider interface (`scripts/cost_of_living.py`,
+`CostOfLivingProvider`) so sources are swappable and chainable, per ADR-004. Each
+source only has to return a `country_code → cost_index` mapping; normalization and
+everything downstream are source-agnostic. To add one:
+
+1. Write a class with a `name` and a `load()` returning a `ProviderResult`
+   (mapping, provenance label, meta). A ready-made `CsvCostOfLivingProvider`
+   already covers any `country_code,cost_index` CSV — e.g. a normalized export of
+   the Kaggle "Global Cost of Living" dataset, the BS-011 fallback.
+2. Pass it into `resolve_cost_index([primary, fallback, …])`. Providers are tried
+   in priority order (first to supply a country wins); a provider that raises is
+   logged and skipped (ADR-005, degrade-don't-crash).
+3. Any country still missing is filled with a **regional average** of the
+   already-resolved countries in the same region (`EUROPEAN_SUBREGIONS`), the
+   BS-011 floor. Provenance is tracked per country (`wherenext:live`,
+   `csv:kaggle`, `regional-average:balkans`, …).
+
+The `compute_destination_features` CLI exposes this via `--cost-fallback-csv`,
+which appends a `CsvCostOfLivingProvider` after WhereNext.

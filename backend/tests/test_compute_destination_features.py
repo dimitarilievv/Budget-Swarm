@@ -296,7 +296,7 @@ def test_features_cover_every_destination_and_are_bounded(migrated_engine):
 
         assert summary.matched == dest_count
         assert summary.unmatched == 0
-        assert summary.cost_source == "snapshot"
+        assert summary.cost_source == "wherenext:snapshot"
         assert summary.cost_missing == 0  # WhereNext covers every shipped country
         assert _count(session, DestinationFeature) == dest_count
 
