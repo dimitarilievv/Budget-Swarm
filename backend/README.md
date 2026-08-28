@@ -58,6 +58,13 @@ python -m scripts.add_destination --dry-run "Barcelona"          # preview, no w
 After adding, re-run the enrichment pipeline (below) so the new rows get cost,
 POI, season and computed feature data.
 
+The same flow is exposed over HTTP for a future admin UI (see `docs/api.md`):
+`GET /api/admin/destinations/geocode?name=…` returns ranked candidates, and
+`POST /api/admin/destinations` (by name or explicit candidate) upserts the city
+into the `destinations` table, deduped on `(city, country)`. Both are in
+`api/admin_destinations.py`; feature enrichment stays a separate batch step
+(`enrichment_pending: true` on a freshly added city).
+
 ## Cost-of-living ingestion — WhereNext (BS-011)
 
 Cost-of-living is real data from **WhereNext** (getwherenext.com, CC BY 4.0),
