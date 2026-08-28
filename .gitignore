@@ -30,9 +30,14 @@ yarn-error.log*
 data/*
 !data/.gitkeep
 !data/README.md
-# Small, curated reference datasets are committed on purpose (BS-029).
+# Small, curated reference datasets are committed on purpose (BS-029/BS-031).
 !data/curated_destinations.csv
 !data/SOURCES.md
+!data/destination_features_raw.csv
+!data/FEATURES_METHODOLOGY.md
+!data/wherenext_cost_of_living.json
+!data/osm_features_raw.json
+!data/season_profiles.json
 
 # ---- IDE / OS ----
 .idea/

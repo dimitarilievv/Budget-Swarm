@@ -39,3 +39,90 @@ python -m scripts.ingest_destinations --dry-run    # validate only, no writes
 
 Covered by `tests/test_ingest_destinations.py` (unit validation always; an
 `integration` group that runs the real upsert against a live DB).
+
+## Cost-of-living ingestion — WhereNext (BS-011)
+
+Cost-of-living is real data from **WhereNext** (getwherenext.com, CC BY 4.0),
+the primary source decided in BS-011. `scripts.ingest_cost_of_living` fetches the
+live API (`GET /api/data/cost-of-living`, 95 countries) and caches the raw
+payload in the `api_cache` table (provider `wherenext`), so feature computation
+reads cached institutional data instead of calling the API every run (ADR-008).
+A committed snapshot (`data/wherenext_cost_of_living.json`) is the offline/CI
+fallback (ADR-005). Resolution order: cache → live → snapshot.
+
+```bash
+# Run from backend/ with DATABASE_URL set and migrations applied
+python -m scripts.ingest_cost_of_living                 # live fetch + cache
+python -m scripts.ingest_cost_of_living --save-snapshot # also refresh the snapshot
+python -m scripts.ingest_cost_of_living --source snapshot  # offline (no network)
+python -m scripts.ingest_cost_of_living --dry-run       # fetch + report, no writes
+```
+
+## Factor ingestion — OpenStreetMap (BS-031)
+
+The five factor columns (culture/nature/nightlife/food/tourism) are **real POI
+counts from OpenStreetMap**, not hand-authored. `scripts.ingest_osm_features`
+queries the Overpass API for POIs of the relevant tags within a fixed radius of
+each city centre, writes a committed snapshot (`data/osm_features_raw.json`,
+ODbL), and regenerates `data/destination_features_raw.csv` (preserving the
+Köppen `climate` column). No API key is required.
+
+```bash
+python -m scripts.ingest_osm_features                 # all destinations (~minutes; Overpass throttles)
+python -m scripts.ingest_osm_features --city Sofia    # refresh one city (others kept)
+python -m scripts.ingest_osm_features --radius 10000  # custom radius (metres)
+python -m scripts.ingest_osm_features --dry-run       # fetch + report, no writes
+```
+
+**Resilience.** The app never calls Overpass at runtime — it reads the committed
+files. When you *re-run* the ingestion and Overpass fails for some cities, those
+cities are **kept at their last-good committed counts** (never dropped, never
+fabricated); the run logs which cities were *refreshed* vs. *kept* vs. *missing*.
+So a partial Overpass outage can only ever refresh a subset, never lose data.
+
+## Season ingestion — Open-Meteo (BS-031)
+
+`season_score` is driven by **real per-city climate data**, not a hand-drawn
+curve. `scripts.ingest_season_normals` pulls a decade of daily temperature and
+precipitation from the Open-Meteo archive (free, no key, CC BY 4.0), aggregates
+to twelve monthly normals, and turns each month into a travel-suitability score
+via a documented comfort function (peak ≈ 20 °C, rain penalty). Curves are
+committed to `data/season_profiles.json`; a city with no profile falls back to a
+Köppen climate-class archetype. Merge-safe like the OSM ingestion (failed cities
+keep last-good values).
+
+```bash
+python -m scripts.ingest_season_normals                 # all destinations
+python -m scripts.ingest_season_normals --city Sofia    # refresh one city (others kept)
+python -m scripts.ingest_season_normals --start 2014 --end 2023
+python -m scripts.ingest_season_normals --dry-run       # fetch + report, no writes
+```
+
+## Feature engineering (BS-031)
+
+Compute the normalized `destination_features` that drive Scout ranking. The five
+subjective factors (culture/nature/nightlife/food/tourism) come from the curated
+raw indicators (`data/destination_features_raw.csv`); `cost_of_living` is each
+destination's **WhereNext country cost index** (joined on `country_code`, see
+above). All are min–max normalized to `[0,1]` across the destination set;
+`season_score` is derived from each destination's climate class and the travel
+window, so it **varies by month**. Rows are upserted on `destination_id`, so
+re-running is idempotent. Destinations must be loaded first (see *Data
+ingestion*). Full methodology: `data/FEATURES_METHODOLOGY.md`.
+
+```bash
+# Run from backend/ with DATABASE_URL set, migrations applied, destinations loaded
+python -m scripts.compute_destination_features                 # current month
+python -m scripts.compute_destination_features --month 7       # July travel window
+python -m scripts.compute_destination_features --month 6 --window-months 3
+python -m scripts.compute_destination_features --cost-source snapshot  # offline cost
+python -m scripts.compute_destination_features --dry-run       # compute only, no writes
+```
+
+Full pipeline order: `ingest_destinations` → `ingest_cost_of_living` →
+`ingest_osm_features` (factor CSV) → `ingest_season_normals` (season curves) →
+`compute_destination_features`.
+
+Covered by `tests/test_compute_destination_features.py` and `tests/test_wherenext.py`
+(unit: normalization bounds, season model, validation, WhereNext parsing/fallback;
+`integration` groups that compute + store and exercise the cache against a live DB).

@@ -1,0 +1,31 @@
+city,country,country_code,culture,nature,nightlife,food,tourism,climate
+Sofia,Bulgaria,BG,1370,1517,336,2971,952,continental
+Plovdiv,Bulgaria,BG,251,358,69,703,166,continental
+Belgrade,Serbia,RS,1459,1242,387,2744,659,continental
+Novi Sad,Serbia,RS,295,402,109,695,178,continental
+Bucharest,Romania,RO,754,1642,294,2641,481,continental
+Cluj-Napoca,Romania,RO,462,375,144,611,194,continental
+Budapest,Hungary,HU,4679,2072,961,4014,1928,continental
+Prague,Czechia,CZ,5132,5269,1036,4515,4451,continental
+Brno,Czechia,CZ,1959,2780,458,1387,1565,continental
+Krakow,Poland,PL,2347,8845,305,2210,1373,continental
+Warsaw,Poland,PL,11576,21220,493,4379,3542,continental
+Bratislava,Slovakia,SK,2747,1715,423,1978,1253,continental
+Ljubljana,Slovenia,SI,977,676,270,833,890,alpine
+Zagreb,Croatia,HR,1089,2077,302,1884,643,continental
+Split,Croatia,HR,241,833,129,773,488,mediterranean
+Sarajevo,Bosnia and Herzegovina,BA,353,596,123,714,463,alpine
+Skopje,North Macedonia,MK,161,2500,110,644,485,continental
+Tirana,Albania,AL,170,1123,447,1531,490,mediterranean
+Podgorica,Montenegro,ME,90,120,69,333,91,mediterranean
+Thessaloniki,Greece,GR,502,771,240,1922,239,mediterranean
+Athens,Greece,GR,1457,3993,657,6906,928,mediterranean
+Istanbul,Turkey,TR,973,2299,428,7775,1971,mediterranean
+Vienna,Austria,AT,6783,3633,777,5804,2734,continental
+Naples,Italy,IT,1360,1838,460,1934,654,mediterranean
+Porto,Portugal,PT,1481,9965,356,3148,1107,oceanic
+Lisbon,Portugal,PT,2487,4224,535,6028,1492,mediterranean
+Valencia,Spain,ES,762,5418,660,2615,428,mediterranean
+Vilnius,Lithuania,LT,607,714,208,1053,379,baltic
+Riga,Latvia,LV,1044,1837,289,1217,705,baltic
+Tallinn,Estonia,EE,658,3562,181,1135,546,baltic

@@ -1,0 +1,304 @@
+{
+  "meta": {
+    "title": "OpenStreetMap POI counts per destination",
+    "source": "OpenStreetMap contributors via Overpass API",
+    "license": "ODbL 1.0",
+    "attribution": "© OpenStreetMap contributors",
+    "radius_m": 12000,
+    "categories": {
+      "culture": [
+        "\"tourism\"~\"^(museum|gallery|artwork)$\"",
+        "\"historic\""
+      ],
+      "nature": [
+        "\"leisure\"~\"^(park|garden|nature_reserve)$\"",
+        "\"natural\"~\"^(peak|beach|wood)$\"",
+        "\"tourism\"=\"viewpoint\"",
+        "\"boundary\"=\"national_park\""
+      ],
+      "nightlife": [
+        "\"amenity\"~\"^(bar|pub|nightclub|biergarten)$\""
+      ],
+      "food": [
+        "\"amenity\"~\"^(restaurant|cafe|fast_food)$\""
+      ],
+      "tourism": [
+        "\"tourism\"~\"^(hotel|hostel|guest_house|apartment|attraction|information)$\""
+      ]
+    },
+    "fetched": "2026-08-28",
+    "generated_by": "scripts.ingest_osm_features"
+  },
+  "data": [
+    {
+      "city": "Sofia",
+      "country": "Bulgaria",
+      "culture": 1370,
+      "nature": 1517,
+      "nightlife": 336,
+      "food": 2971,
+      "tourism": 952
+    },
+    {
+      "city": "Plovdiv",
+      "country": "Bulgaria",
+      "culture": 251,
+      "nature": 358,
+      "nightlife": 69,
+      "food": 703,
+      "tourism": 166
+    },
+    {
+      "city": "Belgrade",
+      "country": "Serbia",
+      "culture": 1459,
+      "nature": 1242,
+      "nightlife": 387,
+      "food": 2744,
+      "tourism": 659
+    },
+    {
+      "city": "Novi Sad",
+      "country": "Serbia",
+      "culture": 295,
+      "nature": 402,
+      "nightlife": 109,
+      "food": 695,
+      "tourism": 178
+    },
+    {
+      "city": "Bucharest",
+      "country": "Romania",
+      "culture": 754,
+      "nature": 1642,
+      "nightlife": 294,
+      "food": 2641,
+      "tourism": 481
+    },
+    {
+      "city": "Cluj-Napoca",
+      "country": "Romania",
+      "culture": 462,
+      "nature": 375,
+      "nightlife": 144,
+      "food": 611,
+      "tourism": 194
+    },
+    {
+      "city": "Budapest",
+      "country": "Hungary",
+      "culture": 4679,
+      "nature": 2072,
+      "nightlife": 961,
+      "food": 4014,
+      "tourism": 1928
+    },
+    {
+      "city": "Prague",
+      "country": "Czechia",
+      "culture": 5132,
+      "nature": 5269,
+      "nightlife": 1036,
+      "food": 4515,
+      "tourism": 4451
+    },
+    {
+      "city": "Brno",
+      "country": "Czechia",
+      "culture": 1959,
+      "nature": 2780,
+      "nightlife": 458,
+      "food": 1387,
+      "tourism": 1565
+    },
+    {
+      "city": "Krakow",
+      "country": "Poland",
+      "culture": 2347,
+      "nature": 8845,
+      "nightlife": 305,
+      "food": 2210,
+      "tourism": 1373
+    },
+    {
+      "city": "Warsaw",
+      "country": "Poland",
+      "culture": 11576,
+      "nature": 21220,
+      "nightlife": 493,
+      "food": 4379,
+      "tourism": 3542
+    },
+    {
+      "city": "Bratislava",
+      "country": "Slovakia",
+      "culture": 2747,
+      "nature": 1715,
+      "nightlife": 423,
+      "food": 1978,
+      "tourism": 1253
+    },
+    {
+      "city": "Ljubljana",
+      "country": "Slovenia",
+      "culture": 977,
+      "nature": 676,
+      "nightlife": 270,
+      "food": 833,
+      "tourism": 890
+    },
+    {
+      "city": "Zagreb",
+      "country": "Croatia",
+      "culture": 1089,
+      "nature": 2077,
+      "nightlife": 302,
+      "food": 1884,
+      "tourism": 643
+    },
+    {
+      "city": "Split",
+      "country": "Croatia",
+      "culture": 241,
+      "nature": 833,
+      "nightlife": 129,
+      "food": 773,
+      "tourism": 488
+    },
+    {
+      "city": "Sarajevo",
+      "country": "Bosnia and Herzegovina",
+      "culture": 353,
+      "nature": 596,
+      "nightlife": 123,
+      "food": 714,
+      "tourism": 463
+    },
+    {
+      "city": "Skopje",
+      "country": "North Macedonia",
+      "culture": 161,
+      "nature": 2500,
+      "nightlife": 110,
+      "food": 644,
+      "tourism": 485
+    },
+    {
+      "city": "Tirana",
+      "country": "Albania",
+      "culture": 170,
+      "nature": 1123,
+      "nightlife": 447,
+      "food": 1531,
+      "tourism": 490
+    },
+    {
+      "city": "Podgorica",
+      "country": "Montenegro",
+      "culture": 90,
+      "nature": 120,
+      "nightlife": 69,
+      "food": 333,
+      "tourism": 91
+    },
+    {
+      "city": "Thessaloniki",
+      "country": "Greece",
+      "culture": 502,
+      "nature": 771,
+      "nightlife": 240,
+      "food": 1922,
+      "tourism": 239
+    },
+    {
+      "city": "Athens",
+      "country": "Greece",
+      "culture": 1457,
+      "nature": 3993,
+      "nightlife": 657,
+      "food": 6906,
+      "tourism": 928
+    },
+    {
+      "city": "Istanbul",
+      "country": "Turkey",
+      "culture": 973,
+      "nature": 2299,
+      "nightlife": 428,
+      "food": 7775,
+      "tourism": 1971
+    },
+    {
+      "city": "Vienna",
+      "country": "Austria",
+      "culture": 6783,
+      "nature": 3633,
+      "nightlife": 777,
+      "food": 5804,
+      "tourism": 2734
+    },
+    {
+      "city": "Naples",
+      "country": "Italy",
+      "culture": 1360,
+      "nature": 1838,
+      "nightlife": 460,
+      "food": 1934,
+      "tourism": 654
+    },
+    {
+      "city": "Porto",
+      "country": "Portugal",
+      "culture": 1481,
+      "nature": 9965,
+      "nightlife": 356,
+      "food": 3148,
+      "tourism": 1107
+    },
+    {
+      "city": "Lisbon",
+      "country": "Portugal",
+      "culture": 2487,
+      "nature": 4224,
+      "nightlife": 535,
+      "food": 6028,
+      "tourism": 1492
+    },
+    {
+      "city": "Valencia",
+      "country": "Spain",
+      "culture": 762,
+      "nature": 5418,
+      "nightlife": 660,
+      "food": 2615,
+      "tourism": 428
+    },
+    {
+      "city": "Vilnius",
+      "country": "Lithuania",
+      "culture": 607,
+      "nature": 714,
+      "nightlife": 208,
+      "food": 1053,
+      "tourism": 379
+    },
+    {
+      "city": "Riga",
+      "country": "Latvia",
+      "culture": 1044,
+      "nature": 1837,
+      "nightlife": 289,
+      "food": 1217,
+      "tourism": 705
+    },
+    {
+      "city": "Tallinn",
+      "country": "Estonia",
+      "culture": 658,
+      "nature": 3562,
+      "nightlife": 181,
+      "food": 1135,
+      "tourism": 546
+    }
+  ]
+}

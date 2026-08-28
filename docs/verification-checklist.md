@@ -193,16 +193,16 @@ Fill in these columns as you register and test each source:
 ## Destination data / cost-of-living
 
 ### Curated destinations dataset  `[primary, self-built]`
-- [ ] Assemble city list + coordinates
-- [ ] Populate feature scores (culture/nature/nightlife/food/tourism/season)
-- [ ] Populate cost_of_living index
-- [ ] Document sources for each column (for the thesis)
+- [x] Assemble city list + coordinates  *(BS-029: `data/curated_destinations.csv`)*
+- [x] Populate feature scores (culture/nature/nightlife/food/tourism/season)  *(BS-031: culture/nature/nightlife/food/tourism from OpenStreetMap Overpass POI counts; season from Open-Meteo per-city climate normals; all min–max/[0,1], season varies by month)*
+- [x] Populate cost_of_living index  *(BS-031: normalized to [0,1], WhereNext-sourced per BS-011)*
+- [x] Document sources for each column (for the thesis)  *(`data/SOURCES.md`, `data/FEATURES_METHODOLOGY.md`)*
 
 ### WhereNext  `[✅ RESOLVED — primary cost-of-living source (BS-011)]`
 - [x] **Identified: WhereNext = getwherenext.com** — a free, open cost-of-living data platform (a Numbeo alternative)
 - [x] Built on **institutional data** (World Bank ICP, OECD, Eurostat, national stats), via a **deterministic** scoring engine (no AI) — aligns with our "no AI in the decision" principle
 - [x] Coverage: **95 countries, 380 cities**; **free CC BY 4.0** CSV/JSON downloads + free API, no account/paywall → citable & redistributable (unlike Numbeo's EULA)
-- [ ] Hands-on: download CSV/JSON for 1–2 cities, confirm category fields; check which candidate destinations fall in the 380
+- [x] Hands-on (BS-031): verified live API `GET /api/data/cost-of-living` — free, no auth, `{meta, data}` JSON, 95 countries each with `country_code` + `cost_index` (US baseline 82) + sub-indices; all 22 destination countries covered. Ingested via `scripts.ingest_cost_of_living` (cached in `api_cache`), snapshot committed at `data/wherenext_cost_of_living.json`.
 - **DECISION: A — WhereNext primary.** Fallback C: Kaggle "Global Cost of Living" dataset (4,500+ cities, static) for cities outside the 380; or a regional average (same pattern as fuel). `cost_of_living` normalized to [0,1] feeds `destination_features` (BS-031) and Scout pre-filter/ranking (BS-054).
 - Resolves D-01. Verified on: 2026-08-22
 
