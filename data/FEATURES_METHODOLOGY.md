@@ -13,32 +13,38 @@ feature store. Same input → same scores.
 
 ## 1. Inputs
 
-`data/destination_features_raw.csv` holds one row per curated destination
-(the same `(city, country)` keys as `data/curated_destinations.csv`, BS-029)
-with the following **raw, un-normalized** columns:
+Cost-of-living is **not** a column in this CSV — it is ingested live from
+WhereNext (see below). The CSV holds one row per curated destination (the same
+`(city, country)` keys as `data/curated_destinations.csv`, BS-029) with the
+following **raw, un-normalized** columns:
 
-| Column       | Meaning                                             | Raw scale |
-|--------------|-----------------------------------------------------|-----------|
-| `cost_index` | Cost-of-living index (higher = more expensive)      | ~30–100   |
-| `culture`    | Density/renown of cultural assets (museums, heritage)| 0–100    |
-| `nature`     | Access to nature (coast, mountains, parks)          | 0–100     |
-| `nightlife`  | Nightlife intensity (bars, clubs, scene)            | 0–100     |
-| `food`       | Food-scene strength                                 | 0–100     |
-| `tourism`    | Tourism intensity (visitor volume/renown)           | 0–100     |
-| `climate`    | Köppen-style climate class for the season model     | category  |
+| Column         | Meaning                                              | Raw scale |
+|----------------|------------------------------------------------------|-----------|
+| `country_code` | ISO 3166-1 alpha-2 — the join key to WhereNext cost  | code      |
+| `culture`      | Density/renown of cultural assets (museums, heritage)| 0–100     |
+| `nature`       | Access to nature (coast, mountains, parks)           | 0–100     |
+| `nightlife`    | Nightlife intensity (bars, clubs, scene)             | 0–100     |
+| `food`         | Food-scene strength                                  | 0–100     |
+| `tourism`      | Tourism intensity (visitor volume/renown)            | 0–100     |
+| `climate`      | Köppen-style climate class for the season model      | category  |
 
 ### Sources of the raw signal
 
-- **`cost_index`** — cost-of-living, resolved to **WhereNext**
-  (getwherenext.com) as the primary source per **ADR/BS-011**: a free, open
-  (CC BY 4.0) platform built on institutional data (World Bank ICP, OECD,
-  Eurostat) via a deterministic scoring engine. For cities outside WhereNext's
-  380-city coverage the BS-011 decision falls back to the Kaggle "Global Cost
-  of Living" dataset or a regional average. The indices here are **curated
-  indicative baselines** on that WhereNext/Kaggle scale (Western-European
-  capital ≈ 100), pending live WhereNext ingestion; they are honest estimates
-  in the same spirit as the flagged fuel/flight estimates (ADR-005/ADR-009),
-  reproducible and refreshable.
+- **cost-of-living** — ingested **live from WhereNext** (getwherenext.com), the
+  primary source decided in **BS-011**: a free, no-auth, CC BY 4.0 open-data
+  platform built on institutional data (World Bank ICP 2021, OECD, Eurostat) via
+  a deterministic scoring engine. `scripts.wherenext` calls the endpoint
+  `GET /api/data/cost-of-living` (95 countries, each with a numeric `cost_index`,
+  US baseline = 82, higher = more expensive) and each destination takes its
+  **country's** index, joined on `country_code`. Following ADR-008 ("cache into
+  Postgres rather than call live") and ADR-005 (mandatory fallback), the raw
+  payload is cached in the `api_cache` table by `scripts.ingest_cost_of_living`,
+  and a committed snapshot (`data/wherenext_cost_of_living.json`, CC BY 4.0, with
+  WhereNext's `meta`/attribution block) is the always-available offline/CI floor.
+  Resolution order is cache → live → snapshot. WhereNext also exposes city-level
+  and sub-index (grocery/rent/utilities/transport) data; the MVP uses the
+  country-level composite `cost_index`, with the Kaggle "Global Cost of Living"
+  dataset / regional average as the BS-011 fallback for any uncovered country.
 - **`culture` / `nature` / `nightlife` / `food` / `tourism`** — curated
   indicative baselines derived from open POI/tourism signals: OpenStreetMap /
   OpenTripMap POI-category density (museums & heritage → culture; parks, coast
@@ -52,10 +58,11 @@ with the following **raw, un-normalized** columns:
   collapsed to five travel-relevant classes: `mediterranean`, `continental`,
   `oceanic`, `alpine`, `baltic`.
 
-Because these raw indices are curated, the *engineering contribution* this
-ticket delivers is the **normalization and season model** below, which is fully
-deterministic and re-runs unchanged when the raw layer is later swapped for live
-ingestion.
+Cost-of-living is therefore real ingested data; the five subjective factor
+indices remain curated baselines. The *engineering contribution* this ticket
+delivers is the **live WhereNext ingestion + caching** and the **normalization
+and season model** below, which are fully deterministic and re-run unchanged when
+the subjective factor layer is later swapped for a live OSM/OpenTripMap feed.
 
 ## 2. Normalization to [0,1]
 
@@ -68,7 +75,9 @@ normalized(x) = (x − min_over_destinations) / (max_over_destinations − min_o
 ```
 
 - Applied independently to `culture`, `nature`, `nightlife`, `food`, `tourism`
-  and `cost_index`.
+  and the WhereNext cost index. The cost index is normalized across only the
+  destinations WhereNext actually covers, so an uncovered country (which gets a
+  NULL `cost_of_living`) never distorts the [0,1] range for the rest.
 - If a column is constant across the set (`max == min`), every value maps to
   **0.5** (a neutral score) rather than dividing by zero.
 - Results are stored quantized to 3 decimal places to match the schema
@@ -129,11 +138,14 @@ loaded into the database are logged and skipped; the run does not abort.
 
 ## 5. Limitations (stated for honesty)
 
-- The raw culture/nature/nightlife/food/tourism indices and the `cost_index` are
-  **curated indicative baselines**, not yet a live ingestion. They are
-  reproducible and documented, and the normalization/season engineering is
-  final; swapping the raw layer for live OSM/WhereNext data changes the inputs,
-  not the method.
+- **Cost-of-living is real WhereNext data**, but at **country** granularity — all
+  destinations in a country share their country's `cost_index`. WhereNext's
+  city-level dataset and sub-indices are available for a future refinement.
+- The five subjective factor indices (culture/nature/nightlife/food/tourism)
+  remain **curated indicative baselines** derived from open POI/tourism signals,
+  not yet a live OSM/OpenTripMap ingestion. They are reproducible and documented,
+  and the normalization/season engineering is final; swapping that layer for live
+  data changes those inputs, not the method.
 - The season curves use climate-class archetypes, not per-city climate normals.
 - Min–max normalization is sensitive to outliers by construction; with a
   curated, bounded set this is acceptable and keeps the [0,1] guarantee exact.

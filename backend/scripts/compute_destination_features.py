@@ -9,11 +9,14 @@ normalization, and the month-dependent season model — is documented in
 Pipeline:
 
 * **Read + validate** the raw CSV (one row per curated destination): five factor
-  indices (culture/nature/nightlife/food/tourism), a cost-of-living index, and a
-  climate class. Malformed rows are logged and skipped, never fatal.
-* **Normalize** every factor and the cost index to ``[0,1]`` with min-max
-  normalization across the destination set (§14.2). A constant column maps to
-  ``0.5`` instead of dividing by zero.
+  indices (culture/nature/nightlife/food/tourism), the ISO ``country_code`` join
+  key, and a climate class. Malformed rows are logged and skipped, never fatal.
+* **Cost-of-living** is resolved per country from **WhereNext** (BS-011) via
+  ``scripts.wherenext`` and joined onto each destination by ``country_code`` —
+  it is not a CSV column.
+* **Normalize** every factor and the WhereNext cost index to ``[0,1]`` with
+  min-max normalization across the destination set (§14.2). A constant column
+  maps to ``0.5`` instead of dividing by zero.
 * **Season score** is derived from the destination's climate class and the
   travel window: the mean over the window's months of that climate's monthly
   suitability curve, so the score varies by month.
@@ -21,9 +24,8 @@ Pipeline:
   ``(city, country)``) keyed on ``destination_id``. Re-running refreshes in
   place — idempotent, never duplicated.
 
-Cost-of-living is resolved to WhereNext per BS-011 (see the methodology doc); it
-is stored orientation-neutral (0 = cheapest, 1 = most expensive) and inverted
-into a penalty by the ranking layer (BS-054), not here.
+Cost-of-living is stored orientation-neutral (0 = cheapest, 1 = most expensive)
+and inverted into a penalty by the ranking layer (BS-054), not here.
 
 Usage (from ``backend/``)::
 
@@ -50,6 +52,8 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
+from scripts import wherenext
+
 logger = logging.getLogger(__name__)
 
 # backend/scripts/compute_destination_features.py -> repo root is two parents up.
@@ -58,8 +62,10 @@ DEFAULT_RAW_CSV = REPO_ROOT / "data" / "destination_features_raw.csv"
 
 # Raw factor columns that get min-max normalized straight into *_score columns.
 FACTOR_COLUMNS = ("culture", "nature", "nightlife", "food", "tourism")
-COST_COLUMN = "cost_index"
-REQUIRED_COLUMNS = ("city", "country", COST_COLUMN, *FACTOR_COLUMNS, "climate")
+# cost_of_living is NOT a CSV column: it is resolved per country from WhereNext
+# (scripts.wherenext) and joined on country_code. The CSV holds only the
+# subjective factor indices, the join key, and the climate class.
+REQUIRED_COLUMNS = ("city", "country", "country_code", *FACTOR_COLUMNS, "climate")
 
 # Month-by-month travel suitability in [0,1] per climate class (Jan..Dec).
 # Derived from Köppen climate character (see data/FEATURES_METHODOLOGY.md §3).
@@ -82,7 +88,7 @@ class RawRow:
 
     city: str
     country: str
-    cost_index: float
+    country_code: str
     factors: dict[str, float]
     climate: str
 
@@ -97,6 +103,9 @@ class FeatureComputeSummary:
     matched: int = 0  # destinations found in the DB and upserted
     unmatched: int = 0  # valid rows with no destinations row (logged, skipped)
     months: tuple[int, ...] = ()
+    cost_source: str = ""  # where WhereNext cost data came from (live/cache/snapshot)
+    cost_countries: int = 0  # countries resolved from WhereNext
+    cost_missing: int = 0  # valid rows whose country had no WhereNext cost_index
     skipped_reasons: list[str] = field(default_factory=list)
 
 
@@ -150,9 +159,16 @@ def parse_raw_rows(reader: Iterable[dict[str, str]]) -> tuple[list[RawRow], list
             skip_reasons.append(reason)
             continue
 
+        country_code = _clean(raw.get("country_code")).upper()
+        if len(country_code) != 2 or not country_code.isalpha():
+            reason = f"line {line_no}: {city}: invalid country_code {raw.get('country_code')!r} (want ISO alpha-2)"
+            logger.warning("skipping row: %s", reason)
+            skip_reasons.append(reason)
+            continue
+
         numeric: dict[str, float] = {}
         failed = False
-        for column in (COST_COLUMN, *FACTOR_COLUMNS):
+        for column in FACTOR_COLUMNS:
             try:
                 value = float(_clean(raw.get(column)))
             except ValueError:
@@ -185,7 +201,7 @@ def parse_raw_rows(reader: Iterable[dict[str, str]]) -> tuple[list[RawRow], list
             RawRow(
                 city=city,
                 country=country,
-                cost_index=numeric[COST_COLUMN],
+                country_code=country_code,
                 factors={col: numeric[col] for col in FACTOR_COLUMNS},
                 climate=climate,
             )
@@ -233,26 +249,40 @@ def _q(value: float) -> Decimal:
 
 
 def compute_features(
-    rows: list[RawRow], months: Iterable[int]
-) -> dict[tuple[str, str], dict[str, Decimal]]:
+    rows: list[RawRow],
+    months: Iterable[int],
+    cost_by_country: dict[str, float],
+) -> dict[tuple[str, str], dict[str, Decimal | None]]:
     """Normalize ``rows`` into per-destination feature dicts, all scores in [0,1].
 
-    Keyed by ``(city, country)``. Each value has ``cost_of_living`` and the five
-    ``*_score`` columns (min-max normalized across the set) plus ``season_score``
-    (from the climate/month model). Empty input yields an empty mapping.
+    Keyed by ``(city, country)``. The five ``*_score`` columns are min-max
+    normalized across the set; ``season_score`` comes from the climate/month
+    model; ``cost_of_living`` is the destination's WhereNext country cost index
+    (looked up in ``cost_by_country`` by ISO code) min-max normalized across the
+    destinations that have one. A destination whose country is absent from
+    ``cost_by_country`` gets ``cost_of_living = None`` (logged by the caller).
+    Empty input yields an empty mapping.
     """
     months = tuple(months)
     if not rows:
         return {}
 
-    normalized_cost = min_max_normalize([r.cost_index for r in rows])
     normalized_factors = {
         col: min_max_normalize([r.factors[col] for r in rows]) for col in FACTOR_COLUMNS
     }
 
-    features: dict[tuple[str, str], dict[str, Decimal]] = {}
+    # Cost: normalize across only the destinations WhereNext actually covers, so
+    # a missing country never distorts the [0,1] range for the rest.
+    raw_costs = [cost_by_country.get(r.country_code) for r in rows]
+    present_norm = iter(min_max_normalize([c for c in raw_costs if c is not None]))
+    normalized_cost = [None if c is None else next(present_norm) for c in raw_costs]
+
+    features: dict[tuple[str, str], dict[str, Decimal | None]] = {}
     for idx, row in enumerate(rows):
-        record: dict[str, Decimal] = {"cost_of_living": _q(normalized_cost[idx])}
+        cost = normalized_cost[idx]
+        record: dict[str, Decimal | None] = {
+            "cost_of_living": _q(cost) if cost is not None else None
+        }
         for col in FACTOR_COLUMNS:
             record[f"{col}_score"] = _q(normalized_factors[col][idx])
         record["season_score"] = _q(season_score(row.climate, months))
@@ -261,7 +291,7 @@ def compute_features(
 
 
 def upsert_features(
-    session: Session, features: dict[tuple[str, str], dict[str, Decimal]]
+    session: Session, features: dict[tuple[str, str], dict[str, Decimal | None]]
 ) -> tuple[int, int]:
     """Upsert computed features into ``destination_features``.
 
@@ -323,13 +353,16 @@ def compute_and_store(
     path: Path = DEFAULT_RAW_CSV,
     *,
     months: Iterable[int] = (),
+    cost_source: str = "auto",
     dry_run: bool = False,
 ) -> FeatureComputeSummary:
     """Compute features from ``path`` and upsert them through ``session``.
 
     ``months`` is the travel window (each 1-12); it defaults to the current
-    month. The caller owns the transaction: this flushes but does not commit, so
-    tests can roll back and the CLI can commit once at the end.
+    month. ``cost_source`` selects where WhereNext cost data is read from
+    (``auto`` / ``live`` / ``cache`` / ``snapshot``; see ``scripts.wherenext``).
+    The caller owns the transaction: this flushes but does not commit, so tests
+    can roll back and the CLI can commit once at the end.
     """
     months = tuple(months) or (date.today().month,)
     rows, skip_reasons, total = read_raw_csv(path)
@@ -342,7 +375,16 @@ def compute_and_store(
         skipped_reasons=skip_reasons,
     )
 
-    features = compute_features(rows, months)
+    # Resolve WhereNext cost-of-living. On a dry run we pass no session so the
+    # cache is neither read nor written (auto still tries live, then snapshot).
+    cost = wherenext.load_cost_index(
+        None if dry_run else session, source=cost_source, write_cache=not dry_run
+    )
+    summary.cost_source = cost.source
+    summary.cost_countries = cost.count
+    summary.cost_missing = sum(1 for r in rows if r.country_code not in cost.mapping)
+
+    features = compute_features(rows, months, cost.mapping)
     if dry_run:
         summary.matched = len(features)  # nothing resolved against the DB
         return summary
@@ -382,6 +424,12 @@ def main(argv: list[str] | None = None) -> int:
         help="number of consecutive months in the travel window (default: 1)",
     )
     parser.add_argument(
+        "--cost-source",
+        choices=wherenext.VALID_SOURCES,
+        default="auto",
+        help="where WhereNext cost data comes from: auto (default), live, cache, snapshot",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="compute and report without writing to the database",
@@ -399,7 +447,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         session = SessionLocal(bind=get_engine())
         try:
-            summary = compute_and_store(session, args.csv, months=months, dry_run=args.dry_run)
+            summary = compute_and_store(
+                session, args.csv, months=months, cost_source=args.cost_source, dry_run=args.dry_run
+            )
             if not args.dry_run:
                 session.commit()
         except Exception:
@@ -407,31 +457,37 @@ def main(argv: list[str] | None = None) -> int:
             raise
         finally:
             session.close()
-    except (FileNotFoundError, ValueError) as exc:
+    except (FileNotFoundError, ValueError, LookupError) as exc:
         logger.error("feature computation aborted: %s", exc)
         return 1
 
     window_desc = ",".join(str(m) for m in summary.months)
+    cost_desc = (
+        f"cost from WhereNext/{summary.cost_source} "
+        f"({summary.cost_countries} countries, {summary.cost_missing} uncovered)"
+    )
     if args.dry_run:
         logger.info(
             "dry-run: %d row(s) read, %d valid, %d skipped, %d computed "
-            "for months [%s] (no writes)",
+            "for months [%s]; %s (no writes)",
             summary.total,
             summary.valid,
             summary.skipped_rows,
             summary.matched,
             window_desc,
+            cost_desc,
         )
     else:
         logger.info(
             "features computed: %d read, %d valid, %d skipped - "
-            "%d upserted, %d unmatched for months [%s]",
+            "%d upserted, %d unmatched for months [%s]; %s",
             summary.total,
             summary.valid,
             summary.skipped_rows,
             summary.matched,
             summary.unmatched,
             window_desc,
+            cost_desc,
         )
     return 0
 

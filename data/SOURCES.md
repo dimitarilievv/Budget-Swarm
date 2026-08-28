@@ -57,6 +57,17 @@ scraped, proprietary, or EULA-restricted data (e.g. Numbeo) is used here.
   per-POI and per-accommodation coordinates come from the specialist agents
   downstream, not from this file.
 
+## Related datasets (BS-031 feature engineering)
+
+- `data/destination_features_raw.csv` — curated subjective factor indices
+  (culture/nature/nightlife/food/tourism) + climate class per destination.
+- `data/wherenext_cost_of_living.json` — **committed snapshot of WhereNext
+  cost-of-living data** (getwherenext.com, `GET /api/data/cost-of-living`), used
+  as the offline/CI fallback for cost-of-living ingestion (BS-011). **Attribution
+  (required by CC BY 4.0):** "Cost-of-living data © WhereNext (getwherenext.com),
+  licensed under CC BY 4.0." The snapshot's `meta` block records the source,
+  licence, and version. Full methodology: `data/FEATURES_METHODOLOGY.md`.
+
 ## Reproduce / validate
 
 Row count and required columns are validated by

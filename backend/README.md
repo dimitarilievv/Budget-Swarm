@@ -40,25 +40,48 @@ python -m scripts.ingest_destinations --dry-run    # validate only, no writes
 Covered by `tests/test_ingest_destinations.py` (unit validation always; an
 `integration` group that runs the real upsert against a live DB).
 
+## Cost-of-living ingestion — WhereNext (BS-011)
+
+Cost-of-living is real data from **WhereNext** (getwherenext.com, CC BY 4.0),
+the primary source decided in BS-011. `scripts.ingest_cost_of_living` fetches the
+live API (`GET /api/data/cost-of-living`, 95 countries) and caches the raw
+payload in the `api_cache` table (provider `wherenext`), so feature computation
+reads cached institutional data instead of calling the API every run (ADR-008).
+A committed snapshot (`data/wherenext_cost_of_living.json`) is the offline/CI
+fallback (ADR-005). Resolution order: cache → live → snapshot.
+
+```bash
+# Run from backend/ with DATABASE_URL set and migrations applied
+python -m scripts.ingest_cost_of_living                 # live fetch + cache
+python -m scripts.ingest_cost_of_living --save-snapshot # also refresh the snapshot
+python -m scripts.ingest_cost_of_living --source snapshot  # offline (no network)
+python -m scripts.ingest_cost_of_living --dry-run       # fetch + report, no writes
+```
+
 ## Feature engineering (BS-031)
 
-Compute the normalized `destination_features` that drive Scout ranking from the
-curated raw indicators (`data/destination_features_raw.csv`). Each factor
-(culture/nature/nightlife/food/tourism) and the cost-of-living index are min–max
-normalized to `[0,1]` across the destination set; `season_score` is derived from
-each destination's climate class and the travel window, so it **varies by
-month**. Rows are upserted on `destination_id`, so re-running is idempotent.
-Destinations must be loaded first (see *Data ingestion* above). Full methodology:
-`data/FEATURES_METHODOLOGY.md`.
+Compute the normalized `destination_features` that drive Scout ranking. The five
+subjective factors (culture/nature/nightlife/food/tourism) come from the curated
+raw indicators (`data/destination_features_raw.csv`); `cost_of_living` is each
+destination's **WhereNext country cost index** (joined on `country_code`, see
+above). All are min–max normalized to `[0,1]` across the destination set;
+`season_score` is derived from each destination's climate class and the travel
+window, so it **varies by month**. Rows are upserted on `destination_id`, so
+re-running is idempotent. Destinations must be loaded first (see *Data
+ingestion*). Full methodology: `data/FEATURES_METHODOLOGY.md`.
 
 ```bash
 # Run from backend/ with DATABASE_URL set, migrations applied, destinations loaded
 python -m scripts.compute_destination_features                 # current month
 python -m scripts.compute_destination_features --month 7       # July travel window
 python -m scripts.compute_destination_features --month 6 --window-months 3
+python -m scripts.compute_destination_features --cost-source snapshot  # offline cost
 python -m scripts.compute_destination_features --dry-run       # compute only, no writes
 ```
 
-Covered by `tests/test_compute_destination_features.py` (unit: normalization
-bounds, season model, validation; an `integration` group that computes + stores
-against a live DB).
+Full pipeline order: `ingest_destinations` → `ingest_cost_of_living` →
+`compute_destination_features`.
+
+Covered by `tests/test_compute_destination_features.py` and `tests/test_wherenext.py`
+(unit: normalization bounds, season model, validation, WhereNext parsing/fallback;
+`integration` groups that compute + store and exercise the cache against a live DB).
