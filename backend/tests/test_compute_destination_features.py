@@ -92,9 +92,10 @@ def test_window_months_rejects_out_of_range(start, window):
 
 
 def test_season_score_varies_by_month():
-    # A Mediterranean destination is far better in July than in January.
-    july = season_score("mediterranean", [7])
-    january = season_score("mediterranean", [1])
+    # A Mediterranean curve is far better in July than in January.
+    profile = CLIMATE_PROFILES["mediterranean"]
+    july = season_score(profile, [7])
+    january = season_score(profile, [1])
     assert july > january
     assert 0.0 <= january <= 1.0 and 0.0 <= july <= 1.0
 
@@ -102,7 +103,17 @@ def test_season_score_varies_by_month():
 def test_season_score_window_is_mean_of_months():
     profile = CLIMATE_PROFILES["continental"]
     expected = (profile[4] + profile[5] + profile[6]) / 3  # May, Jun, Jul
-    assert season_score("continental", [5, 6, 7]) == pytest.approx(expected)
+    assert season_score(profile, [5, 6, 7]) == pytest.approx(expected)
+
+
+def test_season_profile_prefers_ingested_over_archetype():
+    from scripts.compute_destination_features import RawRow, season_profile_for
+
+    row = RawRow("Sofia", "Bulgaria", "BG", {}, "continental")
+    ingested = tuple(0.1 * m for m in range(12))
+    assert season_profile_for(row, {("Sofia", "Bulgaria"): ingested}) == ingested
+    # No ingested curve -> falls back to the climate archetype.
+    assert season_profile_for(row, {}) == CLIMATE_PROFILES["continental"]
 
 
 def test_all_climate_profiles_are_in_unit_interval():

@@ -194,7 +194,7 @@ Fill in these columns as you register and test each source:
 
 ### Curated destinations dataset  `[primary, self-built]`
 - [x] Assemble city list + coordinates  *(BS-029: `data/curated_destinations.csv`)*
-- [x] Populate feature scores (culture/nature/nightlife/food/tourism/season)  *(BS-031: culture/nature/nightlife/food/tourism ingested from OpenStreetMap Overpass POI counts; min–max normalized to [0,1]; season varies by month)*
+- [x] Populate feature scores (culture/nature/nightlife/food/tourism/season)  *(BS-031: culture/nature/nightlife/food/tourism from OpenStreetMap Overpass POI counts; season from Open-Meteo per-city climate normals; all min–max/[0,1], season varies by month)*
 - [x] Populate cost_of_living index  *(BS-031: normalized to [0,1], WhereNext-sourced per BS-011)*
 - [x] Document sources for each column (for the thesis)  *(`data/SOURCES.md`, `data/FEATURES_METHODOLOGY.md`)*
 

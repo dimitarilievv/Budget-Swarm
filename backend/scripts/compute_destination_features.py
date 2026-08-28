@@ -19,9 +19,11 @@ Pipeline:
   The OSM factor counts are log-scaled first (they are right-skewed); the
   WhereNext cost index is normalized linearly. A constant column maps to ``0.5``
   instead of dividing by zero.
-* **Season score** is derived from the destination's climate class and the
-  travel window: the mean over the window's months of that climate's monthly
-  suitability curve, so the score varies by month.
+* **Season score** averages the destination's 12-month suitability curve over
+  the travel window, so it varies by month. Curves are the real per-city
+  Open-Meteo profiles (``scripts.ingest_season_normals`` /
+  ``data/season_profiles.json``), with a Köppen climate-class archetype as the
+  offline fallback.
 * **Upsert** one row per destination (matched to a loaded ``destinations`` row on
   ``(city, country)``) keyed on ``destination_id``. Re-running refreshes in
   place — idempotent, never duplicated.
@@ -41,9 +43,10 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import logging
 import math
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
@@ -68,6 +71,9 @@ logger = logging.getLogger(__name__)
 # backend/scripts/compute_destination_features.py -> repo root is two parents up.
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_RAW_CSV = REPO_ROOT / "data" / "destination_features_raw.csv"
+# Per-city seasonal suitability curves, ingested from Open-Meteo by
+# scripts.ingest_season_normals. Missing file / city -> climate-archetype fallback.
+SEASON_PROFILES_PATH = REPO_ROOT / "data" / "season_profiles.json"
 
 # Raw factor columns that get min-max normalized straight into *_score columns.
 FACTOR_COLUMNS = ("culture", "nature", "nightlife", "food", "tourism")
@@ -76,8 +82,10 @@ FACTOR_COLUMNS = ("culture", "nature", "nightlife", "food", "tourism")
 # subjective factor indices, the join key, and the climate class.
 REQUIRED_COLUMNS = ("city", "country", "country_code", *FACTOR_COLUMNS, "climate")
 
-# Month-by-month travel suitability in [0,1] per climate class (Jan..Dec).
-# Derived from Köppen climate character (see data/FEATURES_METHODOLOGY.md §3).
+# Fallback month-by-month travel suitability in [0,1] per climate class (Jan..Dec).
+# Used only when a city has no Open-Meteo-ingested profile (see season model,
+# data/FEATURES_METHODOLOGY.md §3); the real per-city curves come from
+# scripts.ingest_season_normals / data/season_profiles.json.
 CLIMATE_PROFILES: dict[str, tuple[float, ...]] = {
     "mediterranean": (0.45, 0.45, 0.60, 0.75, 0.90, 0.95, 0.95, 0.95, 0.90, 0.80, 0.60, 0.45),
     "oceanic": (0.40, 0.40, 0.55, 0.70, 0.85, 0.90, 0.90, 0.90, 0.85, 0.70, 0.50, 0.40),
@@ -115,6 +123,7 @@ class FeatureComputeSummary:
     cost_source: str = ""  # provider chain provenance, e.g. "wherenext:live"
     cost_countries: int = 0  # countries resolved across the provider chain
     cost_missing: int = 0  # needed countries no provider (or region fill) covered
+    season_ingested: int = 0  # rows using an Open-Meteo curve (rest use archetype)
     skipped_reasons: list[str] = field(default_factory=list)
 
 
@@ -135,17 +144,46 @@ def window_months(start_month: int, window: int) -> tuple[int, ...]:
     return tuple(((start_month - 1 + offset) % 12) + 1 for offset in range(window))
 
 
-def season_score(climate: str, months: Iterable[int]) -> float:
-    """Mean travel suitability of ``climate`` over ``months`` (each 1-12).
+def season_score(profile: Sequence[float], months: Iterable[int]) -> float:
+    """Mean travel suitability over ``months`` (each 1-12) of a 12-month ``profile``.
 
     This is what makes ``season_score`` depend on the travel window: the same
-    destination scores differently in summer vs. winter.
+    12-month curve yields a different score for a summer trip vs. a winter one.
     """
-    profile = CLIMATE_PROFILES[climate]
     months = tuple(months)
     if not months:
         raise ValueError("season_score requires at least one month")
     return sum(profile[m - 1] for m in months) / len(months)
+
+
+def load_season_profiles(
+    path: Path = SEASON_PROFILES_PATH,
+) -> dict[tuple[str, str], tuple[float, ...]]:
+    """Load per-city 12-month suitability curves from the Open-Meteo snapshot.
+
+    Returns ``{(city, country): (12 floats)}``; an empty mapping if the file is
+    absent or unreadable (callers then fall back to the climate archetypes).
+    """
+    if not path.is_file():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    profiles: dict[tuple[str, str], tuple[float, ...]] = {}
+    for entry in payload.get("data", []) if isinstance(payload, dict) else []:
+        suitability = entry.get("suitability") if isinstance(entry, dict) else None
+        if isinstance(suitability, list) and len(suitability) == 12:
+            profiles[(entry["city"], entry["country"])] = tuple(float(x) for x in suitability)
+    return profiles
+
+
+def season_profile_for(
+    row: RawRow, season_profiles: dict[tuple[str, str], Sequence[float]]
+) -> Sequence[float]:
+    """The Open-Meteo curve for ``row`` if ingested, else its climate archetype."""
+    ingested = season_profiles.get((row.city, row.country))
+    return ingested if ingested is not None else CLIMATE_PROFILES[row.climate]
 
 
 def parse_raw_rows(reader: Iterable[dict[str, str]]) -> tuple[list[RawRow], list[str]]:
@@ -261,18 +299,22 @@ def compute_features(
     rows: list[RawRow],
     months: Iterable[int],
     cost_by_country: dict[str, float],
+    season_profiles: dict[tuple[str, str], Sequence[float]] | None = None,
 ) -> dict[tuple[str, str], dict[str, Decimal | None]]:
     """Normalize ``rows`` into per-destination feature dicts, all scores in [0,1].
 
     Keyed by ``(city, country)``. The five ``*_score`` columns are min-max
-    normalized across the set; ``season_score`` comes from the climate/month
-    model; ``cost_of_living`` is the destination's WhereNext country cost index
+    normalized across the set; ``season_score`` averages the destination's
+    12-month suitability curve (Open-Meteo ingested, or the climate archetype
+    fallback) over the travel ``months``; ``cost_of_living`` is the WhereNext
+    country cost index
     (looked up in ``cost_by_country`` by ISO code) min-max normalized across the
     destinations that have one. A destination whose country is absent from
     ``cost_by_country`` gets ``cost_of_living = None`` (logged by the caller).
     Empty input yields an empty mapping.
     """
     months = tuple(months)
+    season_profiles = season_profiles or {}
     if not rows:
         return {}
 
@@ -298,7 +340,7 @@ def compute_features(
         }
         for col in FACTOR_COLUMNS:
             record[f"{col}_score"] = _q(normalized_factors[col][idx])
-        record["season_score"] = _q(season_score(row.climate, months))
+        record["season_score"] = _q(season_score(season_profile_for(row, season_profiles), months))
         features[(row.city, row.country)] = record
     return features
 
@@ -368,6 +410,7 @@ def compute_and_store(
     months: Iterable[int] = (),
     cost_source: str = "auto",
     cost_fallback_csv: Path | None = None,
+    season_profiles_path: Path = SEASON_PROFILES_PATH,
     dry_run: bool = False,
 ) -> FeatureComputeSummary:
     """Compute features from ``path`` and upsert them through ``session``.
@@ -407,7 +450,11 @@ def compute_and_store(
     summary.cost_countries = len(resolved.mapping)
     summary.cost_missing = sum(1 for code in needed if code not in resolved.mapping)
 
-    features = compute_features(rows, months, resolved.mapping)
+    # Per-city seasonal curves from Open-Meteo; rows without one use the archetype.
+    season_profiles = load_season_profiles(season_profiles_path)
+    summary.season_ingested = sum(1 for r in rows if (r.city, r.country) in season_profiles)
+
+    features = compute_features(rows, months, resolved.mapping, season_profiles)
     if dry_run:
         summary.matched = len(features)  # nothing resolved against the DB
         return summary
@@ -498,7 +545,9 @@ def main(argv: list[str] | None = None) -> int:
     window_desc = ",".join(str(m) for m in summary.months)
     cost_desc = (
         f"cost from WhereNext/{summary.cost_source} "
-        f"({summary.cost_countries} countries, {summary.cost_missing} uncovered)"
+        f"({summary.cost_countries} countries, {summary.cost_missing} uncovered); "
+        f"season from Open-Meteo for {summary.season_ingested}/{summary.valid} "
+        f"(rest climate-archetype)"
     )
     if args.dry_run:
         logger.info(

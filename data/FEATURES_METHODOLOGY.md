@@ -66,13 +66,16 @@ hand-authored.
   `data/osm_features_raw.json` (ODbL). OpenStreetMap data is
   **© OpenStreetMap contributors, licensed under the ODbL 1.0**; no API key is
   needed.
+- **seasonal suitability** — ingested from **Open-Meteo** (`scripts.ingest_season_normals`);
+  see the season model (§3). Committed at `data/season_profiles.json`.
 - **`climate`** — the **Köppen–Geiger** climate classification (an open index),
-  collapsed to five travel-relevant classes: `mediterranean`, `continental`,
-  `oceanic`, `alpine`, `baltic`. This is a factual per-city lookup (not a score),
-  carried in the CSV and preserved across OSM re-ingestions.
+  five travel-relevant classes: `mediterranean`, `continental`, `oceanic`,
+  `alpine`, `baltic`. This is a factual per-city lookup, now used **only as the
+  fallback** season curve when a city has no Open-Meteo profile; it is carried in
+  the CSV and preserved across OSM re-ingestions.
 
 Every published feature is therefore ingested from a real open source
-(WhereNext + OpenStreetMap); none is authored by hand. The *engineering
+(WhereNext + OpenStreetMap + Open-Meteo); none is authored by hand. The *engineering
 contribution* this ticket delivers is the **ingestion + caching** of those
 sources and the **normalization and season model** below, which are fully
 deterministic and re-run unchanged as the underlying data is refreshed.
@@ -120,29 +123,41 @@ them for the short list actually under consideration.
 ## 3. Season model (`season_score`)
 
 `season_score` answers "how good is this destination during the travel window?"
-and therefore **must vary by month**. Each climate class carries a 12-month
-suitability curve in [0,1], reflecting typical travel comfort (temperature and
-precipitation) for that class:
+and therefore **must vary by month**. Each destination carries a **12-month
+suitability curve in [0,1], ingested from real climate data** — not a hand-drawn
+archetype.
 
-| Climate        | Peak months        | Character                                   |
-|----------------|--------------------|---------------------------------------------|
-| `mediterranean`| May–Sep (mild winter)| warm, long season, pleasant shoulder months|
-| `oceanic`      | Jun–Sep (mild all year)| temperate, gentle seasonal swing          |
-| `continental`  | May–Sep            | cold winters, warm summers                  |
-| `alpine`       | Jun–Sep            | cool, short strong summer                    |
-| `baltic`       | Jun–Aug            | cold, short northern summer                  |
+**Ingestion (`scripts.ingest_season_normals`).** For each city, the Open-Meteo
+archive (ERA5 reanalysis, free, no key, CC BY 4.0) provides a decade of daily
+`temperature_2m_mean` and `precipitation_sum` (default normal period 2014–2023).
+These are aggregated to twelve monthly normals — the average daily mean
+temperature and the average monthly precipitation total — per city.
 
-For a travel window spanning one or more months, `season_score` is the **mean of
-the monthly suitabilities over the months in the window**. A single-month window
-(the default, using the current month) reduces to that month's value. This makes
-the score depend on the requested dates: a Mediterranean coast city scores high
-in July and low in January, while the difference is even sharper for a Baltic
-city.
+**Comfort function.** Each month's normals become a suitability in [0,1]:
 
-The curves are a documented project judgment (🔧), derived from Köppen climate
-character rather than a live climate feed; they are deliberately simple and
-inspectable, and can be replaced by an Open-Meteo climate-normals ingestion
-without changing the interface.
+```
+temp_score   = exp( -(mean_temp − 20)² / (2 · 9²) )        # peak comfort ≈ 20 °C
+precip_score = max(0, 1 − mean_monthly_precip_mm / 200)     # rain penalty
+suitability  = 0.7 · temp_score + 0.3 · precip_score
+```
+
+The parameters (ideal temperature, spread, precipitation cap, weights) are a
+documented project judgment (🔧), but they operate on **real per-city data**.
+Because the input is measured temperature/precipitation, the model needs no
+hemisphere assumption — a Southern-Hemisphere city's data already peaks in its
+own summer, and hot-summer cities are correctly penalised (e.g. Athens peaks in
+May, not August). The curves are committed at `data/season_profiles.json` with
+the source, licence, normal period and comfort-function parameters in its `meta`
+block. **Attribution:** "Weather data by Open-Meteo.com" (CC BY 4.0).
+
+**Score for a window.** `season_score` is the **mean of the city's monthly
+suitabilities over the months in the travel window**; a single-month window (the
+default, using the current month) reduces to that month's value.
+
+**Fallback.** If a city has no ingested profile (Open-Meteo unreachable and no
+committed snapshot), `season_score` falls back to a coarse Köppen climate-class
+archetype curve (`CLIMATE_PROFILES`), so the pipeline still produces a score
+(ADR-005, degrade-don't-crash).
 
 ## 4. Output
 
@@ -168,8 +183,11 @@ loaded into the database are logged and skipped; the run does not abort.
   min–max** (§2). A further optional refinement is tuning the tag sets (e.g.
   dropping the broad `natural=wood` from `nature`), which changes the inputs, not
   the normalization/season method.
-- The season curves use climate-class archetypes, not per-city climate normals,
-  and assume Northern-Hemisphere seasons.
+- **Season curves are real per-city Open-Meteo normals**, but the raw
+  temperature/precipitation is mapped to suitability through a judgment-based
+  comfort function (ideal ≈ 20 °C, linear rain penalty). The function's
+  parameters are documented and tunable; the underlying climate data is measured.
+  The Köppen archetype remains only as an offline fallback.
 
 ## 6. Adding / swapping a data source
 

@@ -80,6 +80,24 @@ cities are **kept at their last-good committed counts** (never dropped, never
 fabricated); the run logs which cities were *refreshed* vs. *kept* vs. *missing*.
 So a partial Overpass outage can only ever refresh a subset, never lose data.
 
+## Season ingestion — Open-Meteo (BS-031)
+
+`season_score` is driven by **real per-city climate data**, not a hand-drawn
+curve. `scripts.ingest_season_normals` pulls a decade of daily temperature and
+precipitation from the Open-Meteo archive (free, no key, CC BY 4.0), aggregates
+to twelve monthly normals, and turns each month into a travel-suitability score
+via a documented comfort function (peak ≈ 20 °C, rain penalty). Curves are
+committed to `data/season_profiles.json`; a city with no profile falls back to a
+Köppen climate-class archetype. Merge-safe like the OSM ingestion (failed cities
+keep last-good values).
+
+```bash
+python -m scripts.ingest_season_normals                 # all destinations
+python -m scripts.ingest_season_normals --city Sofia    # refresh one city (others kept)
+python -m scripts.ingest_season_normals --start 2014 --end 2023
+python -m scripts.ingest_season_normals --dry-run       # fetch + report, no writes
+```
+
 ## Feature engineering (BS-031)
 
 Compute the normalized `destination_features` that drive Scout ranking. The five
@@ -102,7 +120,8 @@ python -m scripts.compute_destination_features --dry-run       # compute only, n
 ```
 
 Full pipeline order: `ingest_destinations` → `ingest_cost_of_living` →
-`ingest_osm_features` (regenerates the factor CSV) → `compute_destination_features`.
+`ingest_osm_features` (factor CSV) → `ingest_season_normals` (season curves) →
+`compute_destination_features`.
 
 Covered by `tests/test_compute_destination_features.py` and `tests/test_wherenext.py`
 (unit: normalization bounds, season model, validation, WhereNext parsing/fallback;
