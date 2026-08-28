@@ -40,6 +40,24 @@ python -m scripts.ingest_destinations --dry-run    # validate only, no writes
 Covered by `tests/test_ingest_destinations.py` (unit validation always; an
 `integration` group that runs the real upsert against a live DB).
 
+## Adding candidate cities by name (BS-029)
+
+The candidate list (`data/curated_destinations.csv`) is the one curated seed of
+the pipeline. Rather than hand-authoring rows, `scripts.add_destination` geocodes
+a city **name** into `city, country, country_code, lat, lon` via the free
+Open-Meteo geocoding API (no key) and appends it (deduped on `(city, country)`).
+The reusable core is `scripts.geocode` — the same function a future admin UI/API
+would call to let a user pick cities (`geocode()` returns ranked matches with
+country + population to disambiguate; `best_match()` takes the top).
+
+```bash
+python -m scripts.add_destination "Barcelona" "Lyon" "Krakow"   # geocode + append
+python -m scripts.add_destination --dry-run "Barcelona"          # preview, no write
+```
+
+After adding, re-run the enrichment pipeline (below) so the new rows get cost,
+POI, season and computed feature data.
+
 ## Cost-of-living ingestion — WhereNext (BS-011)
 
 Cost-of-living is real data from **WhereNext** (getwherenext.com, CC BY 4.0),

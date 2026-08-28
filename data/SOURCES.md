@@ -46,6 +46,11 @@ Every row is drawn from open, redistributable references:
 Both coordinate sources are open-licence and citable for the thesis; no
 scraped, proprietary, or EULA-restricted data (e.g. Numbeo) is used here.
 
+New rows can also be added by city name with `scripts.add_destination`, which
+resolves country, ISO code and coordinates via the **Open-Meteo geocoding API**
+(free, no key, **CC BY 4.0**) — the same open-data provider used for the seasonal
+normals.
+
 ## Notes / caveats
 
 - `Czechia` is used as the country name (ISO short name) rather than the older
