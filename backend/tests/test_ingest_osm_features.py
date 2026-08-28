@@ -84,8 +84,8 @@ def test_regenerate_features_csv_preserves_climate_and_uses_counts(tmp_path):
         }
     }
 
-    written = osm.regenerate_features_csv(dests, counts, features_csv=features_csv)
-    assert written == 1
+    report = osm.regenerate_features_csv(dests, counts, features_csv=features_csv)
+    assert report.refreshed == ["Sofia"]
 
     row = next(iter(csv.DictReader(features_csv.open(encoding="utf-8"))))
     assert row["culture"] == "1370"  # real OSM count
@@ -113,8 +113,52 @@ def test_regenerate_omits_destinations_without_counts(tmp_path):
     counts = {
         "Sofia|Bulgaria": {"culture": 5, "nature": 5, "nightlife": 5, "food": 5, "tourism": 5}
     }
-    written = osm.regenerate_features_csv(dests, counts, features_csv=features_csv)
-    assert written == 1  # Ghost had no counts -> omitted, never fabricated
+    report = osm.regenerate_features_csv(dests, counts, features_csv=features_csv)
+    assert report.refreshed == ["Sofia"]
+    assert report.missing == ["Ghost"]  # no fresh and no prior data -> omitted, never fabricated
+    rows = list(csv.DictReader(features_csv.open(encoding="utf-8")))
+    assert [r["city"] for r in rows] == ["Sofia"]
+
+
+def test_failed_city_keeps_last_good_counts(tmp_path):
+    """Safety: a city that fails this run retains its previously committed counts."""
+    features_csv = tmp_path / "features.csv"
+    features_csv.write_text(
+        "city,country,country_code,culture,nature,nightlife,food,tourism,climate\n"
+        "Sofia,Bulgaria,BG,100,100,100,100,100,continental\n"
+        "Athens,Greece,GR,900,900,900,900,900,mediterranean\n",
+        encoding="utf-8",
+    )
+    dests = [
+        {
+            "city": "Sofia",
+            "country": "Bulgaria",
+            "country_code": "BG",
+            "lat": "42.7",
+            "lon": "23.3",
+        },
+        {"city": "Athens", "country": "Greece", "country_code": "GR", "lat": "38.0", "lon": "23.7"},
+    ]
+    # Only Sofia was fetched this run; Athens "failed".
+    counts = {
+        "Sofia|Bulgaria": {
+            "culture": 111,
+            "nature": 222,
+            "nightlife": 333,
+            "food": 444,
+            "tourism": 555,
+        }
+    }
+
+    report = osm.regenerate_features_csv(dests, counts, features_csv=features_csv)
+    assert report.refreshed == ["Sofia"]
+    assert report.kept == ["Athens"]
+    assert report.missing == []
+
+    rows = {r["city"]: r for r in csv.DictReader(features_csv.open(encoding="utf-8"))}
+    assert rows["Sofia"]["culture"] == "111"  # refreshed
+    assert rows["Athens"]["culture"] == "900"  # kept at last-good, not dropped
+    assert rows["Athens"]["climate"] == "mediterranean"
 
 
 def test_read_destinations_missing_file_raises():

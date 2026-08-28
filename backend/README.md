@@ -69,10 +69,16 @@ Köppen `climate` column). No API key is required.
 
 ```bash
 python -m scripts.ingest_osm_features                 # all destinations (~minutes; Overpass throttles)
-python -m scripts.ingest_osm_features --city Sofia    # one city (testing)
+python -m scripts.ingest_osm_features --city Sofia    # refresh one city (others kept)
 python -m scripts.ingest_osm_features --radius 10000  # custom radius (metres)
 python -m scripts.ingest_osm_features --dry-run       # fetch + report, no writes
 ```
+
+**Resilience.** The app never calls Overpass at runtime — it reads the committed
+files. When you *re-run* the ingestion and Overpass fails for some cities, those
+cities are **kept at their last-good committed counts** (never dropped, never
+fabricated); the run logs which cities were *refreshed* vs. *kept* vs. *missing*.
+So a partial Overpass outage can only ever refresh a subset, never lose data.
 
 ## Feature engineering (BS-031)
 

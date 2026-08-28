@@ -194,10 +194,28 @@ def fetch_all(
     return counts_by_key, summary
 
 
+@dataclass
+class MergeReport:
+    """Which destinations were refreshed vs. kept vs. left missing."""
+
+    refreshed: list[str] = field(default_factory=list)  # new counts fetched this run
+    kept: list[str] = field(default_factory=list)  # failed this run, last-good retained
+    missing: list[str] = field(default_factory=list)  # no fresh and no prior data
+
+
 def write_snapshot(
     counts_by_key: dict[str, dict[str, int]], radius_m: int, path: Path = SNAPSHOT_PATH
 ) -> None:
-    """Write the raw OSM counts + attribution meta as a committed snapshot."""
+    """Write the OSM counts + attribution meta, merging onto the prior snapshot.
+
+    Destinations not fetched this run keep their last committed counts, so a
+    partial Overpass outage never shrinks the snapshot.
+    """
+    merged = _existing_snapshot_data(path)  # key -> {city, country, <counts>}
+    for key, counts in counts_by_key.items():
+        city, country = key.split("|", 1)
+        merged[key] = {"city": city, "country": country, **counts}
+
     payload = {
         "meta": {
             "title": "OpenStreetMap POI counts per destination",
@@ -207,17 +225,15 @@ def write_snapshot(
             "radius_m": radius_m,
             "categories": {c: CATEGORY_FILTERS[c] for c in CATEGORIES},
             "fetched": date.today().isoformat(),
+            "note": "entries not refreshed on the latest run retain earlier counts",
             "generated_by": "scripts.ingest_osm_features",
         },
-        "data": [
-            {"city": key.split("|")[0], "country": key.split("|")[1], **counts}
-            for key, counts in counts_by_key.items()
-        ],
+        "data": sorted(merged.values(), key=lambda e: (e["country"], e["city"])),
     }
     with path.open("w", encoding="utf-8") as fh:
         json.dump(payload, fh, ensure_ascii=False, indent=2)
         fh.write("\n")
-    logger.info("OSM snapshot written: %s (%d destinations)", path, len(counts_by_key))
+    logger.info("OSM snapshot written: %s (%d destinations)", path, len(payload["data"]))
 
 
 def regenerate_features_csv(
@@ -225,47 +241,81 @@ def regenerate_features_csv(
     counts_by_key: dict[str, dict[str, int]],
     *,
     features_csv: Path = RAW_FEATURES_CSV,
-) -> int:
-    """Rewrite the raw features CSV with real OSM counts, preserving ``climate``.
+) -> MergeReport:
+    """Rewrite the raw features CSV, merging fresh OSM counts onto last-good data.
 
-    ``climate`` (Köppen-Geiger class) is a factual per-city lookup carried over
-    from the existing CSV. A destination with no OSM counts (fetch failed) is
-    omitted from the rewrite so we never emit a fabricated value.
+    Safety against a partial Overpass outage: a destination fetched this run is
+    **refreshed**; one that failed but has prior committed counts is **kept** at
+    its last-good values; one with neither is **missing** and omitted (never
+    fabricated). ``climate`` (Köppen-Geiger class) is preserved from the existing
+    row. Returns a :class:`MergeReport` and logs which cities fell in each bucket.
     """
-    climate_by_key = _existing_climate(features_csv)
+    existing = _existing_rows(features_csv)
     header = ["city", "country", "country_code", *CATEGORIES, "climate"]
+    report = MergeReport()
+    rows_out: list[list[object]] = []
 
-    written = 0
+    for dest in destinations:
+        city, country = dest["city"], dest["country"]
+        key = f"{city}|{country}"
+        prior = existing.get(key, {})
+        climate = prior.get("climate", "")
+        counts = counts_by_key.get(key)
+        if counts is not None:
+            values: list[object] = [counts[c] for c in CATEGORIES]
+            report.refreshed.append(city)
+        elif prior and all(prior.get(c, "") != "" for c in CATEGORIES):
+            values = [prior[c] for c in CATEGORIES]
+            report.kept.append(city)
+        else:
+            report.missing.append(city)
+            continue
+        rows_out.append([city, country, dest["country_code"], *values, climate])
+
     with features_csv.open("w", encoding="utf-8", newline="") as fh:
         writer = csv.writer(fh)
         writer.writerow(header)
-        for dest in destinations:
-            key = f"{dest['city']}|{dest['country']}"
-            counts = counts_by_key.get(key)
-            if counts is None:
-                continue
-            climate = climate_by_key.get(key, "")
-            writer.writerow(
-                [
-                    dest["city"],
-                    dest["country"],
-                    dest["country_code"],
-                    *(counts[c] for c in CATEGORIES),
-                    climate,
-                ]
-            )
-            written += 1
-    logger.info("features CSV regenerated: %s (%d rows)", features_csv, written)
-    return written
+        writer.writerows(rows_out)
+
+    logger.info(
+        "features CSV: %d refreshed, %d kept (last-good), %d missing (%d rows total)",
+        len(report.refreshed),
+        len(report.kept),
+        len(report.missing),
+        len(rows_out),
+    )
+    logger.info(
+        "refreshed this run: %s", ", ".join(report.refreshed) if report.refreshed else "(none)"
+    )
+    if report.kept:
+        logger.warning("kept last-good counts (not refreshed this run): %s", ", ".join(report.kept))
+    if report.missing:
+        logger.warning("omitted (no fresh or prior data): %s", ", ".join(report.missing))
+    return report
 
 
-def _existing_climate(features_csv: Path) -> dict[str, str]:
+def _existing_rows(features_csv: Path) -> dict[str, dict[str, str]]:
+    """Existing CSV rows keyed by ``city|country`` (the last-good data)."""
     if not features_csv.is_file():
         return {}
     with features_csv.open(encoding="utf-8", newline="") as fh:
-        return {
-            f"{row['city']}|{row['country']}": row.get("climate", "") for row in csv.DictReader(fh)
-        }
+        return {f"{row['city']}|{row['country']}": row for row in csv.DictReader(fh)}
+
+
+def _existing_snapshot_data(path: Path) -> dict[str, dict[str, object]]:
+    """Existing snapshot entries keyed by ``city|country``; empty if unreadable."""
+    if not path.is_file():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    entries = payload.get("data", []) if isinstance(payload, dict) else []
+    return {
+        f"{e['city']}|{e['country']}": e
+        for e in entries
+        if isinstance(e, dict) and "city" in e and "country" in e
+    }
 
 
 def _configure_logging() -> None:
@@ -292,24 +342,25 @@ def main(argv: list[str] | None = None) -> int:
     _configure_logging()
 
     try:
-        destinations = read_destinations()
+        all_destinations = read_destinations()
     except (FileNotFoundError, ValueError) as exc:
         logger.error("OSM ingestion aborted: %s", exc)
         return 1
 
+    targets = all_destinations
     if args.city:
-        destinations = [d for d in destinations if d["city"].lower() == args.city.lower()]
-        if not destinations:
+        targets = [d for d in all_destinations if d["city"].lower() == args.city.lower()]
+        if not targets:
             logger.error("no destination named %r", args.city)
             return 1
 
-    counts_by_key, summary = fetch_all(destinations, radius_m=args.radius, sleep_s=args.sleep)
+    counts_by_key, summary = fetch_all(targets, radius_m=args.radius, sleep_s=args.sleep)
 
     if not args.dry_run and counts_by_key:
         write_snapshot(counts_by_key, args.radius)
-        # Only regenerate the CSV on a full run, so a --city test never truncates it.
-        if not args.city:
-            regenerate_features_csv(destinations, counts_by_key)
+        # Merge onto the full destination set: fetched cities are refreshed, the
+        # rest keep their last-good counts — safe even for a single --city run.
+        regenerate_features_csv(all_destinations, counts_by_key)
 
     logger.info(
         "OSM ingestion complete: %d/%d fetched, %d failed (radius %dm)%s",
