@@ -15,9 +15,10 @@ Pipeline:
   (``scripts.cost_of_living``): WhereNext primary (BS-011), then an optional CSV
   fallback, then a regional-average floor. It is joined onto each destination by
   ``country_code`` — never a CSV column of the raw features file.
-* **Normalize** every factor and the WhereNext cost index to ``[0,1]`` with
-  min-max normalization across the destination set (§14.2). A constant column
-  maps to ``0.5`` instead of dividing by zero.
+* **Normalize** to ``[0,1]`` with min-max across the destination set (§14.2).
+  The OSM factor counts are log-scaled first (they are right-skewed); the
+  WhereNext cost index is normalized linearly. A constant column maps to ``0.5``
+  instead of dividing by zero.
 * **Season score** is derived from the destination's climate class and the
   travel window: the mean over the window's months of that climate's monthly
   suitability curve, so the score varies by month.
@@ -41,6 +42,7 @@ from __future__ import annotations
 import argparse
 import csv
 import logging
+import math
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import date
@@ -274,8 +276,12 @@ def compute_features(
     if not rows:
         return {}
 
+    # Factor columns are OSM POI counts, which are heavily right-skewed (a few
+    # densely-mapped cities dwarf the rest). Log-scale (log1p) before min-max so
+    # one outlier can't flatten a whole column toward 0; log1p(0) == 0 keeps
+    # empty counts at the bottom of the range.
     normalized_factors = {
-        col: min_max_normalize([r.factors[col] for r in rows]) for col in FACTOR_COLUMNS
+        col: min_max_normalize([math.log1p(r.factors[col]) for r in rows]) for col in FACTOR_COLUMNS
     }
 
     # Cost: normalize across only the destinations WhereNext actually covers, so

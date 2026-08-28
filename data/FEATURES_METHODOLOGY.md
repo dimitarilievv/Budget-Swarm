@@ -88,9 +88,17 @@ normalized(x) = (x − min_over_destinations) / (max_over_destinations − min_o
 ```
 
 - Applied independently to `culture`, `nature`, `nightlife`, `food`, `tourism`
-  (OSM counts) and the WhereNext cost index. The cost index is normalized across
-  only the destinations WhereNext actually covers, so an uncovered country (which
-  gets a NULL `cost_of_living`) never distorts the [0,1] range for the rest.
+  (OSM counts) and the WhereNext cost index.
+- **The OSM factor counts are log-scaled (`log1p`) before min–max.** POI counts
+  are heavily right-skewed — a densely-mapped city (e.g. Warsaw) can have an
+  order of magnitude more tagged features than a small one, which under plain
+  min–max would flatten every other city toward 0. The log transform compresses
+  that skew so the [0,1] scores discriminate across the whole set; `log1p(0) = 0`
+  keeps a genuine zero count at the bottom. The cost index is **not** logged
+  (it is already a bounded index, not a count).
+- The cost index is normalized across only the destinations WhereNext actually
+  covers, so an uncovered country (which gets a NULL `cost_of_living`) never
+  distorts the [0,1] range for the rest.
 - If a column is constant across the set (`max == min`), every value maps to
   **0.5** (a neutral score) rather than dividing by zero.
 - Results are stored quantized to 3 decimal places to match the schema
@@ -154,13 +162,12 @@ loaded into the database are logged and skipped; the run does not abort.
 - **Cost-of-living is real WhereNext data**, but at **country** granularity — all
   destinations in a country share their country's `cost_index`. WhereNext's
   city-level dataset and sub-indices are available for a future refinement.
-- **The factor counts are real OpenStreetMap data**, but are **raw POI counts**
-  within a fixed radius: they reflect both a city's richness *and* how densely
-  that city is mapped/tagged in OSM, and min–max normalization is sensitive to
-  outliers (a heavily tagged city can compress the rest of a column toward 0). A
-  natural refinement is log-scaling the counts before normalization and/or tuning
-  the tag sets (e.g. dropping the broad `natural=wood` from `nature`); this
-  changes the inputs, not the normalization/season method.
+- **The factor counts are real OpenStreetMap data** — raw POI counts within a
+  fixed radius, so they reflect both a city's richness *and* how densely it is
+  mapped in OSM. The skew this introduces is handled by **log-scaling before
+  min–max** (§2). A further optional refinement is tuning the tag sets (e.g.
+  dropping the broad `natural=wood` from `nature`), which changes the inputs, not
+  the normalization/season method.
 - The season curves use climate-class archetypes, not per-city climate normals,
   and assume Northern-Hemisphere seasons.
 
