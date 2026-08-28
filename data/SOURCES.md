@@ -59,8 +59,14 @@ scraped, proprietary, or EULA-restricted data (e.g. Numbeo) is used here.
 
 ## Related datasets (BS-031 feature engineering)
 
-- `data/destination_features_raw.csv` — curated subjective factor indices
-  (culture/nature/nightlife/food/tourism) + climate class per destination.
+- `data/destination_features_raw.csv` — per-destination factor counts
+  (culture/nature/nightlife/food/tourism) + climate class. The five factor
+  columns are **generated from OpenStreetMap** by `scripts.ingest_osm_features`,
+  not hand-authored.
+- `data/osm_features_raw.json` — **committed snapshot of OpenStreetMap POI
+  counts** per destination (Overpass API, 12 km radius). **Attribution (required
+  by ODbL):** "© OpenStreetMap contributors, licensed under the ODbL 1.0." No API
+  key required.
 - `data/wherenext_cost_of_living.json` — **committed snapshot of WhereNext
   cost-of-living data** (getwherenext.com, `GET /api/data/cost-of-living`), used
   as the offline/CI fallback for cost-of-living ingestion (BS-011). **Attribution

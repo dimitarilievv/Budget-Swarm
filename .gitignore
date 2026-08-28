@@ -36,6 +36,7 @@ data/*
 !data/destination_features_raw.csv
 !data/FEATURES_METHODOLOGY.md
 !data/wherenext_cost_of_living.json
+!data/osm_features_raw.json
 
 # ---- IDE / OS ----
 .idea/

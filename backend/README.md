@@ -58,6 +58,22 @@ python -m scripts.ingest_cost_of_living --source snapshot  # offline (no network
 python -m scripts.ingest_cost_of_living --dry-run       # fetch + report, no writes
 ```
 
+## Factor ingestion — OpenStreetMap (BS-031)
+
+The five factor columns (culture/nature/nightlife/food/tourism) are **real POI
+counts from OpenStreetMap**, not hand-authored. `scripts.ingest_osm_features`
+queries the Overpass API for POIs of the relevant tags within a fixed radius of
+each city centre, writes a committed snapshot (`data/osm_features_raw.json`,
+ODbL), and regenerates `data/destination_features_raw.csv` (preserving the
+Köppen `climate` column). No API key is required.
+
+```bash
+python -m scripts.ingest_osm_features                 # all destinations (~minutes; Overpass throttles)
+python -m scripts.ingest_osm_features --city Sofia    # one city (testing)
+python -m scripts.ingest_osm_features --radius 10000  # custom radius (metres)
+python -m scripts.ingest_osm_features --dry-run       # fetch + report, no writes
+```
+
 ## Feature engineering (BS-031)
 
 Compute the normalized `destination_features` that drive Scout ranking. The five
@@ -80,7 +96,7 @@ python -m scripts.compute_destination_features --dry-run       # compute only, n
 ```
 
 Full pipeline order: `ingest_destinations` → `ingest_cost_of_living` →
-`compute_destination_features`.
+`ingest_osm_features` (regenerates the factor CSV) → `compute_destination_features`.
 
 Covered by `tests/test_compute_destination_features.py` and `tests/test_wherenext.py`
 (unit: normalization bounds, season model, validation, WhereNext parsing/fallback;
