@@ -20,6 +20,7 @@ from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import (
+    BigInteger,
     CheckConstraint,
     Date,
     DateTime,
@@ -340,8 +341,39 @@ class ApiCache(Base):
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class AirbnbListingRaw(Base):
+    """[RAW] One Inside Airbnb listing as downloaded, before cleaning (BS-033).
+
+    The full CSV row is preserved in ``raw`` (JSONB); ``snapshot_label``
+    (``inside-airbnb-<city>-<date>``) records exactly which Inside Airbnb snapshot
+    it came from. ``(snapshot_label, listing_id)`` is unique so re-importing a
+    snapshot upserts in place. BS-034 reads this table to normalize the usable
+    rows into :class:`Accommodation`.
+    """
+
+    __tablename__ = "airbnb_listings_raw"
+    __table_args__ = (
+        UniqueConstraint(
+            "snapshot_label", "listing_id", name="airbnb_listings_raw_snapshot_label_listing_id_key"
+        ),
+        Index("idx_airbnb_raw_snapshot", "snapshot_label"),
+        Index("idx_airbnb_raw_city", "city"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    snapshot_label: Mapped[str] = mapped_column(String(60), nullable=False)
+    city: Mapped[str] = mapped_column(String(80), nullable=False)
+    snapshot_date: Mapped[date] = mapped_column(Date, nullable=False)
+    listing_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    raw: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    loaded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 __all__ = [
     "Accommodation",
+    "AirbnbListingRaw",
     "ApiCache",
     "Attraction",
     "Destination",

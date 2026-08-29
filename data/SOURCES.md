@@ -198,3 +198,58 @@ requested `targets`" (a supplementary feed, like the /live/ station data). The
 resolver, ingest CLI, and `fuel_prices` schema stay untouched. See the worked
 examples in `backend/tests/test_ingest_fuel_prices.py`
 (`test_custom_provider_plugs_in_and_emits_its_countries`).
+
+---
+
+# Inside Airbnb raw listings — source notes (BS-033)
+
+**Target table:** `airbnb_listings_raw` (raw staging; full CSV row as JSONB +
+`snapshot_label`, `city`, `snapshot_date`, `listing_id`).
+**Downloaded snapshots:** `data/inside_airbnb/<city>-<date>-listings.csv.gz`
+(git-ignored — Inside Airbnb CSVs are tens of MB each and are never committed).
+
+## Source & coverage
+
+[Inside Airbnb](https://insideairbnb.com/get-the-data/) publishes quarterly
+`listings.csv.gz` snapshots per city (the BS-007 primary accommodation source:
+free, no key/account, **CC BY 4.0** with CC0 on the data). The importer resolves
+the latest snapshot for each target city from the public index and downloads it.
+
+Of the 30 curated destinations, **11 are covered by Inside Airbnb** (verified
+2026-08-29): Athens, Budapest, Istanbul, Lisbon, Naples, Porto, Prague, Riga,
+Thessaloniki, Valencia, Vienna. The Balkan/CEE cities (Sofia, Belgrade, Skopje,
+…) are **not** published by Inside Airbnb and are handled downstream as
+`estimated` (BS-007 decision; BS-034/035), not here.
+
+## What is stored
+
+This is a **raw** import: every row is stored verbatim (all ~90 columns preserved
+in the `raw` JSONB), *before* any cleaning — including rows with an empty `price`
+(e.g. 322 of Riga's 3,471). BS-034 validates and normalizes the usable rows into
+`accommodations` (strip `$`/commas, prefer `price_quote_price_per_night` + its
+currency, normalize to EUR, treat sentinel `999` nights as null). Keeping the raw
+layer means those lossy steps can be re-run and audited without re-downloading.
+
+`snapshot_label` = `inside-airbnb-<city>-<date>` records the exact snapshot;
+`(snapshot_label, listing_id)` is unique so a re-run is an idempotent upsert and a
+newer snapshot is added alongside (history preserved).
+
+## Attribution
+
+Inside Airbnb (insideairbnb.com), CC BY 4.0.
+
+## Reproduce / re-run
+
+Idempotent, chunked import. From `backend/`:
+
+```bash
+python -m scripts.ingest_airbnb                     # all covered target cities
+python -m scripts.ingest_airbnb --cities riga,athens
+python -m scripts.ingest_airbnb --dry-run           # download + count, no writes
+python -m scripts.ingest_airbnb --limit 500         # cap rows/city (smoke test)
+```
+
+Row counts vs source and column presence are covered by
+`backend/tests/test_ingest_airbnb.py` (unit tests use a small committed real
+excerpt, `backend/tests/fixtures/airbnb_sample_listings.csv`; the
+populate/idempotency test is an `integration` test that runs against Postgres).

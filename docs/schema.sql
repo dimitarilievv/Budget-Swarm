@@ -216,6 +216,24 @@ CREATE TABLE api_cache (
 CREATE INDEX idx_api_cache_expiry ON api_cache(provider, expires_at);
 
 -- ============================================================================
+-- [RAW] airbnb_listings_raw — Inside Airbnb import staging (BS-033)
+--       Full listings.csv rows preserved as JSONB, before cleaning. BS-034
+--       validates + normalizes usable rows into accommodations.
+-- ============================================================================
+CREATE TABLE airbnb_listings_raw (
+    id             BIGSERIAL PRIMARY KEY,
+    snapshot_label VARCHAR(60) NOT NULL,      -- 'inside-airbnb-<city>-<date>'
+    city           VARCHAR(80) NOT NULL,      -- Inside Airbnb city slug, e.g. 'riga'
+    snapshot_date  DATE NOT NULL,             -- the snapshot's scrape date
+    listing_id     VARCHAR(32) NOT NULL,      -- Inside Airbnb 'id' (kept as text)
+    raw            JSONB NOT NULL,            -- full original CSV row, uncleaned
+    loaded_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (snapshot_label, listing_id)
+);
+CREATE INDEX idx_airbnb_raw_snapshot ON airbnb_listings_raw(snapshot_label);
+CREATE INDEX idx_airbnb_raw_city     ON airbnb_listings_raw(city);
+
+-- ============================================================================
 -- Notes:
 --  * All monetary values are stored in EUR after normalization.
 --  * quality_flag columns let the optimizer and UI stay honest about whether a
