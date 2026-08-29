@@ -151,3 +151,27 @@ Full pipeline order: `ingest_destinations` → `ingest_cost_of_living` →
 Covered by `tests/test_compute_destination_features.py` and `tests/test_wherenext.py`
 (unit: normalization bounds, season model, validation, WhereNext parsing/fallback;
 `integration` groups that compute + store and exercise the cache against a live DB).
+
+## Retrieval layer — DB/cache-first reads (BS-037)
+
+`db/retrieval.py` gives providers/agents a read-through so they consult existing
+data before spending an external call (ADR-008; quota protection + speed):
+
+```python
+from datetime import timedelta
+from db.retrieval import ApiCacheStore, read_through
+
+store = ApiCacheStore(session)
+result = read_through(store, "open-meteo", params, fetch_fn=call_open_meteo,
+                      ttl=timedelta(hours=6))
+# result.quality_flag == "cached" on a fresh hit (fetch_fn not called),
+#                      == "real"   on a miss/stale (fetched + stored with the TTL).
+```
+
+A **fresh** `api_cache` entry is returned marked `cached`; a **missing/stale** one
+falls through to `fetch_fn`, whose result is upserted with the TTL and returned
+marked `real`. If the fetch fails but a stale entry exists it is served
+(`cached`, `stale=True`) rather than failing the request (degrade-don't-crash,
+ADR-005). `get_cached(...)` is a fetch-free cache peek. The cache sits behind a
+small `CacheStore` protocol (production `ApiCacheStore`), so the hit/miss/stale
+logic is unit-tested without a database (`tests/test_retrieval.py`).
