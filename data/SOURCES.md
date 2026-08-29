@@ -283,3 +283,47 @@ The importer, the `raw_accommodation_listings` table, and downstream
 normalization stay untouched. `source` is recorded on every row, and
 `snapshot_label` becomes `<source>-<city>-<date>`. See the worked example in
 `backend/tests/test_ingest_accommodations.py::test_custom_source_plugs_into_importer`.
+
+---
+
+# Currency FX rates (ECB) + accommodation cleaning — source notes (BS-034)
+
+**FX artifact:** `data/ecb_eur_rates.json` (committed snapshot; offline/CI floor).
+
+## FX source
+
+Prices are normalized to **EUR** using **European Central Bank** reference rates,
+fetched from the free, no-key [Frankfurter](https://frankfurter.dev) API
+(`https://api.frankfurter.dev/v1/latest?base=EUR`), expressed as units-per-EUR.
+A committed snapshot is the reproducible offline floor (`scripts.currency`
+resolves live → snapshot). Cite: European Central Bank (via frankfurter.dev).
+
+## Why per-city currency
+
+Inside Airbnb quotes each city's prices in that city's **local currency**, and the
+per-row `currency` field is unreliable (e.g. it is `null` for every Prague row,
+whose prices are clearly CZK). So the currency is fixed **per city by the source**
+(`InsideAirbnbSource.currency_for`): Prague→CZK, Budapest→HUF, Istanbul→TRY, the
+eurozone cities→EUR. The amount is then converted with the ECB rate.
+
+## Cleaning (BS-034)
+
+`scripts.clean_accommodations` reads raw rows from `raw_accommodation_listings`
+and produces clean, EUR-normalized `CleanListing` records + a `ValidationReport`,
+*before* normalization (BS-035 persists them into `accommodations`). Rules:
+
+- **Dropped**: no usable price, no/invalid location (lat/lon), unconvertible
+  currency, price outside €1–100 000/night, duplicate `listing_id`.
+- **Cleaned (not dropped)**: `$`/comma-stripped prices; ratings outside 0–5 and
+  sentinel night values (999/1125) nulled.
+- Reusable field validators live in `scripts.validators` (BS-036).
+
+Verified against real data (Prague 11 615 rows → 10 583 kept, CZK→EUR, median
+€102/night). Produce a report for a snapshot:
+
+```bash
+python -m scripts.clean_accommodations inside-airbnb-prague-2026-06-27
+```
+
+Validators + cleaning + conversion are covered by
+`backend/tests/test_validators.py` and `backend/tests/test_clean_accommodations.py`.

@@ -41,6 +41,8 @@ data/*
 # Fuel-price snapshots — the offline/CI floor for ingestion + tests (BS-032).
 !data/fuel_prices_oil_bulletin.txt
 !data/fuel_prices_live_summary.json
+# ECB EUR reference rates snapshot — offline/CI floor for currency (BS-034).
+!data/ecb_eur_rates.json
 
 # ---- IDE / OS ----
 .idea/

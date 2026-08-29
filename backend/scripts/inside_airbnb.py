@@ -70,6 +70,23 @@ REQUIRED_COLUMNS: frozenset[str] = frozenset(
 LICENSE = "CC BY 4.0"
 ATTRIBUTION = "Inside Airbnb (insideairbnb.com)"
 
+# Local currency each covered city's prices are quoted in. Inside Airbnb reports
+# prices in the listing's market currency, and the per-row currency field is
+# unreliable (often null, e.g. all of Prague), so it is fixed per city here.
+CITY_CURRENCY: dict[str, str] = {
+    "athens": "EUR",
+    "budapest": "HUF",
+    "istanbul": "TRY",
+    "lisbon": "EUR",
+    "naples": "EUR",
+    "porto": "EUR",
+    "prague": "CZK",
+    "riga": "EUR",
+    "thessaloniki": "EUR",
+    "valencia": "EUR",
+    "vienna": "EUR",
+}
+
 
 def _rebuild_url(country: str, region: str, city: str, iso: str) -> str:
     return f"https://data.insideairbnb.com/{country}/{region}/{city}/{iso}/data/listings.csv.gz"
@@ -84,6 +101,13 @@ class InsideAirbnbSource(CsvSnapshotSource):
 
     def default_targets(self) -> tuple[str, ...]:
         return TARGET_CITIES
+
+    def currency_for(self, city: str) -> str:
+        currency = CITY_CURRENCY.get(city.lower())
+        if currency is None:
+            logger.warning("inside-airbnb: unknown currency for city %r; assuming EUR", city)
+            return "EUR"
+        return currency
 
     def fetch_index(self, timeout: float = 30.0) -> str:
         """GET the Inside Airbnb "get the data" index HTML (raises on network error)."""
