@@ -1,0 +1,574 @@
+{
+    "ok": true,
+    "data": {
+        "countries": [
+            {
+                "country_code": "AD",
+                "fuels": {
+                    "diesel": {
+                        "stations": 54,
+                        "min": 1.689,
+                        "max": 1.725,
+                        "avg": 1.698
+                    },
+                    "gpl": {
+                        "stations": 1,
+                        "min": 0.876,
+                        "max": 0.876,
+                        "avg": 0.876
+                    },
+                    "sp95": {
+                        "stations": 54,
+                        "min": 1.515,
+                        "max": 1.548,
+                        "avg": 1.521
+                    },
+                    "sp98": {
+                        "stations": 54,
+                        "min": 1.575,
+                        "max": 1.608,
+                        "avg": 1.582
+                    }
+                },
+                "last_fetched": "2026-08-29 09:07:06",
+                "total_stations": 54
+            },
+            {
+                "country_code": "AT",
+                "fuels": {
+                    "diesel": {
+                        "stations": 2135,
+                        "min": 1.799,
+                        "max": 2.399,
+                        "avg": 2.001
+                    },
+                    "sp95": {
+                        "stations": 1943,
+                        "min": 1.626,
+                        "max": 2.149,
+                        "avg": 1.777
+                    }
+                },
+                "last_fetched": "2026-08-29 09:25:49",
+                "total_stations": 2306
+            },
+            {
+                "country_code": "AU",
+                "fuels": {
+                    "diesel": {
+                        "stations": 2983,
+                        "min": 1.262,
+                        "max": 2.781,
+                        "avg": 1.594
+                    },
+                    "e10": {
+                        "stations": 1635,
+                        "min": 1.047,
+                        "max": 1.427,
+                        "avg": 1.245
+                    },
+                    "e5": {
+                        "stations": 2023,
+                        "min": 0.148,
+                        "max": 1.854,
+                        "avg": 1.37
+                    },
+                    "gpl": {
+                        "stations": 656,
+                        "min": 0.543,
+                        "max": 1.853,
+                        "avg": 0.655
+                    },
+                    "sp95": {
+                        "stations": 4365,
+                        "min": 1.072,
+                        "max": 2.781,
+                        "avg": 1.286
+                    },
+                    "sp98": {
+                        "stations": 3847,
+                        "min": 1.087,
+                        "max": 2.088,
+                        "avg": 1.425
+                    }
+                },
+                "last_fetched": "2026-08-29 09:35:05",
+                "total_stations": 6570
+            },
+            {
+                "country_code": "DK",
+                "fuels": {
+                    "diesel": {
+                        "stations": 2083,
+                        "min": 2.139,
+                        "max": 2.487,
+                        "avg": 2.305
+                    },
+                    "sp95": {
+                        "stations": 2073,
+                        "min": 2.126,
+                        "max": 2.46,
+                        "avg": 2.298
+                    },
+                    "sp98": {
+                        "stations": 1100,
+                        "min": 2.581,
+                        "max": 2.795,
+                        "avg": 2.589
+                    }
+                },
+                "last_fetched": "2026-08-29 09:15:14",
+                "total_stations": 2095
+            },
+            {
+                "country_code": "ES",
+                "fuels": {
+                    "diesel": {
+                        "stations": 11245,
+                        "min": 1.399,
+                        "max": 2.249,
+                        "avg": 1.856
+                    },
+                    "gpl": {
+                        "stations": 995,
+                        "min": 0.781,
+                        "max": 1.289,
+                        "avg": 1.083
+                    },
+                    "sp95": {
+                        "stations": 10896,
+                        "min": 1.244,
+                        "max": 2.149,
+                        "avg": 1.726
+                    },
+                    "sp98": {
+                        "stations": 5507,
+                        "min": 1.345,
+                        "max": 2.299,
+                        "avg": 1.893
+                    }
+                },
+                "last_fetched": "2026-08-29 05:40:17",
+                "total_stations": 12411
+            },
+            {
+                "country_code": "FR",
+                "fuels": {
+                    "diesel": {
+                        "stations": 7624,
+                        "min": 2.019,
+                        "max": 2.74,
+                        "avg": 2.218
+                    },
+                    "e10": {
+                        "stations": 6273,
+                        "min": 1.946,
+                        "max": 2.565,
+                        "avg": 2.031
+                    },
+                    "e85": {
+                        "stations": 2779,
+                        "min": 0.754,
+                        "max": 1.99,
+                        "avg": 0.872
+                    },
+                    "gpl": {
+                        "stations": 847,
+                        "min": 0.873,
+                        "max": 1.285,
+                        "avg": 1.035
+                    },
+                    "sp95": {
+                        "stations": 1800,
+                        "min": 1.95,
+                        "max": 2.329,
+                        "avg": 2.072
+                    },
+                    "sp98": {
+                        "stations": 5792,
+                        "min": 1.98,
+                        "max": 2.715,
+                        "avg": 2.116
+                    }
+                },
+                "last_fetched": "2026-08-28 21:20:18",
+                "total_stations": 10103
+            },
+            {
+                "country_code": "GB",
+                "fuels": {
+                    "diesel": {
+                        "stations": 2374,
+                        "min": 1.632,
+                        "max": 2.414,
+                        "avg": 2.137
+                    },
+                    "e10": {
+                        "stations": 2374,
+                        "min": 1.539,
+                        "max": 2.192,
+                        "avg": 1.884
+                    },
+                    "e5": {
+                        "stations": 2012,
+                        "min": 1.749,
+                        "max": 2.402,
+                        "avg": 2.098
+                    },
+                    "sp98": {
+                        "stations": 1596,
+                        "min": 1.784,
+                        "max": 2.624,
+                        "avg": 2.333
+                    }
+                },
+                "last_fetched": "2026-08-29 09:40:07",
+                "total_stations": 3879
+            },
+            {
+                "country_code": "GR",
+                "fuels": {
+                    "diesel": {
+                        "stations": 6182,
+                        "min": 2.007,
+                        "max": 2.273,
+                        "avg": 2.046
+                    },
+                    "gpl": {
+                        "stations": 6182,
+                        "min": 0.884,
+                        "max": 1.351,
+                        "avg": 0.979
+                    },
+                    "sp95": {
+                        "stations": 6182,
+                        "min": 1.998,
+                        "max": 2.284,
+                        "avg": 2.042
+                    },
+                    "sp98": {
+                        "stations": 6182,
+                        "min": 2.24,
+                        "max": 2.488,
+                        "avg": 2.288
+                    }
+                },
+                "last_fetched": "2026-08-28 11:30:07",
+                "total_stations": 6182
+            },
+            {
+                "country_code": "HR",
+                "fuels": {
+                    "diesel": {
+                        "stations": 860,
+                        "min": 1.31,
+                        "max": 2.188,
+                        "avg": 1.868
+                    },
+                    "gpl": {
+                        "stations": 486,
+                        "min": 0.63,
+                        "max": 1.7,
+                        "avg": 0.745
+                    },
+                    "sp95": {
+                        "stations": 858,
+                        "min": 1.33,
+                        "max": 1.84,
+                        "avg": 1.666
+                    },
+                    "sp98": {
+                        "stations": 351,
+                        "min": 1.7,
+                        "max": 2.39,
+                        "avg": 2.249
+                    }
+                },
+                "last_fetched": "2026-08-29 09:05:02",
+                "total_stations": 871
+            },
+            {
+                "country_code": "IS",
+                "fuels": {
+                    "diesel": {
+                        "stations": 245,
+                        "min": 1.593,
+                        "max": 1.86,
+                        "avg": 1.794
+                    },
+                    "sp95": {
+                        "stations": 245,
+                        "min": 1.357,
+                        "max": 1.668,
+                        "avg": 1.597
+                    }
+                },
+                "last_fetched": "2026-08-29 09:25:02",
+                "total_stations": 245
+            },
+            {
+                "country_code": "IT",
+                "fuels": {
+                    "cng": {
+                        "stations": 1432,
+                        "min": 1,
+                        "max": 4.999,
+                        "avg": 1.668
+                    },
+                    "diesel": {
+                        "stations": 19533,
+                        "min": 0.78,
+                        "max": 3,
+                        "avg": 2.16
+                    },
+                    "gpl": {
+                        "stations": 4128,
+                        "min": 0.554,
+                        "max": 1.399,
+                        "avg": 0.755
+                    },
+                    "lng": {
+                        "stations": 156,
+                        "min": 1.199,
+                        "max": 1.899,
+                        "avg": 1.568
+                    },
+                    "sp95": {
+                        "stations": 19530,
+                        "min": 1.528,
+                        "max": 3.25,
+                        "avg": 2.018
+                    },
+                    "sp98": {
+                        "stations": 1041,
+                        "min": 0.1,
+                        "max": 3,
+                        "avg": 2.147
+                    }
+                },
+                "last_fetched": "2026-08-28 15:40:35",
+                "total_stations": 22397
+            },
+            {
+                "country_code": "LT",
+                "fuels": {
+                    "diesel": {
+                        "stations": 740,
+                        "min": 1.929,
+                        "max": 2.199,
+                        "avg": 2.053
+                    },
+                    "gpl": {
+                        "stations": 605,
+                        "min": 0.669,
+                        "max": 0.94,
+                        "avg": 0.763
+                    },
+                    "sp95": {
+                        "stations": 738,
+                        "min": 1.659,
+                        "max": 1.929,
+                        "avg": 1.779
+                    }
+                },
+                "last_fetched": "2026-08-28 09:35:03",
+                "total_stations": 766
+            },
+            {
+                "country_code": "PT",
+                "fuels": {
+                    "diesel": {
+                        "stations": 2883,
+                        "min": 1.859,
+                        "max": 2.339,
+                        "avg": 2.132
+                    },
+                    "gpl": {
+                        "stations": 415,
+                        "min": 0.849,
+                        "max": 1.159,
+                        "avg": 0.955
+                    },
+                    "sp95": {
+                        "stations": 3045,
+                        "min": 1.629,
+                        "max": 2.24,
+                        "avg": 2.032
+                    },
+                    "sp98": {
+                        "stations": 492,
+                        "min": 1.919,
+                        "max": 2.339,
+                        "avg": 2.134
+                    }
+                },
+                "last_fetched": "2026-08-28 18:40:13",
+                "total_stations": 3323
+            },
+            {
+                "country_code": "SI",
+                "fuels": {
+                    "diesel": {
+                        "stations": 541,
+                        "min": 1.463,
+                        "max": 2.141,
+                        "avg": 1.921
+                    },
+                    "gpl": {
+                        "stations": 137,
+                        "min": 0.79,
+                        "max": 1.046,
+                        "avg": 0.991
+                    },
+                    "sp95": {
+                        "stations": 527,
+                        "min": 1.465,
+                        "max": 1.875,
+                        "avg": 1.63
+                    },
+                    "sp98": {
+                        "stations": 352,
+                        "min": 1.963,
+                        "max": 2.16,
+                        "avg": 1.997
+                    }
+                },
+                "last_fetched": "2026-08-29 04:05:51",
+                "total_stations": 546
+            },
+            {
+                "country_code": "RO",
+                "fuels": {
+                    "sp95": {
+                        "stations": 1129,
+                        "min": 1.803,
+                        "max": 1.82,
+                        "avg": 1.815
+                    },
+                    "diesel": {
+                        "stations": 1130,
+                        "min": 1.911,
+                        "max": 1.978,
+                        "avg": 1.945
+                    }
+                },
+                "last_fetched": "2026-08-29 09:15:17",
+                "total_stations": 1412
+            },
+            {
+                "country_code": "MD",
+                "fuels": {
+                    "sp95": {
+                        "stations": 803,
+                        "min": 1.552,
+                        "max": 1.552,
+                        "avg": 1.552
+                    },
+                    "diesel": {
+                        "stations": 803,
+                        "min": 1.633,
+                        "max": 1.633,
+                        "avg": 1.633
+                    }
+                },
+                "last_fetched": "2026-08-29 06:00:03",
+                "total_stations": 803
+            },
+            {
+                "country_code": "RS",
+                "fuels": {
+                    "sp95": {
+                        "stations": 1544,
+                        "min": 1.721,
+                        "max": 1.721,
+                        "avg": 1.721
+                    },
+                    "diesel": {
+                        "stations": 1544,
+                        "min": 1.968,
+                        "max": 1.968,
+                        "avg": 1.968
+                    }
+                },
+                "last_fetched": "2026-08-28 13:30:04",
+                "total_stations": 1544
+            },
+            {
+                "country_code": "TR",
+                "fuels": {
+                    "sp95": {
+                        "stations": 12045,
+                        "min": 1.321,
+                        "max": 1.371,
+                        "avg": 1.351
+                    },
+                    "diesel": {
+                        "stations": 12045,
+                        "min": 1.377,
+                        "max": 1.43,
+                        "avg": 1.409
+                    }
+                },
+                "last_fetched": "2026-08-29 05:45:04",
+                "total_stations": 12045
+            },
+            {
+                "country_code": "MK",
+                "fuels": {
+                    "sp95": {
+                        "stations": 362,
+                        "min": 1.512,
+                        "max": 1.512,
+                        "avg": 1.512
+                    },
+                    "diesel": {
+                        "stations": 362,
+                        "min": 1.65,
+                        "max": 1.65,
+                        "avg": 1.65
+                    }
+                },
+                "last_fetched": "2026-08-29 05:50:01",
+                "total_stations": 362
+            },
+            {
+                "country_code": "ME",
+                "fuels": {
+                    "sp95": {
+                        "stations": 122,
+                        "min": 1.76,
+                        "max": 1.76,
+                        "avg": 1.76
+                    },
+                    "diesel": {
+                        "stations": 122,
+                        "min": 1.87,
+                        "max": 1.87,
+                        "avg": 1.87
+                    }
+                },
+                "last_fetched": "2026-08-29 05:55:02",
+                "total_stations": 122
+            },
+            {
+                "country_code": "BA",
+                "fuels": {
+                    "sp95": {
+                        "stations": 999,
+                        "min": 1.519,
+                        "max": 1.519,
+                        "avg": 1.519
+                    },
+                    "diesel": {
+                        "stations": 999,
+                        "min": 1.718,
+                        "max": 1.718,
+                        "avg": 1.718
+                    }
+                },
+                "last_fetched": "2026-08-29 05:58:01",
+                "total_stations": 999
+            }
+        ]
+    }
+}

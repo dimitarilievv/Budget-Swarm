@@ -38,6 +38,9 @@ data/*
 !data/wherenext_cost_of_living.json
 !data/osm_features_raw.json
 !data/season_profiles.json
+# Fuel-price snapshots — the offline/CI floor for ingestion + tests (BS-032).
+!data/fuel_prices_oil_bulletin.txt
+!data/fuel_prices_live_summary.json
 
 # ---- IDE / OS ----
 .idea/
