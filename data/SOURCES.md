@@ -203,9 +203,10 @@ examples in `backend/tests/test_ingest_fuel_prices.py`
 
 # Inside Airbnb raw listings — source notes (BS-033)
 
-**Target table:** `airbnb_listings_raw` (raw staging; full CSV row as JSONB +
-`snapshot_label`, `city`, `snapshot_date`, `listing_id`).
-**Downloaded snapshots:** `data/inside_airbnb/<city>-<date>-listings.csv.gz`
+**Target table:** `raw_accommodation_listings` (source-agnostic raw staging; full
+CSV row as JSONB + `source`, `snapshot_label`, `city`, `snapshot_date`,
+`listing_id`). Inside Airbnb is one pluggable source (`source = 'inside-airbnb'`).
+**Downloaded snapshots:** `data/inside-airbnb/inside-airbnb-<city>-<date>-listings.csv.gz`
 (git-ignored — Inside Airbnb CSVs are tens of MB each and are never committed).
 
 ## Source & coverage
@@ -243,13 +244,42 @@ Inside Airbnb (insideairbnb.com), CC BY 4.0.
 Idempotent, chunked import. From `backend/`:
 
 ```bash
-python -m scripts.ingest_airbnb                     # all covered target cities
-python -m scripts.ingest_airbnb --cities riga,athens
-python -m scripts.ingest_airbnb --dry-run           # download + count, no writes
-python -m scripts.ingest_airbnb --limit 500         # cap rows/city (smoke test)
+python -m scripts.ingest_accommodations                       # inside-airbnb, all cities
+python -m scripts.ingest_accommodations --source inside-airbnb --cities riga,athens
+python -m scripts.ingest_accommodations --dry-run             # download + count, no writes
+python -m scripts.ingest_accommodations --limit 500           # cap rows/city (smoke test)
 ```
 
 Row counts vs source and column presence are covered by
-`backend/tests/test_ingest_airbnb.py` (unit tests use a small committed real
-excerpt, `backend/tests/fixtures/airbnb_sample_listings.csv`; the
+`backend/tests/test_ingest_accommodations.py` (unit tests use a small committed
+real excerpt, `backend/tests/fixtures/airbnb_sample_listings.csv`; the
 populate/idempotency test is an `integration` test that runs against Postgres).
+
+## Adding a new source (e.g. Booking.com export, a tourism-board feed)
+
+Accommodation sources are **pluggable** and need **no schema change** — the raw
+row is stored as JSONB, so any source's columns fit. Add a source by implementing
+the `AccommodationSource` contract in `backend/scripts/accommodation_sources.py`.
+For a source that publishes a downloadable CSV snapshot per city, subclass
+`CsvSnapshotSource` (download + chunked read are inherited) and only describe
+*where* its files are:
+
+```python
+class BookingExportSource(CsvSnapshotSource):
+    name = "booking-export"
+    required_columns = frozenset({"id", "price", "room_type", "latitude", "longitude"})
+    def default_targets(self): return ("sofia", "belgrade", ...)
+    def discover(self, *, targets, timeout):
+        return {city: DatasetRef("booking-export", city, snap_date, url) for ...}
+```
+
+Register it in `available_sources()`, then:
+
+```bash
+python -m scripts.ingest_accommodations --source booking-export
+```
+
+The importer, the `raw_accommodation_listings` table, and downstream
+normalization stay untouched. `source` is recorded on every row, and
+`snapshot_label` becomes `<source>-<city>-<date>`. See the worked example in
+`backend/tests/test_ingest_accommodations.py::test_custom_source_plugs_into_importer`.

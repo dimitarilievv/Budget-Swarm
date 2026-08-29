@@ -152,14 +152,16 @@ Fill in these columns as you register and test each source:
 - **Caveats for code (BS-033/034/035):** (1) `price` has `$` + commas → strip and cast; prefer `price_quote_raw.price_per_night` + its `currency`; (2) normalize all prices to **EUR**; (3) sentinel `999` appears in min/max nights fields → treat as unknown/null; (4) large files → chunked load
 - **DECISION: A/C — primary accommodation dataset.** Covered cities → real (`quality_flag=real`); uncovered cities → estimate from per-city price stats (`quality_flag=estimated`, fallback D).
 - Verified on: 2026-08-22
-- **IMPLEMENTED (BS-033, 2026-08-29):** `scripts.ingest_airbnb` resolves the latest
-  snapshot per covered city from the get-the-data index, downloads it (cached under
-  `data/inside_airbnb/`, git-ignored), and chunk-loads every row **raw** (full CSV
-  row as JSONB, before cleaning — price-less rows kept) into the new
-  `airbnb_listings_raw` table, keyed by `snapshot_label` (`inside-airbnb-<city>-<date>`).
-  Idempotent upsert on `(snapshot_label, listing_id)`. BS-034 will normalize into
-  `accommodations`. Verified against real data (Riga 3,471 rows, all 90 columns
-  preserved).
+- **IMPLEMENTED (BS-033, 2026-08-29):** `scripts.ingest_accommodations` (over a
+  pluggable `AccommodationSource` layer; `source = inside-airbnb`) resolves the
+  latest snapshot per covered city from the get-the-data index, downloads it
+  (cached under `data/inside-airbnb/`, git-ignored), and chunk-loads every row
+  **raw** (full CSV row as JSONB, before cleaning — price-less rows kept) into the
+  source-agnostic `raw_accommodation_listings` table, keyed by `snapshot_label`
+  (`<source>-<city>-<date>`). Idempotent upsert on `(snapshot_label, listing_id)`.
+  A future source (e.g. a Booking export) is one class + one registry entry, no
+  schema change. BS-034 will normalize into `accommodations`. Verified against real
+  data (Riga 3,471 rows, all 90 columns preserved).
 
 ### Makcorps  `[optional live touch]`
 - [ ] ⚠️ Confirm current free trial size (research: ~30 calls)

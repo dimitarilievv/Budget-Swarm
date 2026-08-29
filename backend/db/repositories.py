@@ -21,12 +21,12 @@ from sqlalchemy.orm import Session
 
 from db.models import (
     Accommodation,
-    AirbnbListingRaw,
     ApiCache,
     Attraction,
     Destination,
     DestinationFeature,
     FuelPrice,
+    RawAccommodationListing,
     TransportOption,
     Trip,
     TripActivity,
@@ -178,21 +178,23 @@ class TripActivityRepository(Repository[TripActivity]):
         return list(self.session.scalars(stmt).all())
 
 
-class AirbnbListingRawRepository(Repository[AirbnbListingRaw]):
-    model = AirbnbListingRaw
+class RawAccommodationListingRepository(Repository[RawAccommodationListing]):
+    model = RawAccommodationListing
 
     def count_for_snapshot(self, snapshot_label: str) -> int:
-        """Number of raw rows stored for one Inside Airbnb snapshot."""
+        """Number of raw rows stored for one accommodation snapshot."""
         stmt = (
             select(func.count())
-            .select_from(AirbnbListingRaw)
-            .where(AirbnbListingRaw.snapshot_label == snapshot_label)
+            .select_from(RawAccommodationListing)
+            .where(RawAccommodationListing.snapshot_label == snapshot_label)
         )
         return self.session.scalar(stmt) or 0
 
-    def list_for_snapshot(self, snapshot_label: str) -> list[AirbnbListingRaw]:
+    def list_for_snapshot(self, snapshot_label: str) -> list[RawAccommodationListing]:
         """All raw rows for one snapshot (BS-034 reads these to normalize)."""
-        stmt = select(AirbnbListingRaw).where(AirbnbListingRaw.snapshot_label == snapshot_label)
+        stmt = select(RawAccommodationListing).where(
+            RawAccommodationListing.snapshot_label == snapshot_label
+        )
         return list(self.session.scalars(stmt).all())
 
 
@@ -220,12 +222,12 @@ class ApiCacheRepository(Repository[ApiCache]):
 
 __all__ = [
     "AccommodationRepository",
-    "AirbnbListingRawRepository",
     "ApiCacheRepository",
     "AttractionRepository",
     "DestinationFeatureRepository",
     "DestinationRepository",
     "FuelPriceRepository",
+    "RawAccommodationListingRepository",
     "Repository",
     "TransportOptionRepository",
     "TripActivityRepository",

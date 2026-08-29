@@ -341,30 +341,34 @@ class ApiCache(Base):
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
-class AirbnbListingRaw(Base):
-    """[RAW] One Inside Airbnb listing as downloaded, before cleaning (BS-033).
+class RawAccommodationListing(Base):
+    """[RAW] One accommodation listing as downloaded, before cleaning (BS-033).
 
-    The full CSV row is preserved in ``raw`` (JSONB); ``snapshot_label``
-    (``inside-airbnb-<city>-<date>``) records exactly which Inside Airbnb snapshot
-    it came from. ``(snapshot_label, listing_id)`` is unique so re-importing a
-    snapshot upserts in place. BS-034 reads this table to normalize the usable
-    rows into :class:`Accommodation`.
+    Source-agnostic: ``source`` names the provider (e.g. ``inside-airbnb``) and the
+    full CSV row is preserved in ``raw`` (JSONB), so any source's schema fits with
+    no table change. ``snapshot_label`` (``<source>-<city>-<date>``) records the
+    exact snapshot; ``(snapshot_label, listing_id)`` is unique so re-importing a
+    snapshot upserts in place. BS-034 reads this table to normalize the usable rows
+    into :class:`Accommodation`.
     """
 
-    __tablename__ = "airbnb_listings_raw"
+    __tablename__ = "raw_accommodation_listings"
     __table_args__ = (
         UniqueConstraint(
-            "snapshot_label", "listing_id", name="airbnb_listings_raw_snapshot_label_listing_id_key"
+            "snapshot_label",
+            "listing_id",
+            name="raw_accommodation_listings_snapshot_label_listing_id_key",
         ),
-        Index("idx_airbnb_raw_snapshot", "snapshot_label"),
-        Index("idx_airbnb_raw_city", "city"),
+        Index("idx_raw_accom_source_snapshot", "source", "snapshot_label"),
+        Index("idx_raw_accom_city", "city"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    source: Mapped[str] = mapped_column(String(40), nullable=False)
     snapshot_label: Mapped[str] = mapped_column(String(60), nullable=False)
     city: Mapped[str] = mapped_column(String(80), nullable=False)
     snapshot_date: Mapped[date] = mapped_column(Date, nullable=False)
-    listing_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    listing_id: Mapped[str] = mapped_column(String(64), nullable=False)
     raw: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     loaded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -373,12 +377,12 @@ class AirbnbListingRaw(Base):
 
 __all__ = [
     "Accommodation",
-    "AirbnbListingRaw",
     "ApiCache",
     "Attraction",
     "Destination",
     "DestinationFeature",
     "FuelPrice",
+    "RawAccommodationListing",
     "TransportOption",
     "Trip",
     "TripActivity",

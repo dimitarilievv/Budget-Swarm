@@ -216,22 +216,24 @@ CREATE TABLE api_cache (
 CREATE INDEX idx_api_cache_expiry ON api_cache(provider, expires_at);
 
 -- ============================================================================
--- [RAW] airbnb_listings_raw — Inside Airbnb import staging (BS-033)
---       Full listings.csv rows preserved as JSONB, before cleaning. BS-034
+-- [RAW] raw_accommodation_listings — accommodation import staging (BS-033)
+--       Source-agnostic: full listings.csv rows preserved as JSONB, before
+--       cleaning, from any source (Inside Airbnb today; others later). BS-034
 --       validates + normalizes usable rows into accommodations.
 -- ============================================================================
-CREATE TABLE airbnb_listings_raw (
+CREATE TABLE raw_accommodation_listings (
     id             BIGSERIAL PRIMARY KEY,
-    snapshot_label VARCHAR(60) NOT NULL,      -- 'inside-airbnb-<city>-<date>'
-    city           VARCHAR(80) NOT NULL,      -- Inside Airbnb city slug, e.g. 'riga'
+    source         VARCHAR(40) NOT NULL,      -- provider name, e.g. 'inside-airbnb'
+    snapshot_label VARCHAR(60) NOT NULL,      -- '<source>-<city>-<date>'
+    city           VARCHAR(80) NOT NULL,      -- city slug, e.g. 'riga'
     snapshot_date  DATE NOT NULL,             -- the snapshot's scrape date
-    listing_id     VARCHAR(32) NOT NULL,      -- Inside Airbnb 'id' (kept as text)
+    listing_id     VARCHAR(64) NOT NULL,      -- source's native listing id (kept as text)
     raw            JSONB NOT NULL,            -- full original CSV row, uncleaned
     loaded_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (snapshot_label, listing_id)
 );
-CREATE INDEX idx_airbnb_raw_snapshot ON airbnb_listings_raw(snapshot_label);
-CREATE INDEX idx_airbnb_raw_city     ON airbnb_listings_raw(city);
+CREATE INDEX idx_raw_accom_source_snapshot ON raw_accommodation_listings(source, snapshot_label);
+CREATE INDEX idx_raw_accom_city            ON raw_accommodation_listings(city);
 
 -- ============================================================================
 -- Notes:
