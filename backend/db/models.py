@@ -145,6 +145,33 @@ class Accommodation(Base):
     destination: Mapped[Destination] = relationship(back_populates="accommodations")
 
 
+class AccommodationPriceStats(Base):
+    """[RFR] Precomputed per-destination EUR price distribution (BS-035).
+
+    One row per destination: the count and min/Q1/median/Q3/max of its
+    normalized ``accommodations`` prices (EUR). Used by StayAgent for
+    representative-option selection and, for cities without listings, as the
+    ``estimated`` price fallback.
+    """
+
+    __tablename__ = "accommodation_price_stats"
+
+    destination_id: Mapped[int] = mapped_column(
+        ForeignKey("destinations.id", ondelete="CASCADE"), primary_key=True
+    )
+    sample_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, server_default=text("'EUR'"))
+    price_min: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    price_q1: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    price_median: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    price_q3: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    price_max: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    snapshot_label: Mapped[str | None] = mapped_column(String(60))
+    computed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class Attraction(Base):
     """[RFR] POIs per destination with an indoor/outdoor class."""
 
@@ -377,6 +404,7 @@ class RawAccommodationListing(Base):
 
 __all__ = [
     "Accommodation",
+    "AccommodationPriceStats",
     "ApiCache",
     "Attraction",
     "Destination",

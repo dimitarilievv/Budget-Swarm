@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 
 from db.models import (
     Accommodation,
+    AccommodationPriceStats,
     ApiCache,
     Attraction,
     Destination,
@@ -109,6 +110,13 @@ class AccommodationRepository(Repository[Accommodation]):
             .order_by(Accommodation.price_per_night)
         )
         return list(self.session.scalars(stmt).all())
+
+
+class AccommodationPriceStatsRepository(Repository[AccommodationPriceStats]):
+    model = AccommodationPriceStats
+
+    def get_for_destination(self, destination_id: int) -> AccommodationPriceStats | None:
+        return self.get(destination_id)
 
 
 class AttractionRepository(Repository[Attraction]):
@@ -221,6 +229,7 @@ class ApiCacheRepository(Repository[ApiCache]):
 
 
 __all__ = [
+    "AccommodationPriceStatsRepository",
     "AccommodationRepository",
     "ApiCacheRepository",
     "AttractionRepository",

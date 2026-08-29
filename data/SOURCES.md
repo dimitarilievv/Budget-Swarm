@@ -327,3 +327,35 @@ python -m scripts.clean_accommodations inside-airbnb-prague-2026-06-27
 
 Validators + cleaning + conversion are covered by
 `backend/tests/test_validators.py` and `backend/tests/test_clean_accommodations.py`.
+
+---
+
+# Accommodation normalization + price stats — notes (BS-035)
+
+`scripts.normalize_accommodations` turns the cleaned listings (BS-034) into the
+internal schema and precomputes per-city price statistics (technical doc
+§10/§19):
+
+- **`accommodations`** — every kept listing is normalized: `room_type` mapped to a
+  canonical `accom_type` (`entire_home`/`private_room`/`shared_room`/`hotel`),
+  EUR `price_per_night`, `rating`, `latitude`/`longitude`, `quality_flag = 'real'`,
+  and the `snapshot_label`. Linked to `destinations` by resolving the city slug to
+  a `destinations.id` (a city with no destination row is logged and skipped).
+- **`accommodation_price_stats`** — one row per destination with the EUR price
+  distribution: `sample_size`, `price_min`, `price_q1`, `price_median`,
+  `price_q3`, `price_max`. StayAgent (BS-050) uses these for representative-option
+  selection and, for cities without an Inside Airbnb file, as the `estimated`
+  price fallback. Median/quartiles are robust to the occasional extreme-price
+  outlier that Inside Airbnb listings contain.
+
+**Idempotent per destination**: a re-run replaces that destination's
+`accommodations` (delete-then-insert) and upserts its stats row.
+
+```bash
+python -m scripts.normalize_accommodations inside-airbnb-riga-2026-06-30
+```
+
+Verified against real data (Riga: 3,471 raw → 3,149 accommodations, EUR median
+€82/night, Q1 €60.50 / Q3 €115). Covered by
+`backend/tests/test_normalize_accommodations.py` (unit stats math + integration
+populate/idempotency/bounds).
