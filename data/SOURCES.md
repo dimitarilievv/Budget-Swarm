@@ -93,3 +93,108 @@ no database required):
 ```bash
 cd backend && python -m pytest tests/test_curated_destinations.py -v
 ```
+
+---
+
+# Fuel prices — source notes (BS-032)
+
+**Artifacts (committed snapshots / offline floor):**
+- `data/fuel_prices_oil_bulletin.txt` — the fuel-prices.eu `llms-full.txt`
+  machine-readable export (EU Weekly Oil Bulletin republished, CC BY 4.0).
+- `data/fuel_prices_live_summary.json` — the fuel-prices.eu `/live/` station
+  summary (`/live/api.php?action=summary`), used for non-EU neighbours.
+
+**Snapshot captured:** 2026-08-29 (bulletin data date 2026-08-24).
+**Target table:** `fuel_prices` (keyed by `country_code`; petrol_e95, diesel,
+source, price_date).
+
+## Sources
+
+1. **EU-27 prices** — the authoritative, citable source is the **EU Weekly Oil
+   Bulletin** (European Commission, DG ENER), ingested in practice from
+   [fuel-prices.eu](https://www.fuel-prices.eu/) which republishes it as
+   CC BY 4.0. Parsed from the "CURRENT FUEL PRICES — ALL COUNTRIES" table of the
+   `llms-full.txt` export (Euro-95 + diesel, EUR/L, tax-inclusive).
+2. **Non-EU neighbours** (MK, RS, BA, ME, TR) and any EU member the bulletin
+   omits in a given week (e.g. GR) — **real** station-averaged prices from the
+   fuel-prices.eu `/live/` summary feed (station open-data, ~12–18 h fresh).
+   Labelled `source = "fuel-prices.eu live (station avg)"` with their own
+   `price_date`, because the methodology differs from the EC weekly bulletin.
+3. **EU-average fallback** — a country covered by neither source (currently only
+   **AL**) is stored with the EU-27 average petrol/diesel, and a synthetic `EU`
+   row holds that average as the ultimate fallback for any origin without a
+   per-country price (`source = "EU Weekly Oil Bulletin (EU avg)"`).
+
+## Attribution
+
+fuel-prices.eu — data from the European Commission Weekly Oil Bulletin
+(CC BY 4.0). Cite the EU Weekly Oil Bulletin as the authoritative source.
+
+## Reproduce / refresh
+
+Idempotent ingestion + refresh routine (upserts on `country_code`; a re-run
+refreshes in place, never duplicates). From `backend/`:
+
+```bash
+python -m scripts.ingest_fuel_prices                  # live fetch + upsert
+python -m scripts.ingest_fuel_prices --source snapshot # offline (committed data/)
+python -m scripts.ingest_fuel_prices --dry-run         # resolve + report, no writes
+python -m scripts.ingest_fuel_prices --save-snapshot   # refresh the snapshots above
+```
+
+Parsing + resolver + idempotency are covered by
+`backend/tests/test_ingest_fuel_prices.py` (unit tests run with no database; the
+idempotent-refresh test is an `integration` test that runs against Postgres).
+
+## Automated weekly refresh
+
+The Docker Compose stack runs the refresh on a schedule via an `ofelia`
+scheduler service (`docker-compose.yml`): every **Friday 06:00 UTC** — safely
+after the EU Oil Bulletin's Thursday (post-15:00 EET) update — ofelia execs
+`python -m scripts.ingest_fuel_prices` inside the running `backend` container.
+Because the ingest is idempotent, a missed or repeated run only refreshes rows
+in place; no manual weekly entry is needed. Start it with the rest of the stack:
+
+```bash
+docker compose up -d          # brings up db, backend, scheduler, frontend
+docker compose logs -f scheduler   # watch scheduled fuel-refresh runs
+```
+
+To change the cadence, edit the `ofelia.job-exec.fuel-refresh.schedule` label on
+the `backend` service (6-field cron: `sec min hour dom mon dow`).
+
+## Adding a new source (e.g. USA / Asia)
+
+Fuel sources are pluggable. Storing a new region needs **no schema change** —
+`fuel_prices` is keyed by ISO alpha-2 `country_code`, so `US`, `JP`, etc. fit as
+they are. Ingesting one means writing a small provider that implements the
+`FuelPriceProvider` contract in `backend/scripts/fuel_prices.py`:
+
+```python
+class UsEiaProvider:
+    name = "us-eia"                 # shows up in provenance
+    source_label = "US EIA"         # written to fuel_prices.source
+    emit_all = True                 # ingest every country it returns
+    def load(self) -> ProviderResult:
+        prices = {"US": FuelDatum(petrol, diesel, price_date)}  # from the real feed
+        return ProviderResult(prices, loaded_from="live")
+```
+
+Then resolve with it in the mix (priority = list order; first provider to supply
+a country wins):
+
+```python
+from scripts.fuel_prices import resolve_from_providers, default_providers
+records = resolve_from_providers(
+    [*default_providers(), UsEiaProvider()],
+    targets=("US", "JP", ...),
+    # EU average is Euro-centric; pass a regional fallback or None for non-EU.
+)
+```
+
+`emit_all=True` means "ingest everything this provider returns" (an authoritative
+regional core, like the EU bulletin); `emit_all=False` means "only use it to fill
+requested `targets`" (a supplementary feed, like the /live/ station data). The
+resolver, ingest CLI, and `fuel_prices` schema stay untouched. See the worked
+examples in `backend/tests/test_ingest_fuel_prices.py`
+(`test_custom_provider_plugs_in_and_emits_its_countries`).

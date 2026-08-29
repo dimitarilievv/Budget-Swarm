@@ -85,6 +85,16 @@ Fill in these columns as you register and test each source:
 - **DECISION: C (dataset for EU) + D (EU-average for non-EU incl. MK), ingested via Option B (automated script, BS-032).** Cache in `fuel_prices`; app reads DB only, never calls the source live. NOT an AI/LLM at runtime — fuel price feeds the optimizer, so it must stay deterministic.
 - **STATUS: ✅ VERIFIED — ready to implement (unblocks BS-032, BS-057).**
 - Verified on: 2026-08-19
+- **IMPLEMENTED (BS-032, 2026-08-29):** `scripts.ingest_fuel_prices` ingests EU-27
+  real prices from the bulletin export (`llms-full.txt`) and, refining the
+  interim EU-average plan, ingests **real** station-averaged prices for the
+  non-EU neighbours that the `/live/` feed covers (MK, RS, BA, ME, TR) and for
+  any EU member the bulletin omits in a given week (e.g. GR). Only genuinely
+  uncovered countries (AL) fall back to the EU average; the synthetic `EU` row is
+  retained as the ultimate fallback. Live `/live/` rows are labelled
+  `source = "fuel-prices.eu live (station avg)"` with their own `price_date`, so
+  the different methodology stays transparent and traceable. Committed snapshots:
+  `data/fuel_prices_oil_bulletin.txt`, `data/fuel_prices_live_summary.json`.
 
 ---
 

@@ -39,6 +39,31 @@ services:
       retries: 5
     networks:
       - budgetswarm
+    # Weekly fuel-price refresh (BS-032), driven by the ofelia scheduler below.
+    # job-exec runs the ingest inside this already-running backend container, so
+    # it reuses its code, deps, and DATABASE_URL. Schedule is 6-field cron
+    # (sec min hour dom mon dow): Fridays 06:00 UTC — safely after the EU Oil
+    # Bulletin's Thursday (post-15:00 EET) update. The ingest is idempotent, so a
+    # missed or repeated run only refreshes rows in place.
+    labels:
+      ofelia.enabled: "true"
+      ofelia.job-exec.fuel-refresh.schedule: "0 0 6 * * 5"
+      ofelia.job-exec.fuel-refresh.command: "python -m scripts.ingest_fuel_prices"
+
+  scheduler:
+    # Lightweight cron for Docker: reads the ofelia.* labels off other services
+    # and runs their commands on schedule. No app image changes, no host crontab.
+    image: mcuadros/ofelia:latest
+    container_name: budgetswarm-scheduler
+    restart: unless-stopped
+    depends_on:
+      - backend
+    command: daemon --docker
+    volumes:
+      # Read-only access to the Docker socket so ofelia can exec into backend.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - budgetswarm
 
   frontend:
     build: ./frontend
