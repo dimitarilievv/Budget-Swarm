@@ -198,3 +198,88 @@ requested `targets`" (a supplementary feed, like the /live/ station data). The
 resolver, ingest CLI, and `fuel_prices` schema stay untouched. See the worked
 examples in `backend/tests/test_ingest_fuel_prices.py`
 (`test_custom_provider_plugs_in_and_emits_its_countries`).
+
+---
+
+# Inside Airbnb raw listings — source notes (BS-033)
+
+**Target table:** `raw_accommodation_listings` (source-agnostic raw staging; full
+CSV row as JSONB + `source`, `snapshot_label`, `city`, `snapshot_date`,
+`listing_id`). Inside Airbnb is one pluggable source (`source = 'inside-airbnb'`).
+**Downloaded snapshots:** `data/inside-airbnb/inside-airbnb-<city>-<date>-listings.csv.gz`
+(git-ignored — Inside Airbnb CSVs are tens of MB each and are never committed).
+
+## Source & coverage
+
+[Inside Airbnb](https://insideairbnb.com/get-the-data/) publishes quarterly
+`listings.csv.gz` snapshots per city (the BS-007 primary accommodation source:
+free, no key/account, **CC BY 4.0** with CC0 on the data). The importer resolves
+the latest snapshot for each target city from the public index and downloads it.
+
+Of the 30 curated destinations, **11 are covered by Inside Airbnb** (verified
+2026-08-29): Athens, Budapest, Istanbul, Lisbon, Naples, Porto, Prague, Riga,
+Thessaloniki, Valencia, Vienna. The Balkan/CEE cities (Sofia, Belgrade, Skopje,
+…) are **not** published by Inside Airbnb and are handled downstream as
+`estimated` (BS-007 decision; BS-034/035), not here.
+
+## What is stored
+
+This is a **raw** import: every row is stored verbatim (all ~90 columns preserved
+in the `raw` JSONB), *before* any cleaning — including rows with an empty `price`
+(e.g. 322 of Riga's 3,471). BS-034 validates and normalizes the usable rows into
+`accommodations` (strip `$`/commas, prefer `price_quote_price_per_night` + its
+currency, normalize to EUR, treat sentinel `999` nights as null). Keeping the raw
+layer means those lossy steps can be re-run and audited without re-downloading.
+
+`snapshot_label` = `inside-airbnb-<city>-<date>` records the exact snapshot;
+`(snapshot_label, listing_id)` is unique so a re-run is an idempotent upsert and a
+newer snapshot is added alongside (history preserved).
+
+## Attribution
+
+Inside Airbnb (insideairbnb.com), CC BY 4.0.
+
+## Reproduce / re-run
+
+Idempotent, chunked import. From `backend/`:
+
+```bash
+python -m scripts.ingest_accommodations                       # inside-airbnb, all cities
+python -m scripts.ingest_accommodations --source inside-airbnb --cities riga,athens
+python -m scripts.ingest_accommodations --dry-run             # download + count, no writes
+python -m scripts.ingest_accommodations --limit 500           # cap rows/city (smoke test)
+```
+
+Row counts vs source and column presence are covered by
+`backend/tests/test_ingest_accommodations.py` (unit tests use a small committed
+real excerpt, `backend/tests/fixtures/airbnb_sample_listings.csv`; the
+populate/idempotency test is an `integration` test that runs against Postgres).
+
+## Adding a new source (e.g. Booking.com export, a tourism-board feed)
+
+Accommodation sources are **pluggable** and need **no schema change** — the raw
+row is stored as JSONB, so any source's columns fit. Add a source by implementing
+the `AccommodationSource` contract in `backend/scripts/accommodation_sources.py`.
+For a source that publishes a downloadable CSV snapshot per city, subclass
+`CsvSnapshotSource` (download + chunked read are inherited) and only describe
+*where* its files are:
+
+```python
+class BookingExportSource(CsvSnapshotSource):
+    name = "booking-export"
+    required_columns = frozenset({"id", "price", "room_type", "latitude", "longitude"})
+    def default_targets(self): return ("sofia", "belgrade", ...)
+    def discover(self, *, targets, timeout):
+        return {city: DatasetRef("booking-export", city, snap_date, url) for ...}
+```
+
+Register it in `available_sources()`, then:
+
+```bash
+python -m scripts.ingest_accommodations --source booking-export
+```
+
+The importer, the `raw_accommodation_listings` table, and downstream
+normalization stay untouched. `source` is recorded on every row, and
+`snapshot_label` becomes `<source>-<city>-<date>`. See the worked example in
+`backend/tests/test_ingest_accommodations.py::test_custom_source_plugs_into_importer`.

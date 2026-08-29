@@ -26,6 +26,7 @@ from db.models import (
     Destination,
     DestinationFeature,
     FuelPrice,
+    RawAccommodationListing,
     TransportOption,
     Trip,
     TripActivity,
@@ -177,6 +178,26 @@ class TripActivityRepository(Repository[TripActivity]):
         return list(self.session.scalars(stmt).all())
 
 
+class RawAccommodationListingRepository(Repository[RawAccommodationListing]):
+    model = RawAccommodationListing
+
+    def count_for_snapshot(self, snapshot_label: str) -> int:
+        """Number of raw rows stored for one accommodation snapshot."""
+        stmt = (
+            select(func.count())
+            .select_from(RawAccommodationListing)
+            .where(RawAccommodationListing.snapshot_label == snapshot_label)
+        )
+        return self.session.scalar(stmt) or 0
+
+    def list_for_snapshot(self, snapshot_label: str) -> list[RawAccommodationListing]:
+        """All raw rows for one snapshot (BS-034 reads these to normalize)."""
+        stmt = select(RawAccommodationListing).where(
+            RawAccommodationListing.snapshot_label == snapshot_label
+        )
+        return list(self.session.scalars(stmt).all())
+
+
 class ApiCacheRepository(Repository[ApiCache]):
     model = ApiCache
 
@@ -206,6 +227,7 @@ __all__ = [
     "DestinationFeatureRepository",
     "DestinationRepository",
     "FuelPriceRepository",
+    "RawAccommodationListingRepository",
     "Repository",
     "TransportOptionRepository",
     "TripActivityRepository",
