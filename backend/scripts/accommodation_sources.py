@@ -74,6 +74,8 @@ class AccommodationSource(Protocol):
 
     def default_targets(self) -> tuple[str, ...]: ...
 
+    def currency_for(self, city: str) -> str: ...
+
     def discover(self, *, targets: tuple[str, ...], timeout: float) -> dict[str, DatasetRef]: ...
 
     def download(
@@ -158,6 +160,11 @@ class CsvSnapshotSource:
 
     def default_targets(self) -> tuple[str, ...]:  # pragma: no cover - overridden
         raise NotImplementedError
+
+    def currency_for(self, city: str) -> str:
+        """ISO 4217 currency a city's prices are quoted in. Default EUR; override
+        when a source's cities span currencies (see Inside Airbnb)."""
+        return "EUR"
 
     def discover(
         self, *, targets: tuple[str, ...], timeout: float
