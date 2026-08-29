@@ -88,6 +88,24 @@ CREATE INDEX idx_accommodations_destination ON accommodations(destination_id);
 CREATE INDEX idx_accommodations_price       ON accommodations(destination_id, price_per_night);
 
 -- ============================================================================
+-- [RFR] accommodation_price_stats — per-destination price distribution (BS-035)
+--       Precomputed EUR min/Q1/median/Q3/max used by StayAgent for
+--       representative selection and as the estimated-price fallback.
+-- ============================================================================
+CREATE TABLE accommodation_price_stats (
+    destination_id INTEGER PRIMARY KEY REFERENCES destinations(id) ON DELETE CASCADE,
+    sample_size    INTEGER NOT NULL,
+    currency       CHAR(3) NOT NULL DEFAULT 'EUR',
+    price_min      NUMERIC(10,2),
+    price_q1       NUMERIC(10,2),
+    price_median   NUMERIC(10,2),
+    price_q3       NUMERIC(10,2),
+    price_max      NUMERIC(10,2),
+    snapshot_label VARCHAR(60),
+    computed_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ============================================================================
 -- [RFR] attractions — POIs per destination with indoor/outdoor class
 -- ============================================================================
 CREATE TABLE attractions (
