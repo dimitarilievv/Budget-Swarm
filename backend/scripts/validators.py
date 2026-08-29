@@ -96,6 +96,19 @@ def is_valid_longitude(value: float | None) -> bool:
     return in_range(value, _LON_MIN, _LON_MAX)
 
 
+def parse_iso_alpha2(value: str | None) -> str | None:
+    """Return an uppercased ISO 3166-1 alpha-2 code, or ``None`` if not one.
+
+    ``"bg"`` -> ``"BG"``; ``""``/``None`` -> ``None``; ``"PRT"``/``"12"`` ->
+    ``None`` (a caller distinguishes "absent" from "present but invalid" by
+    checking whether the raw input was non-empty).
+    """
+    text = clean_str(value)
+    if len(text) == 2 and text.isalpha():
+        return text.upper()
+    return None
+
+
 def coalesce_sentinel(value: int | float | None, sentinels: set[int]) -> int | float | None:
     """Return ``None`` if ``value`` is a known sentinel (e.g. 999 nights), else it.
 

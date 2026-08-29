@@ -31,6 +31,8 @@ from datetime import date
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+from scripts.validation import check_schema
+
 logger = logging.getLogger(__name__)
 
 # backend/scripts/accommodation_sources.py -> repo root is two parents up.
@@ -132,11 +134,10 @@ def iter_csv_chunks(
     opener = gzip.open if _is_gzip(path) else open
     with opener(path, "rt", encoding="utf-8", newline="") as fh:
         reader = DictReader(fh)
-        missing = set(required_columns) - set(reader.fieldnames or [])
-        if missing:
-            raise ValueError(
-                f"{path.name} is missing required column(s): {', '.join(sorted(missing))}"
-            )
+        schema_issues = check_schema(reader.fieldnames, required_columns)
+        if schema_issues:
+            missing = ", ".join(i.field for i in schema_issues)
+            raise ValueError(f"{path.name} is missing required column(s): {missing}")
         chunk: list[dict[str, str]] = []
         for row in reader:
             chunk.append(row)

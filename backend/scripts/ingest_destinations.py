@@ -37,6 +37,8 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
+from scripts import validation
+
 logger = logging.getLogger(__name__)
 
 # backend/scripts/ingest_destinations.py -> repo root is two parents up.
@@ -45,9 +47,15 @@ DEFAULT_CSV = REPO_ROOT / "data" / "curated_destinations.csv"
 
 REQUIRED_COLUMNS = ("city", "country", "country_code", "lat", "lon")
 
-# Valid geographic bounds — guards against swapped or garbage coordinates.
-_LAT_MIN, _LAT_MAX = -90.0, 90.0
-_LON_MIN, _LON_MAX = -180.0, 180.0
+# Reusable field specs (BS-036): required city/country, optional ISO-2 code, and
+# coordinates range-checked against the valid WGS84 bounds.
+_ROW_SPECS = (
+    validation.FieldSpec("city", required=True),
+    validation.FieldSpec("country", required=True),
+    validation.FieldSpec("country_code", kind="iso2"),
+    validation.FieldSpec("lat", required=True, kind="float", min=-90.0, max=90.0),
+    validation.FieldSpec("lon", required=True, kind="float", min=-180.0, max=180.0),
+)
 
 
 @dataclass
@@ -62,70 +70,45 @@ class IngestSummary:
     skipped_reasons: list[str] = field(default_factory=list)
 
 
-def _clean(value: str | None) -> str:
-    return (value or "").strip()
-
-
 def parse_rows(
     reader: Iterable[dict[str, str]],
 ) -> tuple[list[dict[str, object]], list[str]]:
-    """Validate raw CSV rows into upsertable records.
+    """Validate raw CSV rows into upsertable records (via ``scripts.validation``).
 
     Returns ``(records, skip_reasons)``. Each record has the ORM column names
     (``city``, ``country``, ``country_code``, ``latitude``, ``longitude``).
-    Malformed rows are collected as human-readable reasons, not raised, so one
-    bad row never sinks the whole load.
+    Malformed rows — and any duplicate ``(city, country)`` — are collected as
+    human-readable reasons, not raised, so one bad row never sinks the load.
     """
     records: list[dict[str, object]] = []
     skip_reasons: list[str] = []
+    seen: set[tuple[str, str]] = set()
 
     # +2: CSV data starts on line 2 (line 1 is the header).
     for line_no, raw in enumerate(reader, start=2):
-        city = _clean(raw.get("city"))
-        country = _clean(raw.get("country"))
-        code_raw = _clean(raw.get("country_code"))
-        lat_raw = _clean(raw.get("lat"))
-        lon_raw = _clean(raw.get("lon"))
-
-        if not city or not country:
-            reason = f"line {line_no}: missing city/country ({city!r}, {country!r})"
+        result = validation.validate_row(raw, _ROW_SPECS)
+        if not result.ok:
+            reason = f"line {line_no}: {result.reason}"
             logger.warning("skipping row: %s", reason)
             skip_reasons.append(reason)
             continue
 
-        try:
-            lat = float(lat_raw)
-            lon = float(lon_raw)
-        except ValueError:
-            reason = f"line {line_no}: {city}: non-numeric coordinates ({lat_raw!r}, {lon_raw!r})"
+        vals = result.values
+        key = (str(vals["city"]), str(vals["country"]))
+        if key in seen:
+            reason = f"line {line_no}: duplicate (city, country) {key}"
             logger.warning("skipping row: %s", reason)
             skip_reasons.append(reason)
             continue
-
-        if not (_LAT_MIN <= lat <= _LAT_MAX and _LON_MIN <= lon <= _LON_MAX):
-            reason = f"line {line_no}: {city}: coordinates out of range ({lat}, {lon})"
-            logger.warning("skipping row: %s", reason)
-            skip_reasons.append(reason)
-            continue
-
-        country_code: str | None
-        if code_raw == "":
-            country_code = None
-        elif len(code_raw) == 2 and code_raw.isalpha():
-            country_code = code_raw.upper()
-        else:
-            reason = f"line {line_no}: {city}: invalid country_code {code_raw!r} (want ISO alpha-2)"
-            logger.warning("skipping row: %s", reason)
-            skip_reasons.append(reason)
-            continue
+        seen.add(key)
 
         records.append(
             {
-                "city": city,
-                "country": country,
-                "country_code": country_code,
-                "latitude": lat,
-                "longitude": lon,
+                "city": vals["city"],
+                "country": vals["country"],
+                "country_code": vals["country_code"],
+                "latitude": vals["lat"],
+                "longitude": vals["lon"],
             }
         )
 
@@ -139,11 +122,10 @@ def read_csv(path: Path) -> tuple[list[dict[str, object]], list[str], int]:
 
     with path.open(encoding="utf-8", newline="") as fh:
         reader = csv.DictReader(fh)
-        missing = set(REQUIRED_COLUMNS) - set(reader.fieldnames or [])
-        if missing:
-            raise ValueError(
-                f"{path.name} is missing required column(s): {', '.join(sorted(missing))}"
-            )
+        schema_issues = validation.check_schema(reader.fieldnames, REQUIRED_COLUMNS)
+        if schema_issues:
+            missing = ", ".join(i.field for i in schema_issues)
+            raise ValueError(f"{path.name} is missing required column(s): {missing}")
         rows = list(reader)
 
     records, skip_reasons = parse_rows(rows)

@@ -359,3 +359,27 @@ Verified against real data (Riga: 3,471 raw → 3,149 accommodations, EUR median
 €82/night, Q1 €60.50 / Q3 €115). Covered by
 `backend/tests/test_normalize_accommodations.py` (unit stats math + integration
 populate/idempotency/bounds).
+
+---
+
+# Reusable ingestion validation utilities (BS-036)
+
+Shared validation used by every ingestion task, so schema/type/range/required/
+duplicate checks are defined once and reported consistently:
+
+- **`backend/scripts/validators.py`** — low-level, pure value helpers
+  (`parse_money`/`parse_float`/`parse_int`/`parse_iso_alpha2`, `in_range`,
+  lat/lon validity, sentinel coalescing). No side effects; `None` on bad input.
+- **`backend/scripts/validation.py`** — the structured layer built on those:
+  `FieldSpec` (declare a field's kind/required/range/choices), `validate_row`
+  (returns a `RowResult` with cleaned `values` + typed `Issue`s, not a bare
+  bool), `check_schema` (required-column guard), `detect_duplicates`, and
+  `log_rejects`.
+
+**Consumers (≥2):** the curated-destinations ingest (`ingest_destinations`,
+BS-030, row validation + duplicate `(city,country)` detection), the accommodation
+CSV import (`accommodation_sources.iter_csv_chunks`, BS-033, schema guard), and
+the accommodation cleaner (`clean_accommodations`, BS-034, via the value helpers).
+
+Covered by `backend/tests/test_validation.py` (each validator on valid/invalid
+inputs, structured results, schema, duplicates) and `test_validators.py`.
