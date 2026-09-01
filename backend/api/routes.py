@@ -23,20 +23,21 @@ from services.coordinator_service import (
     NoPlanAvailableError,
     TripEngine,
 )
+from services.engine_stub import StubTripEngine
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 
-def get_trip_engine() -> TripEngine | None:
+def get_trip_engine() -> TripEngine:
     """Provide the AI engine implementation.
 
-    Returns ``None`` for now so :class:`CoordinatorService` falls back to its
-    placeholder engine (→ 503) until the real pipeline is wired (BS-044). Tests
+    Wired to :class:`StubTripEngine` (BS-041): a hard-coded structured plan so the
+    contract is exercisable before the real pipeline exists (BS-044). Tests
     override this dependency to inject a mock engine.
     """
-    return None
+    return StubTripEngine()
 
 
 def get_coordinator_service(
