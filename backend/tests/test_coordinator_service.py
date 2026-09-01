@@ -156,8 +156,19 @@ def test_route_returns_503_when_no_plan(app):
     assert resp.json()["detail"]["code"] == "NO_PLAN_AVAILABLE"
 
 
-def test_route_defaults_to_503_without_wired_engine(app):
-    # No dependency override: the service uses its placeholder engine.
+def test_route_uses_stub_engine_by_default(app):
+    # No dependency override: get_trip_engine wires the stub engine (BS-041),
+    # so the endpoint returns a valid plan rather than 503.
+    client = TestClient(app)
+    resp = client.post("/api/generate-trip", json=VALID_REQUEST)
+    assert resp.status_code == 200
+    assert resp.json()["chosen_plan"]["destination"]["city"] == "Budapest"
+
+
+def test_route_returns_503_when_engine_is_none(app):
+    # If the engine dependency yields None, the service falls back to its
+    # placeholder engine, which surfaces as 503 NO_PLAN_AVAILABLE.
+    app.dependency_overrides[get_trip_engine] = lambda: None
     client = TestClient(app)
     resp = client.post("/api/generate-trip", json=VALID_REQUEST)
     assert resp.status_code == 503
