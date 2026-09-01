@@ -77,8 +77,10 @@ def test_happy_path_reflects_request_fields(client):
 def test_invalid_input_returns_422(client, mutation):
     resp = client.post("/api/generate-trip", json={**VALID_REQUEST, **mutation})
     assert resp.status_code == 422
+    # api.md error envelope (BS-043), not the raw FastAPI detail list.
     body = resp.json()
-    assert "detail" in body and isinstance(body["detail"], list)
+    assert body["error"]["code"] == "VALIDATION_ERROR"
+    assert body["error"]["message"]
 
 
 def test_missing_car_consumption_returns_422(client):

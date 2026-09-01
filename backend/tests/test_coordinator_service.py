@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 from api.routes import get_trip_engine
 from api.routes import router as trip_router
+from errors import register_exception_handlers
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from schemas.trip_schema import TripRequest, TripResponse
@@ -116,6 +117,7 @@ def test_default_engine_raises_no_plan_available():
 def app() -> FastAPI:
     application = FastAPI()
     application.include_router(trip_router, prefix="/api")
+    register_exception_handlers(application)
     return application
 
 
@@ -153,7 +155,7 @@ def test_route_returns_503_when_no_plan(app):
 
     resp = client.post("/api/generate-trip", json=VALID_REQUEST)
     assert resp.status_code == 503
-    assert resp.json()["detail"]["code"] == "NO_PLAN_AVAILABLE"
+    assert resp.json()["error"]["code"] == "NO_PLAN_AVAILABLE"
 
 
 def test_route_uses_stub_engine_by_default(app):
