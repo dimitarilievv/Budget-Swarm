@@ -28,6 +28,11 @@ extend-immutable-calls = ["fastapi.Depends", "fastapi.Query"]
 
 [tool.pytest.ini_options]
 testpaths = ["backend/tests"]
+# The backend test job runs pytest from backend/, but some suites now exercise
+# ai_engine too (e.g. the provider abstractions in ai_engine/utils). Put both the
+# repo root (for `ai_engine`) and backend/ (for `db`, `config`, …) on sys.path so
+# imports resolve regardless of the invocation directory.
+pythonpath = [".", "backend"]
 markers = [
     "integration: tests that require a live database (skipped when none is reachable)",
 ]
