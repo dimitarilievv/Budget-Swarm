@@ -9,6 +9,7 @@ import logging
 from api.admin_destinations import router as admin_destinations_router
 from api.destinations import router as destinations_router
 from api.health import router as health_router
+from api.routes import router as trip_router
 from config import get_settings
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -33,10 +34,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Health lives under /api/health (docs/api.md). Trip routes join in BS-040.
+# Health lives under /api/health (docs/api.md); trip generation under /api.
 app.include_router(health_router, prefix="/api")
 app.include_router(destinations_router, prefix="/api")
 app.include_router(admin_destinations_router, prefix="/api")
+app.include_router(trip_router, prefix="/api")
 
 
 @app.get("/", tags=["health"])
