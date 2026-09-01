@@ -190,7 +190,9 @@ def test_activity_validation_rejects_bad_input(kwargs):
 
 def test_weather_profile_construction():
     days = [
-        WeatherDay(forecast_date=date(2026, 7, 1), temp_min=18.0, temp_max=29.0, conditions="Clear"),
+        WeatherDay(
+            forecast_date=date(2026, 7, 1), temp_min=18.0, temp_max=29.0, conditions="Clear"
+        ),
         WeatherDay(
             forecast_date=date(2026, 7, 2),
             temp_min=19.0,
