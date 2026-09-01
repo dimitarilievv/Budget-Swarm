@@ -20,13 +20,10 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from errors import NotFoundError
+from fastapi import APIRouter, Depends
 from schemas.trip_schema import ChosenPlan, TripRequest, TripResponse
-from services.coordinator_service import (
-    CoordinatorService,
-    NoPlanAvailableError,
-    TripEngine,
-)
+from services.coordinator_service import CoordinatorService, TripEngine
 from services.engine_stub import StubTripEngine
 from services.trip_store import StubTripStore, TripStore
 
@@ -56,15 +53,12 @@ def generate_trip(
     request: TripRequest,
     service: CoordinatorService = Depends(get_coordinator_service),
 ) -> TripResponse:
-    """Run the agent→optimize→explain pipeline for the given constraints."""
-    try:
-        return service.generate_trip(request)
-    except NoPlanAvailableError as exc:
-        logger.warning("generate_trip: no plan available: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"code": "NO_PLAN_AVAILABLE", "message": str(exc)},
-        ) from exc
+    """Run the agent→optimize→explain pipeline for the given constraints.
+
+    A :class:`NoPlanAvailableError` from the engine propagates to the global
+    handler, which renders the 503 NO_PLAN_AVAILABLE envelope (api.md).
+    """
+    return service.generate_trip(request)
 
 
 def get_trip_store() -> TripStore:
@@ -84,8 +78,5 @@ def get_trip(
     """Return a previously generated plan by id (same ``chosen_plan`` shape)."""
     plan = store.get_chosen_plan(trip_id)
     if plan is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "NOT_FOUND", "message": f"no trip with id {trip_id}"},
-        )
+        raise NotFoundError(f"no trip with id {trip_id}")
     return plan

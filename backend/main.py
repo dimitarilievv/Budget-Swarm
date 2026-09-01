@@ -11,6 +11,7 @@ from api.destinations import router as destinations_router
 from api.health import router as health_router
 from api.routes import router as trip_router
 from config import get_settings
+from errors import register_exception_handlers
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -33,6 +34,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Consistent error envelope for every failure path (api.md, BS-043).
+register_exception_handlers(app)
 
 # Health lives under /api/health (docs/api.md); trip generation under /api.
 app.include_router(health_router, prefix="/api")

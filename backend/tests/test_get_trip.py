@@ -33,7 +33,7 @@ def test_get_trip_found_returns_chosen_plan(client):
 def test_get_trip_unknown_id_returns_404(client):
     resp = client.get("/api/trips/999999")
     assert resp.status_code == 404
-    assert resp.json()["detail"]["code"] == "NOT_FOUND"
+    assert resp.json()["error"]["code"] == "NOT_FOUND"
 
 
 def test_get_trip_non_integer_id_returns_422(client):

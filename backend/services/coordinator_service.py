@@ -23,13 +23,14 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
+from errors import NoPlanAvailableError
 from schemas.trip_schema import TripRequest, TripResponse
 
 logger = logging.getLogger(__name__)
 
-
-class NoPlanAvailableError(Exception):
-    """Raised when the engine cannot produce a feasible plan (→ 503 in api.md)."""
+# Re-exported for callers that import it from the service layer; the canonical
+# definition (an AppError → 503 envelope) lives in backend/errors.py (BS-043).
+__all__ = ["NoPlanAvailableError", "EngineInput", "TripEngine", "CoordinatorService"]
 
 
 @dataclass(frozen=True)
