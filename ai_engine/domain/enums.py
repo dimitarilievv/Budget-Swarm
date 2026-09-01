@@ -9,10 +9,10 @@ round-trips to and from a persisted row without translation.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 
-class QualityFlag(str, Enum):
+class QualityFlag(StrEnum):
     """How firm a reported value is (technical-doc §26, glossary).
 
     Present on every domain model. It propagates from the producing agent through
@@ -31,7 +31,7 @@ class QualityFlag(str, Enum):
     ESTIMATED = "estimated"
 
 
-class TransportMode(str, Enum):
+class TransportMode(StrEnum):
     """The travel mode a :class:`~ai_engine.domain.models.TransportOption` describes.
 
     Matches the ``transport_options.mode`` CHECK constraint. Car is the MVP mode;
@@ -43,7 +43,7 @@ class TransportMode(str, Enum):
     TRAIN = "train"
 
 
-class IndoorOutdoor(str, Enum):
+class IndoorOutdoor(StrEnum):
     """Whether an :class:`~ai_engine.domain.models.Activity` is weather-exposed.
 
     Used to decide, together with a :class:`~ai_engine.domain.models.WeatherProfile`,
