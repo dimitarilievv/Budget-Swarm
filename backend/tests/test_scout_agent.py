@@ -14,6 +14,7 @@ import pytest
 
 from ai_engine.agents.scout_agent import (
     PrefilterPolicy,
+    RankingPolicy,
     ReferenceData,
     ScoutAgent,
     ScoutRequest,
@@ -271,3 +272,191 @@ def test_reference_data_loads_from_committed_files():
     assert 0.8 < ref.eur_per_cost_index_day < 1.3
     assert ref.petrol_median > 0.0
     assert all(price > 0.0 for price in ref.petrol_by_country.values())
+    # Season curves ingested from the Open-Meteo snapshot, each a 12-month vector.
+    assert ref.season_profiles
+    assert all(len(curve) == 12 for curve in ref.season_profiles.values())
+
+
+# =============================================================================
+# Preference + season ranking (BS-055)
+# =============================================================================
+
+
+def _feat(city: str, *, country: str = "Testland", **scores):
+    """A candidate carrying only the given feature scores."""
+    return Destination(
+        city=city,
+        country=country,
+        latitude=0.0,
+        longitude=0.0,
+        features=DestinationFeatures(**scores),
+    )
+
+
+def _rank_agent(*, season_weight: float = 1.0, season_profiles=None) -> ScoutAgent:
+    ref = ReferenceData(
+        eur_per_cost_index_day=1.0,
+        petrol_by_country={},
+        petrol_median=1.5,
+        season_profiles=season_profiles or {},
+    )
+    return ScoutAgent(ranking_policy=RankingPolicy(season_weight=season_weight), reference=ref)
+
+
+# --- acceptance: preference vector drives order ------------------------------
+
+
+def test_culture_vs_nature_preference_reorders():
+    agent = _rank_agent()
+    cands = [
+        _feat("CultureTown", culture_score=0.9, nature_score=0.2, season_score=0.8),
+        _feat("NatureTown", culture_score=0.2, nature_score=0.9, season_score=0.8),
+    ]
+    culture_first = agent.rank({"culture": 1.0, "nature": 0.1}, cands)
+    nature_first = agent.rank({"culture": 0.1, "nature": 1.0}, cands)
+    assert [r.destination.city for r in culture_first] == ["CultureTown", "NatureTown"]
+    assert [r.destination.city for r in nature_first] == ["NatureTown", "CultureTown"]
+
+
+def test_preference_match_is_weighted_mean_of_features():
+    agent = _rank_agent(season_weight=0.0)  # isolate the preference term
+    dest = _feat("Mix", culture_score=0.8, food_score=0.4)
+    # (1.0*0.8 + 0.5*0.4) / (1.0 + 0.5) = 1.0 / 1.5
+    (ranked,) = agent.rank({"culture": 1.0, "food": 0.5}, [dest])
+    assert ranked.preference_match == pytest.approx(1.0 / 1.5, abs=1e-6)
+    assert ranked.overall_score == pytest.approx(1.0 / 1.5, abs=1e-6)  # season ignored
+
+
+# --- acceptance: season_score affects order ----------------------------------
+
+
+def test_season_score_breaks_equal_preference_match():
+    agent = _rank_agent()
+    cands = [
+        _feat("GoodSeason", culture_score=0.6, season_score=0.9),
+        _feat("BadSeason", culture_score=0.6, season_score=0.2),
+    ]
+    ranked = agent.rank({"culture": 1.0}, cands)
+    assert [r.destination.city for r in ranked] == ["GoodSeason", "BadSeason"]
+    assert ranked[0].overall_score > ranked[1].overall_score
+
+
+def test_season_weight_zero_ignores_season():
+    agent = _rank_agent(season_weight=0.0)
+    cands = [
+        _feat("GoodSeason", culture_score=0.6, season_score=0.9),
+        _feat("BadSeason", culture_score=0.6, season_score=0.2),
+    ]
+    ranked = agent.rank({"culture": 1.0}, cands)
+    # Equal preference match, season disabled -> equal overall, name tie-break.
+    assert ranked[0].overall_score == ranked[1].overall_score
+    assert [r.destination.city for r in ranked] == ["BadSeason", "GoodSeason"]
+
+
+def test_missing_season_is_treated_as_neutral():
+    agent = _rank_agent()
+    dest = _feat("NoSeason", culture_score=0.7)  # season_score defaults to None
+    (ranked,) = agent.rank({"culture": 1.0}, [dest])
+    assert ranked.season_score is None
+    assert ranked.overall_score == pytest.approx(0.7)  # match only, no penalty
+
+
+# --- window-specific season from the real curve ------------------------------
+
+
+def test_travel_window_recomputes_season_from_curve():
+    # A curve that is great in July (index 6) and poor in January (index 0).
+    curve = tuple([0.1] * 6 + [0.95] + [0.1] * 5)
+    agent = _rank_agent(season_profiles={("Beachville", "Testland"): curve})
+    dest = _feat("Beachville", culture_score=0.5, season_score=0.5)
+    july = agent.rank({"culture": 1.0}, [dest], travel_months=[7])[0]
+    january = agent.rank({"culture": 1.0}, [dest], travel_months=[1])[0]
+    assert july.season_score == pytest.approx(0.95)
+    assert january.season_score == pytest.approx(0.1)
+    assert july.overall_score > january.overall_score
+
+
+def test_travel_window_falls_back_to_stored_score_without_a_curve():
+    agent = _rank_agent()  # no profiles loaded
+    dest = _feat("NoCurve", culture_score=0.5, season_score=0.6)
+    (ranked,) = agent.rank({"culture": 1.0}, [dest], travel_months=[7])
+    assert ranked.season_score == pytest.approx(0.6)
+
+
+# --- feature/key edge cases --------------------------------------------------
+
+
+def test_missing_feature_is_not_penalised():
+    agent = _rank_agent(season_weight=0.0)
+    # Only culture is known; a nature preference on a None nature_score is skipped,
+    # so the match is the culture value, not diluted by the missing feature.
+    dest = _feat("PartialData", culture_score=0.8)
+    (ranked,) = agent.rank({"culture": 1.0, "nature": 1.0}, [dest])
+    assert ranked.preference_match == pytest.approx(0.8)
+
+
+def test_unknown_preference_key_is_ignored():
+    agent = _rank_agent(season_weight=0.0)
+    dest = _feat("City", culture_score=0.6)
+    (ranked,) = agent.rank({"culture": 1.0, "teleportation": 1.0}, [dest])
+    assert ranked.preference_match == pytest.approx(0.6)
+
+
+def test_sightseeing_maps_to_tourism_score():
+    agent = _rank_agent(season_weight=0.0)
+    dest = _feat("Touristy", tourism_score=0.75)
+    (ranked,) = agent.rank({"sightseeing": 1.0}, [dest])
+    assert ranked.preference_match == pytest.approx(0.75)
+
+
+def test_no_usable_preference_yields_zero_match():
+    agent = _rank_agent(season_weight=0.0)
+    dest = _feat("City", culture_score=0.6)
+    (ranked,) = agent.rank({"nature": 1.0}, [dest])  # nature_score is None
+    assert ranked.preference_match == 0.0
+
+
+# --- determinism, top-k, validation ------------------------------------------
+
+
+def test_ranking_is_deterministic_with_name_tiebreak():
+    agent = _rank_agent(season_weight=0.0)
+    cands = [
+        _feat("Bravo", culture_score=0.5),
+        _feat("Alpha", culture_score=0.5),
+        _feat("Zulu", culture_score=0.9),
+    ]
+    first = [r.destination.city for r in agent.rank({"culture": 1.0}, cands)]
+    second = [r.destination.city for r in agent.rank({"culture": 1.0}, list(reversed(cands)))]
+    assert first == ["Zulu", "Alpha", "Bravo"]  # best first, then alphabetical tie-break
+    assert first == second
+
+
+def test_top_k_keeps_only_the_leaders():
+    agent = _rank_agent(season_weight=0.0)
+    cands = [
+        _feat("A", culture_score=0.9),
+        _feat("B", culture_score=0.6),
+        _feat("C", culture_score=0.3),
+    ]
+    ranked = agent.rank({"culture": 1.0}, cands, top_k=2)
+    assert [r.destination.city for r in ranked] == ["A", "B"]
+
+
+@pytest.mark.parametrize("months", [[], [0], [13]])
+def test_invalid_travel_months_rejected(months):
+    agent = _rank_agent()
+    with pytest.raises(ValueError):
+        agent.rank({"culture": 1.0}, [_feat("C", culture_score=0.5)], travel_months=months)
+
+
+def test_negative_top_k_rejected():
+    agent = _rank_agent()
+    with pytest.raises(ValueError):
+        agent.rank({"culture": 1.0}, [_feat("C", culture_score=0.5)], top_k=-1)
+
+
+@pytest.mark.parametrize("weight", [-0.1, 1.5])
+def test_invalid_season_weight_rejected(weight):
+    with pytest.raises(ValueError):
+        RankingPolicy(season_weight=weight)
