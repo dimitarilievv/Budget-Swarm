@@ -13,6 +13,7 @@ from __future__ import annotations
 import pytest
 
 from ai_engine.agents.scout_agent import (
+    DEFAULT_TOP_K,
     PrefilterPolicy,
     RankingPolicy,
     ReferenceData,
@@ -460,3 +461,150 @@ def test_negative_top_k_rejected():
 def test_invalid_season_weight_rejected(weight):
     with pytest.raises(ValueError):
         RankingPolicy(season_weight=weight)
+
+
+# =============================================================================
+# Top-k selection + output contract (BS-056)
+# =============================================================================
+
+
+def _select_agent(*, season_weight: float = 0.0, season_profiles=None) -> ScoutAgent:
+    """Agent whose air transport is free, so cost_of_living drives affordability."""
+    ref = ReferenceData(
+        eur_per_cost_index_day=1.0,
+        petrol_by_country={},
+        petrol_median=1.5,
+        season_profiles=season_profiles or {},
+    )
+    return ScoutAgent(
+        policy=PrefilterPolicy(air_base_eur=0.0, air_per_km_eur=0.0, keep_margin=1.0),
+        ranking_policy=RankingPolicy(season_weight=season_weight),
+        reference=ref,
+    )
+
+
+def _cand(city: str, *, culture: float, cost: float = 10.0):
+    return Destination(
+        city=city,
+        country="Testland",
+        latitude=0.0,
+        longitude=0.0,
+        features=DestinationFeatures(culture_score=culture, cost_of_living=cost),
+    )
+
+
+def _big_budget_air_request() -> ScoutRequest:
+    return ScoutRequest(
+        budget=1e9,
+        duration_days=2,
+        travelers=1,
+        origin=ORIGIN,
+        transport_mode=TransportMode.AIRPLANE,
+    )
+
+
+def test_select_respects_configurable_k():
+    agent = _select_agent()
+    cands = [_cand(f"City{i:02d}", culture=i / 10.0) for i in range(8)]
+    selected = agent.select(_big_budget_air_request(), {"culture": 1.0}, cands, k=3)
+    assert len(selected) == 3
+    # Best culture first: City07, City06, City05.
+    assert [d.city for d in selected] == ["City07", "City06", "City05"]
+
+
+def test_select_default_k_is_the_documented_short_list():
+    agent = _select_agent()
+    cands = [_cand(f"City{i:02d}", culture=i / 10.0) for i in range(8)]
+    selected = agent.select(_big_budget_air_request(), {"culture": 1.0}, cands)
+    assert len(selected) == DEFAULT_TOP_K == 6
+
+
+def test_select_returns_domain_destinations_that_revalidate():
+    agent = _select_agent()
+    cands = [_cand("Alpha", culture=0.9), _cand("Bravo", culture=0.5)]
+    selected = agent.select(_big_budget_air_request(), {"culture": 1.0}, cands, k=2)
+    for dest in selected:
+        assert isinstance(dest, Destination)
+        assert dest.features is not None  # feature context carried downstream
+        # Re-validates against the domain contract (construction re-runs validators).
+        Destination(
+            city=dest.city,
+            country=dest.country,
+            country_code=dest.country_code,
+            latitude=dest.latitude,
+            longitude=dest.longitude,
+            features=dest.features,
+        )
+
+
+def test_select_excludes_unaffordable_before_ranking():
+    agent = _select_agent()
+    req = ScoutRequest(
+        budget=100.0,
+        duration_days=1,
+        travelers=1,
+        origin=ORIGIN,
+        transport_mode=TransportMode.AIRPLANE,
+    )
+    cheap_a = _cand("CheapA", culture=0.4, cost=10.0)  # living 10
+    cheap_b = _cand("CheapB", culture=0.9, cost=10.0)  # living 10
+    lavish = _cand("Lavish", culture=1.0, cost=1000.0)  # living 1000 > budget
+    selected = agent.select(req, {"culture": 1.0}, [cheap_a, cheap_b, lavish], k=5)
+    cities = [d.city for d in selected]
+    assert "Lavish" not in cities  # dropped by the pre-filter despite best culture
+    assert cities == ["CheapB", "CheapA"]  # survivors, ranked by preference
+
+
+def test_select_returns_all_survivors_when_k_exceeds_them():
+    agent = _select_agent()
+    cands = [_cand("Alpha", culture=0.9), _cand("Bravo", culture=0.5)]
+    selected = agent.select(_big_budget_air_request(), {"culture": 1.0}, cands, k=10)
+    assert [d.city for d in selected] == ["Alpha", "Bravo"]
+
+
+def test_select_matches_rank_then_slice():
+    agent = _select_agent()
+    cands = [_cand(f"City{i:02d}", culture=i / 10.0) for i in range(6)]
+    req = _big_budget_air_request()
+    via_select = agent.select(req, {"culture": 1.0}, cands, k=4)
+    via_rank = [r.destination for r in agent.rank({"culture": 1.0}, cands, top_k=4)]
+    assert via_select == via_rank
+
+
+def test_select_passes_travel_window_through():
+    curve_summer = tuple([0.1] * 6 + [0.95] + [0.1] * 5)  # peaks in July
+    curve_winter = tuple([0.95] + [0.1] * 11)  # peaks in January
+    agent = _select_agent(
+        season_weight=1.0,
+        season_profiles={
+            ("Summerton", "Testland"): curve_summer,
+            ("Winterton", "Testland"): curve_winter,
+        },
+    )
+    cands = [
+        Destination(
+            city="Summerton",
+            country="Testland",
+            latitude=0.0,
+            longitude=0.0,
+            features=DestinationFeatures(culture_score=0.6, cost_of_living=10.0),
+        ),
+        Destination(
+            city="Winterton",
+            country="Testland",
+            latitude=0.0,
+            longitude=0.0,
+            features=DestinationFeatures(culture_score=0.6, cost_of_living=10.0),
+        ),
+    ]
+    july = agent.select(_big_budget_air_request(), {"culture": 1.0}, cands, travel_months=[7])
+    january = agent.select(_big_budget_air_request(), {"culture": 1.0}, cands, travel_months=[1])
+    assert july[0].city == "Summerton"
+    assert january[0].city == "Winterton"
+
+
+@pytest.mark.parametrize("k", [0, -1])
+def test_select_rejects_non_positive_k(k):
+    agent = _select_agent()
+    with pytest.raises(ValueError):
+        agent.select(_big_budget_air_request(), {"culture": 1.0}, [_cand("A", culture=0.5)], k=k)
