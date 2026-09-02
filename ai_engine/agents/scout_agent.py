@@ -10,10 +10,15 @@ stages:
    duration and party size;
 2. **preference + season ranking** (:meth:`ScoutAgent.rank`, BS-055) orders the
    survivors by how well their feature scores match the user's preference vector,
-   modulated by each destination's seasonal suitability for the travel window.
+   modulated by each destination's seasonal suitability for the travel window;
+3. **top-k selection + output contract** (:meth:`ScoutAgent.select`, BS-056) runs
+   the two stages end to end and emits the short list the pipeline consumes.
 
-Top-k selection (§8.3 step 3) is a thin slice on the ranked list, exposed as the
-``top_k`` argument to :meth:`ScoutAgent.rank` for the consumer (BS-056).
+:meth:`ScoutAgent.select` is Scout's public entry point (§8.3 step 3): it returns
+a configurable top-k ``list[ai_engine.domain.Destination]`` — the domain contract
+the coordinator, scorer (BS-069) and explanation (BS-071) build on — ordered best
+first, each destination carrying its normalized ``features`` so downstream stages
+have the context they need without re-querying.
 
 Design constraints from the ticket and the technical documentation:
 
@@ -69,6 +74,10 @@ _SEASON_FILE = "season_profiles.json"
 # A single vehicle serves the whole party by car (its fuel cost is per-trip, not
 # per-person); above this many travellers a second car is assumed.
 _CAR_SEATS = 4
+
+# Default size of the candidate short list handed to the parallel agents
+# (technical-doc §8.3 step 3: "keep the top k, e.g. 4-6"). Configurable per call.
+DEFAULT_TOP_K = 6
 
 # Maps a preference key (as sent in the request's ``preferences`` map, api.md) to
 # the ``DestinationFeatures`` column it scores against. Keys not listed here are
@@ -525,8 +534,52 @@ class ScoutAgent:
         )
         return ranked
 
+    def select(
+        self,
+        request: ScoutRequest,
+        preferences: Mapping[str, float],
+        candidates: Iterable[Destination],
+        *,
+        travel_months: Sequence[int] | None = None,
+        k: int = DEFAULT_TOP_K,
+    ) -> list[Destination]:
+        """Run Scout end to end and return the top-``k`` candidate short list.
+
+        This is Scout's public output contract (technical-doc §8.3): it applies the
+        coarse budget pre-filter (BS-054), ranks the survivors by preference +
+        season (BS-055), and returns the leading ``k`` as ``Destination`` domain
+        models — ordered best first, each still carrying its ``features`` so the
+        coordinator, scorer and explanation stages have the context they need.
+
+        ``k`` is configurable (default :data:`DEFAULT_TOP_K`); fewer survivors than
+        ``k`` simply yields a shorter list. Raises ``ValueError`` for ``k < 1``.
+        """
+        if k < 1:
+            raise ValueError(f"k must be >= 1, got {k!r}")
+
+        survivors = self.prefilter(request, candidates).kept
+        ranked = self.rank(preferences, survivors, travel_months=travel_months, top_k=k)
+        shortlist = [r.destination for r in ranked]
+
+        missing_features = [d.city for d in shortlist if d.features is None]
+        if missing_features:
+            # Selected but lacking feature context the downstream stages rely on.
+            logger.warning(
+                "ScoutAgent select: %d selected destination(s) have no features: %s",
+                len(missing_features),
+                ", ".join(missing_features),
+            )
+        logger.info(
+            "ScoutAgent select: %d affordable survivor(s) -> short list of %d (k=%d)",
+            len(survivors),
+            len(shortlist),
+            k,
+        )
+        return shortlist
+
 
 __all__ = [
+    "DEFAULT_TOP_K",
     "PREFERENCE_FEATURE_MAP",
     "PrefilterPolicy",
     "PrefilterResult",
