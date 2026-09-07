@@ -1,9 +1,9 @@
-"""TransportAgent — car costing (BS-057) and indicative flight pricing (BS-059).
+"""TransportAgent — car (BS-057), flight (BS-059) and bus/train (BS-061) costing.
 
 The agent normalizes the user's chosen transport mode into a
 :class:`~ai_engine.domain.models.TransportOption` (technical-doc §9). The MVP mode
-is **car**; **airplane** is a Post-MVP mode added here on top of the same
-provider/fallback machinery.
+is **car**; **airplane** and **bus/train** are Post-MVP modes added here on top of
+the same provider/fallback machinery.
 
 For the MVP transport mode (**car**, technical-doc §9.2) this agent turns a routing
 result into a normalized :class:`~ai_engine.domain.models.TransportOption`. It does
@@ -42,10 +42,21 @@ cache and ``real`` on a fresh fetch, degrading to ``estimated`` when the
 distance-based fare fallback answers instead (BS-001, BS-048). Fares are per person,
 so the cost scales with the passenger count (unlike shared car fuel).
 
+For the Post-MVP **bus/train** mode (technical-doc §9.3)
+:meth:`TransportAgent.public_transport_option` turns a
+:class:`~ai_engine.providers.public_transport.PublicTransportService` result into a
+:class:`TransportOption`. Bus/train is the hardest transport data to obtain freely:
+the originally-planned ``flix-rest`` endpoint is dead (BS-004), so the design is
+**estimate-first** — a distance-based coach fare is the reliable default (flagged
+``estimated``) and any real-fare provider (e.g. the Apify FlixBus actor, BS-005) is
+an optional, hard-cached upgrade whose prices are **indicative** and whose source is
+an unofficial scraper disclosed as a limitation (technical-doc §9.3/§28). As with
+flights the fare is per person and a round trip doubles cost and duration.
+
 ``ai_engine`` stays free of any backend/ORM import: the fuel price arrives through
 the small :class:`FuelPriceLookup` protocol, and the backend wires a DB-backed
 implementation in (see ``backend/db/fuel_lookup.py``). This module depends only on
-the domain models, the route/flight providers and the standard library.
+the domain models, the transport providers and the standard library.
 """
 
 from __future__ import annotations
@@ -56,6 +67,11 @@ from typing import Literal, Protocol, runtime_checkable
 
 from ai_engine.domain import QualityFlag, TransportMode, TransportOption
 from ai_engine.providers.flight import Flight, FlightRequest, FlightService
+from ai_engine.providers.public_transport import (
+    PublicTransportRequest,
+    PublicTransportService,
+)
+from ai_engine.providers.public_transport import TransportOption as TransitResult
 from ai_engine.providers.route import Route, RouteRequest, RouteService
 from ai_engine.utils.api_clients import ProviderResult
 from ai_engine.utils.geo import GeoPoint, haversine_km
@@ -221,6 +237,29 @@ class FlightTripRequest:
     destination_label: str | None = None
 
 
+@dataclass(frozen=True)
+class PublicTransportTripRequest:
+    """Everything the agent needs to cost one bus/train trip to a destination.
+
+    ``origin`` / ``destination`` are the labels or station ids the real providers
+    understand; ``origin_point`` / ``destination_point`` are optional coordinates
+    used only by the distance-based coach-fare fallback and to report a great-circle
+    ``distance_km``. As with flights, fares are per person (``passengers`` scales the
+    cost) and ``round_trip`` doubles the indicative cost and duration.
+    """
+
+    origin: str
+    destination: str
+    origin_point: GeoPoint | None = None
+    destination_point: GeoPoint | None = None
+    passengers: int = 1
+    round_trip: bool = True
+    depart_date: str | None = None
+    currency: str = "eur"
+    origin_label: str | None = None
+    destination_label: str | None = None
+
+
 # --- agent ------------------------------------------------------------------
 
 
@@ -230,8 +269,9 @@ class TransportAgent:
     Holds the per-mode capabilities the wired modes need; a caller supplies only
     those it uses. Car mode needs a :class:`RouteService` + a
     :class:`FuelPriceLookup`; flight mode needs a
-    :class:`~ai_engine.providers.flight.FlightService`. ``fuel_country`` selects
-    which country's fuel price a car trip uses:
+    :class:`~ai_engine.providers.flight.FlightService`; bus/train mode needs a
+    :class:`~ai_engine.providers.public_transport.PublicTransportService`.
+    ``fuel_country`` selects which country's fuel price a car trip uses:
 
     * ``"destination"`` (default) — price at the destination country;
     * ``"origin"`` — the technical-doc §9.2 fill-up model (whole route on the
@@ -249,11 +289,13 @@ class TransportAgent:
         fuel_prices: FuelPriceLookup | None = None,
         *,
         flight_service: FlightService | None = None,
+        public_transport_service: PublicTransportService | None = None,
         fuel_country: Literal["destination", "origin"] = "destination",
     ) -> None:
         self.route_service = route_service
         self.fuel_prices = fuel_prices
         self.flight_service = flight_service
+        self.public_transport_service = public_transport_service
         self.fuel_country = fuel_country
 
     def car_option(self, request: CarTripRequest) -> TransportOption:
@@ -387,6 +429,75 @@ class TransportAgent:
             quality_flag=quality,
         )
 
+    def public_transport_option(self, request: PublicTransportTripRequest) -> TransportOption:
+        """Return the normalized :class:`TransportOption` for a bus/train trip (Post-MVP).
+
+        Resolves an indicative fare + duration from the
+        :class:`PublicTransportService` (any configured real provider → the
+        distance-based coach-fare estimate), scales the per-person price by the
+        passenger count and, for a round trip, doubles cost and duration. The mode
+        (``bus`` / ``train``) and ``quality_flag`` come straight from the service —
+        ``real`` on a fresh fetch, ``cached`` from the per-city-pair cache,
+        ``estimated`` from the distance fallback — so an indicative or estimated fare
+        is always disclosed. Estimate-first by design (``flix-rest`` is dead, BS-004),
+        so it never raises for missing real-provider data.
+        """
+        if self.public_transport_service is None:
+            raise ValueError("public_transport_option requires a public_transport_service")
+        if request.passengers < 1:
+            raise ValueError(f"passengers must be >= 1, got {request.passengers!r}")
+
+        result: ProviderResult[TransitResult] = self.public_transport_service.resolve(
+            PublicTransportRequest(
+                origin=request.origin,
+                destination=request.destination,
+                origin_point=request.origin_point,
+                destination_point=request.destination_point,
+                currency=request.currency,
+                depart_date=request.depart_date,
+            )
+        )
+        trip = result.data
+        quality = QualityFlag(result.quality_flag)
+        mode = TransportMode(trip.mode)  # 'bus' | 'train' from the provider
+
+        legs = 2 if request.round_trip else 1
+        total_cost = trip.price * request.passengers * legs
+        total_duration_min = (
+            round(trip.duration_min * legs) if trip.duration_min is not None else None
+        )
+
+        # Bus/train providers do not report route length; give the informative
+        # great-circle distance (× legs) when both endpoints are known.
+        distance_km: float | None = None
+        if request.origin_point is not None and request.destination_point is not None:
+            distance_km = round(
+                haversine_km(request.origin_point, request.destination_point) * legs, 3
+            )
+
+        summary = _public_transport_summary(request, trip)
+        logger.debug(
+            "public_transport_option: %.2f %s × %d pax × %d leg(s) = %.2f "
+            "(mode=%s, provider=%s, quality=%s)",
+            trip.price,
+            trip.currency,
+            request.passengers,
+            legs,
+            total_cost,
+            mode,
+            trip.provider,
+            quality,
+        )
+
+        return TransportOption(
+            mode=mode,
+            cost=round(total_cost, 2),
+            duration_minutes=total_duration_min,
+            distance_km=distance_km,
+            route_summary=summary,
+            quality_flag=quality,
+        )
+
     def _fuel_country(self, request: CarTripRequest) -> str | None:
         """Pick the country whose fuel price the trip uses, per ``fuel_country``.
 
@@ -428,3 +539,24 @@ def _flight_summary(request: FlightTripRequest, flight: Flight) -> str:
         stops = f", {flight.transfers} stop" + ("s" if flight.transfers != 1 else "")
     trip = "round trip" if request.round_trip else "one way"
     return f"{origin} → {destination} by air{stops} ({trip}, indicative)"
+
+
+def _public_transport_summary(request: PublicTransportTripRequest, trip: TransitResult) -> str:
+    """A short human-readable bus/train description (never a provider payload).
+
+    Uses the endpoint labels when given, else the request origin/destination, names
+    the carrier when known, and describes stops from the fare's ``stops`` count.
+    Bus/train fares are always indicative, so the summary says so.
+    """
+    origin = request.origin_label or request.origin
+    destination = request.destination_label or request.destination
+    mode_word = trip.mode  # 'bus' | 'train'
+    carrier = f" ({trip.carrier})" if trip.carrier else ""
+    if trip.stops is None:
+        stops = ""
+    elif trip.stops == 0:
+        stops = ", direct"
+    else:
+        stops = f", {trip.stops} stop" + ("s" if trip.stops != 1 else "")
+    trip_kind = "round trip" if request.round_trip else "one way"
+    return f"{origin} → {destination} by {mode_word}{carrier}{stops} ({trip_kind}, indicative)"
