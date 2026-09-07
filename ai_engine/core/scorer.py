@@ -212,6 +212,10 @@ class CandidateInputs:
     weather: WeatherProfile | None = None
     nights: int = 1
 
+    def __post_init__(self) -> None:
+        if self.nights < 1:
+            raise ValueError(f"nights must be >= 1, got {self.nights!r}")
+
 
 @dataclass(frozen=True)
 class FactorScores:
@@ -308,21 +312,22 @@ def accommodation_score(accommodations: Sequence[Accommodation]) -> float:
 def trip_cost(candidate: CandidateInputs) -> float | None:
     """Total EUR trip cost: transport + typical accommodation * nights + activities.
 
-    Accommodation uses the **median** nightly price of the representative options (a
-    typical stay, not the cheapest or dearest). Activity entrance costs are summed
-    where known (``None`` = free/unknown). Returns ``None`` only when no component is
-    known at all, so the cost factor can mark it missing. Deterministic.
+    The **transport cost is required**: it is the dominant, distance-driven component
+    that differentiates candidates, so a trip whose transport cost is unknown has an
+    unknown total and returns ``None`` — the cost factor then penalizes it as missing
+    rather than making it look artificially cheap for lacking a component. When
+    transport cost is known, accommodation (the **median** nightly price of the
+    representative options — a typical stay) and known activity entrance costs
+    (``None`` = free/unknown) are added. Deterministic.
     """
-    components: list[float] = []
-    if candidate.transport is not None and candidate.transport.cost is not None:
-        components.append(candidate.transport.cost)
+    if candidate.transport is None or candidate.transport.cost is None:
+        return None
+    total = candidate.transport.cost
     prices = [a.price_per_night for a in candidate.accommodations if a.price_per_night is not None]
     if prices:
-        components.append(statistics.median(prices) * max(1, candidate.nights))
-    activity_cost = sum(a.cost for a in candidate.activities if a.cost is not None)
-    if activity_cost:
-        components.append(activity_cost)
-    return sum(components) if components else None
+        total += statistics.median(prices) * max(1, candidate.nights)
+    total += sum(a.cost for a in candidate.activities if a.cost is not None)
+    return total
 
 
 def travel_minutes(candidate: CandidateInputs) -> float | None:
@@ -483,17 +488,14 @@ def overall_score(
 
     Weights are normalized to sum to 1, so the weighted sum is in ``[0, 1]``; a
     non-negative ``penalty`` (a soft deduction from the caller — never a hard
-    constraint) lowers it. Deterministic.
+    constraint) lowers it. A negative penalty is rejected — it would be a silent
+    bonus, not a deduction. Deterministic.
     """
+    if penalty < 0:
+        raise ValueError(f"penalty must be non-negative, got {penalty!r}")
     w = weights.normalized()
-    score = (
-        w.cost * factors.cost
-        + w.preference * factors.preference
-        + w.experience * factors.experience
-        + w.weather * factors.weather
-        + w.travel * factors.travel
-        + w.accommodation * factors.accommodation
-    )
+    # Sum over the canonical factor names so a new factor cannot be silently omitted.
+    score = sum(getattr(w, name) * getattr(factors, name) for name in _FACTOR_NAMES)
     return _clamp01(score - penalty)
 
 

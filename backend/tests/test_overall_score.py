@@ -136,3 +136,8 @@ def test_penalties_length_must_match():
 
 def test_score_candidates_empty():
     assert score_candidates([]) == []
+
+
+def test_overall_score_rejects_negative_penalty():
+    with pytest.raises(ValueError, match="penalty"):
+        overall_score(FactorScores(cost=1.0), penalty=-0.2)
