@@ -229,3 +229,66 @@ def test_invalid_construction_rejected():
         ExperienceAgent(service, default_limit=0)
     with pytest.raises(ValueError, match="candidate_pool"):
         ExperienceAgent(service, max_limit=20, candidate_pool=5)
+
+
+# --- normalization: est_duration + class (BS-065) ---------------------------
+
+
+def test_activities_get_estimated_duration_and_class():
+    agent = _agent()
+    by_name = {a.name: a for a in agent.activities_for(BARCELONA)}
+    museum = by_name["Picasso Museum"]
+    park = by_name["Park Güell"]
+    assert museum.est_duration_minutes == 120  # museum heuristic
+    assert museum.indoor_outdoor is IndoorOutdoor.INDOOR
+    assert park.est_duration_minutes == 60  # "garden" heuristic
+    assert park.indoor_outdoor is IndoorOutdoor.OUTDOOR
+    # Every activity gets a duration and a class.
+    assert all(a.est_duration_minutes is not None for a in by_name.values())
+
+
+# --- optional Wikipedia enrichment (BS-065) ---------------------------------
+
+
+class _FakeEnricher:
+    def __init__(self, summaries=None, fail=False):
+        self.summaries = summaries or {}
+        self.fail = fail
+        self.calls = 0
+
+    def summary_for(self, name, wikidata=None):
+        self.calls += 1
+        if self.fail:
+            return None
+        return self.summaries.get(name)
+
+
+def test_enrichment_off_by_default():
+    enricher = _FakeEnricher(summaries={"Picasso Museum": "A museum."})
+    agent = ExperienceAgent(_service(lambda _req: RECORDED_POIS), enricher=enricher)
+    activities = agent.activities_for(BARCELONA)  # enrich defaults to False
+    assert all(a.description is None for a in activities)
+    assert enricher.calls == 0
+
+
+def test_enrichment_attaches_summary_when_requested():
+    enricher = _FakeEnricher(summaries={"Picasso Museum": "A modern-art museum."})
+    agent = ExperienceAgent(_service(lambda _req: RECORDED_POIS), enricher=enricher)
+    museum = next(
+        a
+        for a in agent.activities_for(BARCELONA, categories=["museum"], enrich=True)
+        if a.name == "Picasso Museum"
+    )
+    assert museum.description == "A modern-art museum."
+
+
+def test_enrichment_requested_without_enricher_is_noop():
+    agent = _agent()  # no enricher configured
+    activities = agent.activities_for(BARCELONA, enrich=True)
+    assert all(a.description is None for a in activities)
+
+
+def test_enrichment_failure_leaves_description_none():
+    agent = ExperienceAgent(_service(lambda _req: RECORDED_POIS), enricher=_FakeEnricher(fail=True))
+    activities = agent.activities_for(BARCELONA, enrich=True)
+    assert activities and all(a.description is None for a in activities)

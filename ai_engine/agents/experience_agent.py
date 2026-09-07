@@ -23,7 +23,14 @@ Two deliberate shaping decisions:
 Every activity is assigned an ``indoor_outdoor`` class during normalization via the
 curated mapping in :mod:`ai_engine.agents.indoor_outdoor` (BS-066) — the interface
 to weather replanning (technical-doc §11.3) — with the provider's source-level
-classification used only as a fallback when the mapping is ambiguous.
+classification used only as a fallback when the mapping is ambiguous. It also gets a
+heuristic ``est_duration_minutes`` (:mod:`ai_engine.agents.duration`, BS-065) so the
+optimizer can fit activities into a day. Both are MVP-required normalization steps.
+
+**Wikipedia enrichment** (BS-065) is a Post-MVP, optional extra: when an
+:class:`~ai_engine.providers.enrichment.ActivityEnricher` is configured and
+``enrich=True`` is passed, each activity also gets a short ``description`` summary;
+a lookup failure simply leaves it ``None``, and the plan is fully usable without it.
 
 Normalization is the single exit point: only the domain fields the coordinator
 needs are carried across; the provider label, popularity score, source id and
@@ -44,10 +51,12 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 
+from ai_engine.agents.duration import estimate_duration_minutes
 from ai_engine.agents.indoor_outdoor import classify_activity
 from ai_engine.domain import Activity, QualityFlag
 from ai_engine.providers.attraction import Activity as AttractionActivity
 from ai_engine.providers.attraction import AttractionRequest, AttractionService
+from ai_engine.providers.enrichment import ActivityEnricher
 from ai_engine.utils.api_clients import ProviderError, ProviderResult
 
 logger = logging.getLogger(__name__)
@@ -73,6 +82,7 @@ class ExperienceAgent:
         self,
         attractions: AttractionService,
         *,
+        enricher: ActivityEnricher | None = None,
         default_limit: int = DEFAULT_LIMIT,
         max_limit: int = MAX_LIMIT,
         candidate_pool: int = CANDIDATE_POOL,
@@ -86,6 +96,7 @@ class ExperienceAgent:
                 f"candidate_pool ({candidate_pool}) must be >= max_limit ({max_limit})"
             )
         self.attractions = attractions
+        self.enricher = enricher
         self.default_limit = default_limit
         self.max_limit = max_limit
         self.candidate_pool = candidate_pool
@@ -98,13 +109,17 @@ class ExperienceAgent:
         categories: Sequence[str] | None = None,
         radius_m: int = 5000,
         limit: int | None = None,
+        enrich: bool = False,
     ) -> list[Activity]:
         """Return up to ``limit`` preference-matching :class:`Activity`s for a city.
 
         Fetches a stable candidate pool from the :class:`AttractionService` (cached
         per destination), filters it to ``categories`` (keyword match; ``None`` keeps
-        all), and returns the top ``bound`` normalized domain activities. A
-        destination with no POIs yields an empty list (logged), never an error.
+        all), and returns the top ``bound`` normalized domain activities, each with a
+        heuristic ``est_duration_minutes`` and indoor/outdoor class. When ``enrich``
+        is set and an enricher is configured, each activity also gets an optional
+        summary (Post-MVP; a lookup failure simply leaves it ``None``). A destination
+        with no POIs yields an empty list (logged), never an error.
         """
         bound = self._bounded_limit(limit)
         request = AttractionRequest(
@@ -125,14 +140,15 @@ class ExperienceAgent:
         quality = QualityFlag(result.quality_flag)
         wanted = _normalize_keywords(categories)
         matched = [poi for poi in (result.data or []) if _matches(poi, wanted)]
-        activities = [self._normalize(poi, quality) for poi in matched[:bound]]
+        activities = [self._normalize(poi, quality, enrich=enrich) for poi in matched[:bound]]
         logger.debug(
-            "experience: destination %s -> %d/%d POIs after category filter %s [%s]",
+            "experience: destination %s -> %d/%d POIs after category filter %s [%s, enrich=%s]",
             destination or center,
             len(activities),
             len(result.data or []),
             sorted(wanted) or "none",
             quality,
+            enrich,
         )
         return activities
 
@@ -141,25 +157,39 @@ class ExperienceAgent:
         requested = self.default_limit if limit is None else limit
         return max(1, min(self.max_limit, requested))
 
-    def _normalize(self, poi: AttractionActivity, quality: QualityFlag) -> Activity:
+    def _normalize(
+        self, poi: AttractionActivity, quality: QualityFlag, *, enrich: bool = False
+    ) -> Activity:
         """Map a provider POI onto the domain :class:`Activity` (single exit point).
 
-        Only the normalized fields survive; the provider label, popularity, source id
-        and Wikidata id do not leak into the domain shape (technical-doc §19). POI
-        entrance cost / duration are unknown at retrieval and left ``None``.
+        Assigns the indoor/outdoor class (BS-066) and a heuristic
+        ``est_duration_minutes`` (BS-065), and — when ``enrich`` is set and an
+        enricher is configured — an optional summary. Only normalized fields survive;
+        the provider label, popularity, source id and Wikidata id do not leak into the
+        domain shape (technical-doc §19). POI entrance cost is unknown and left
+        ``None``.
         """
+        tokens = [poi.category, *poi.categories]
         return Activity(
             name=poi.name,
             category=poi.category,
             latitude=poi.latitude,
             longitude=poi.longitude,
-            # Curated indoor/outdoor feature step (BS-066): classify from the POI's
-            # category tokens, falling back to the provider's source-level hint.
-            indoor_outdoor=classify_activity(
-                [poi.category, *poi.categories], hint=poi.indoor_outdoor
-            ),
+            indoor_outdoor=classify_activity(tokens, hint=poi.indoor_outdoor),
+            est_duration_minutes=estimate_duration_minutes(tokens),
+            description=self._enrich(poi) if enrich else None,
             quality_flag=quality,
         )
+
+    def _enrich(self, poi: AttractionActivity) -> str | None:
+        """Optional Wikipedia summary for a POI, or ``None`` (never raises).
+
+        Post-MVP: only runs when an enricher is configured; a lookup failure or a
+        missing page degrades to ``None`` so enrichment never blocks the plan.
+        """
+        if self.enricher is None:
+            return None
+        return self.enricher.summary_for(poi.name, poi.wikidata)
 
 
 def _normalize_keywords(categories: Sequence[str] | None) -> set[str]:
