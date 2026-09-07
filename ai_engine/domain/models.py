@@ -239,6 +239,10 @@ class WeatherDay:
     precip_probability: float | None = None
     wind_speed: float | None = None
     conditions: str | None = None
+    # Deterministic weather-conflict flag (WeatherAgent, BS-068): True when the day
+    # is unfit for outdoor activities. Exposed to the coordinator/optimizer, which
+    # turns it into the OR-Tools weather constraint (technical-doc §12/§13).
+    weather_conflict: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.forecast_date, date):
