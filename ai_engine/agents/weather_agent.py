@@ -15,9 +15,9 @@ hazards. Each :class:`~ai_engine.domain.models.WeatherDay` carries a determinist
 (BS-068) — precipitation probability at/above a tunable threshold, a precipitation
 total, or a wet condition label — and this per-day flag is what the coordinator
 turns into the OR-Tools weather constraint. The profile-level ``risk_flags`` summarise
-these: ``weather_conflict`` when any day conflicts, and ``weather_unchecked`` when the
-forecast could not be obtained at all. The agent never decides which activity happens
-on which day.
+these: ``weather_conflict`` when any day conflicts, ``weather_partial`` when some days
+were dropped but others survived, and ``weather_unchecked`` when the forecast could
+not be obtained at all. The agent never decides which activity happens on which day.
 
 "Degrade, don't crash" (ADR-005): the service already degrades to
 **weather-unchecked** (an empty, ``estimated`` result) when Open-Meteo is down with
@@ -35,26 +35,36 @@ backend/pipeline's job).
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field, replace
 from datetime import date
 
 from ai_engine.domain import QualityFlag, WeatherDay, WeatherProfile
 from ai_engine.providers.weather import WeatherProfile as DayForecast
 from ai_engine.providers.weather import WeatherRequest, WeatherService
-from ai_engine.utils.api_clients import ProviderError, ProviderResult
+from ai_engine.utils.api_clients import ProviderError, ProviderResult, ProviderUnavailable
 
 logger = logging.getLogger(__name__)
 
 # Derived hazard flags surfaced on the profile for the optimizer/UI to act on.
 RISK_WEATHER_CONFLICT = "weather_conflict"
 RISK_WEATHER_UNCHECKED = "weather_unchecked"
+# Some days were dropped (bad/malformed rows) but others survived — the profile is
+# usable but incomplete, so the optimizer/UI knows not to treat it as the full window.
+RISK_WEATHER_PARTIAL = "weather_partial"
 
 # Default precipitation-probability (%) at/above which a day is a weather conflict.
 DEFAULT_PRECIP_PROBABILITY_THRESHOLD = 60.0
-# Condition-label substrings that mark a day as wet regardless of probability.
+# Open-Meteo serves at most ~16 days of daily forecast.
+MAX_FORECAST_DAYS = 16
+# Canonical "wet" condition words. Matched against whole, lower-cased tokens of the
+# condition label (so "rain" matches "light rain"/"rain showers" but never an
+# unrelated substring), covering the WMO labels the provider emits.
 DEFAULT_CONFLICT_CONDITIONS = frozenset(
-    {"rain", "drizzle", "snow", "sleet", "thunder", "showers", "storm"}
+    {"rain", "drizzle", "snow", "sleet", "showers", "thunderstorm", "storm", "hail", "freezing"}
 )
+
+_CONDITION_TOKEN_SPLIT = re.compile(r"[^a-z]+")
 
 
 @dataclass(frozen=True)
@@ -65,15 +75,28 @@ class WeatherConflictPolicy:
     precipitation probability is at or above ``precip_probability_threshold``, its
     precipitation total is at or above ``precipitation_mm_threshold`` (when set), or
     its condition label contains one of ``conflict_conditions`` (rain/snow/thunder
-    …). The probability threshold is the primary, configurable knob; the whole
-    policy is an immutable value so a caller can tune it (e.g. a stricter 40% for a
-    rain-averse traveller) without touching the agent. The result feeds the OR-Tools
-    weather constraint, so the rule is deterministic — no randomness, no I/O.
+    …), matched on whole words rather than raw substrings. The probability threshold
+    is the primary, configurable knob; the whole policy is an immutable value so a
+    caller can tune it (e.g. a stricter 40% for a rain-averse traveller) without
+    touching the agent. The result feeds the OR-Tools weather constraint, so the rule
+    is deterministic — no randomness, no I/O.
     """
 
     precip_probability_threshold: float = DEFAULT_PRECIP_PROBABILITY_THRESHOLD
     precipitation_mm_threshold: float | None = None
     conflict_conditions: frozenset[str] = field(default_factory=lambda: DEFAULT_CONFLICT_CONDITIONS)
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.precip_probability_threshold <= 100.0:
+            raise ValueError(
+                "precip_probability_threshold must be a percentage in [0, 100], "
+                f"got {self.precip_probability_threshold!r}"
+            )
+        if self.precipitation_mm_threshold is not None and self.precipitation_mm_threshold < 0:
+            raise ValueError(
+                "precipitation_mm_threshold must be non-negative, "
+                f"got {self.precipitation_mm_threshold!r}"
+            )
 
     def is_conflict(self, day: WeatherDay) -> bool:
         """True when ``day`` is unfit for outdoor activities under this policy."""
@@ -88,8 +111,8 @@ class WeatherConflictPolicy:
             and day.precipitation_mm >= self.precipitation_mm_threshold
         ):
             return True
-        label = (day.conditions or "").lower()
-        return any(keyword in label for keyword in self.conflict_conditions)
+        tokens = {t for t in _CONDITION_TOKEN_SPLIT.split((day.conditions or "").lower()) if t}
+        return bool(tokens & self.conflict_conditions)
 
 
 class WeatherAgent:
@@ -123,6 +146,7 @@ class WeatherAgent:
         raises: a missing forecast degrades to an empty, ``estimated`` profile
         flagged ``weather_unchecked``.
         """
+        _validate_window(start_date, end_date, forecast_days)
         request = WeatherRequest(
             center=center,
             destination=destination,
@@ -135,8 +159,10 @@ class WeatherAgent:
             result: ProviderResult[list[DayForecast]] = self.weather.resolve(request)
         except ProviderError as exc:
             # WeatherService normally degrades internally; guard anyway (ADR-005).
+            reason = "unreachable" if isinstance(exc, ProviderUnavailable) else "no data"
             logger.warning(
-                "weather: forecast unavailable for %s (%s); weather-unchecked",
+                "weather: forecast %s for %s (%s); weather-unchecked",
+                reason,
                 destination or center,
                 exc,
             )
@@ -145,13 +171,18 @@ class WeatherAgent:
             )
 
         quality = QualityFlag(result.quality_flag)
-        mapped = (self._to_day(forecast) for forecast in (result.data or []))
-        days = tuple(day for day in mapped if day is not None)
-        risk_flags = self._risk_flags(days)
+        forecasts = result.data or []
+        mapped = [self._to_day(forecast) for forecast in forecasts]
+        # Sort explicitly by date — never rely on the provider's ordering — and count
+        # how many rows were dropped so a partial window is flagged, not hidden.
+        days = tuple(sorted((d for d in mapped if d is not None), key=lambda d: d.forecast_date))
+        skipped = len(forecasts) - len(days)
+        risk_flags = self._risk_flags(days, skipped=skipped)
         logger.debug(
-            "weather: %s -> %d day(s), risks=%s [%s]",
+            "weather: %s -> %d day(s) (%d skipped), risks=%s [%s]",
             destination or center,
             len(days),
+            skipped,
             risk_flags or "none",
             quality,
         )
@@ -182,14 +213,43 @@ class WeatherAgent:
         return replace(day, weather_conflict=self.conflict_policy.is_conflict(day))
 
     @staticmethod
-    def _risk_flags(days: tuple[WeatherDay, ...]) -> tuple[str, ...]:
+    def _risk_flags(days: tuple[WeatherDay, ...], *, skipped: int = 0) -> tuple[str, ...]:
         """Derive profile-level hazard flags from the per-day conflict flags.
 
         Reporting only — no itinerary decisions. ``weather_unchecked`` when there is
-        no forecast at all; otherwise ``weather_conflict`` when any day conflicts.
+        no usable forecast at all; otherwise ``weather_conflict`` when any day
+        conflicts and ``weather_partial`` when some days were dropped but others
+        survived (an incomplete but usable window).
         """
         if not days:
             return (RISK_WEATHER_UNCHECKED,)
+        flags: list[str] = []
         if any(day.weather_conflict for day in days):
-            return (RISK_WEATHER_CONFLICT,)
-        return ()
+            flags.append(RISK_WEATHER_CONFLICT)
+        if skipped > 0:
+            flags.append(RISK_WEATHER_PARTIAL)
+        return tuple(flags)
+
+
+def _validate_window(start_date: str | None, end_date: str | None, forecast_days: int) -> None:
+    """Validate the forecast window: an explicit ISO date range, or forecast_days.
+
+    When either of ``start_date`` / ``end_date`` is given, both must be valid
+    ``YYYY-MM-DD`` dates with ``start <= end``; otherwise ``forecast_days`` must be
+    within ``[1, MAX_FORECAST_DAYS]``.
+    """
+    if start_date is not None or end_date is not None:
+        if start_date is None or end_date is None:
+            raise ValueError("start_date and end_date must be given together")
+        try:
+            start = date.fromisoformat(start_date)
+            end = date.fromisoformat(end_date)
+        except ValueError as exc:
+            raise ValueError(f"start_date/end_date must be YYYY-MM-DD: {exc}") from exc
+        if start > end:
+            raise ValueError(f"start_date ({start_date}) must not be after end_date ({end_date})")
+        return
+    if not 1 <= forecast_days <= MAX_FORECAST_DAYS:
+        raise ValueError(
+            f"forecast_days must be within [1, {MAX_FORECAST_DAYS}], got {forecast_days!r}"
+        )
