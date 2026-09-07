@@ -22,6 +22,7 @@ from ai_engine.agents.transport_agent import (
     FlightTripRequest,
     FuelPriceEntry,
     FuelPriceTable,
+    FuelProvenance,
     FuelQuote,
     PublicTransportTripRequest,
     TransportAgent,
@@ -41,6 +42,7 @@ from ai_engine.providers.public_transport import (
 from ai_engine.providers.public_transport import TransportOption as TransitResult
 from ai_engine.providers.route import OpenRouteServiceProvider, RouteService
 from ai_engine.utils.api_clients import (
+    AllProvidersFailed,
     ProviderResult,
     ProviderUnavailable,
     RetryPolicy,
@@ -184,7 +186,45 @@ def test_worst_quality_ordering():
 def test_missing_country_falls_back_to_eu_average_estimated():
     table = _fuel_table(**{EU_AVERAGE_CODE: FuelPriceEntry(1.807, 1.952, QualityFlag.ESTIMATED)})
     quote = table.quote("MK", "petrol")
-    assert quote == FuelQuote(1.807, QualityFlag.ESTIMATED, EU_AVERAGE_CODE, "petrol")
+    # No real per-country rows to average, so the stored EU row is used — flagged as
+    # a calculated EU-average estimate.
+    assert quote == FuelQuote(
+        1.807,
+        QualityFlag.ESTIMATED,
+        EU_AVERAGE_CODE,
+        "petrol",
+        FuelProvenance.CALCULATED_EU_AVERAGE,
+    )
+
+
+def test_missing_country_uses_calculated_average_of_real_prices():
+    # With real per-country rows, the fallback is their computed mean (petrol and
+    # diesel averaged separately), not a single stored EU figure.
+    table = FuelPriceTable(
+        {
+            "GR": FuelPriceEntry(1.60, 1.50, QualityFlag.REAL),
+            "DE": FuelPriceEntry(1.80, 1.70, QualityFlag.REAL),
+        }
+    )
+    petrol = table.quote("MK", "petrol")
+    diesel = table.quote("MK", "diesel")
+    assert petrol.price_per_litre == pytest.approx(1.70)  # mean(1.60, 1.80)
+    assert diesel.price_per_litre == pytest.approx(1.60)  # mean(1.50, 1.70)
+    assert petrol.provenance is FuelProvenance.CALCULATED_EU_AVERAGE
+    assert petrol.quality_flag is QualityFlag.ESTIMATED
+
+
+def test_implausible_fuel_price_is_rejected():
+    # A negative/absurd stored price is treated as bad data and falls back.
+    table = FuelPriceTable(
+        {
+            "GR": FuelPriceEntry(-1.0, None, QualityFlag.REAL),
+            "DE": FuelPriceEntry(1.80, None, QualityFlag.REAL),
+        }
+    )
+    quote = table.quote("GR", "petrol")
+    assert quote.price_per_litre == pytest.approx(1.80)  # GR's bad price skipped
+    assert quote.provenance is FuelProvenance.CALCULATED_EU_AVERAGE
 
 
 def test_empty_table_uses_static_default_estimated():
@@ -233,9 +273,30 @@ def test_origin_policy_prices_at_origin_country():
     agent = TransportAgent(_real_route_service(), table, fuel_country="origin")
     option = agent.car_option(_base_request(origin_country_code="MK"))
     total_km = ONE_WAY_KM * 2
-    expected = (total_km / 100) * 6.5 * 1.807  # EU-average (MK uncovered)
+    # MK is uncovered -> calculated EU average = mean of the real per-country prices
+    # (here just GR's 1.60), not the stored EU row.
+    expected = (total_km / 100) * 6.5 * 1.60
     assert option.cost == pytest.approx(round(expected, 2))
     assert option.quality_flag is QualityFlag.ESTIMATED
+
+
+def test_average_fuel_policy_blends_origin_and_destination():
+    # fuel_country="average" prices a cross-border round trip on the mean of the two
+    # countries' real prices.
+    table = FuelPriceTable(
+        {
+            "GR": FuelPriceEntry(1.60, 1.50, QualityFlag.REAL),
+            "DE": FuelPriceEntry(1.80, 1.70, QualityFlag.REAL),
+        }
+    )
+    agent = TransportAgent(_real_route_service(), table, fuel_country="average")
+    option = agent.car_option(
+        _base_request(origin_country_code="DE", destination_country_code="GR")
+    )
+    total_km = ONE_WAY_KM * 2
+    expected = (total_km / 100) * 6.5 * ((1.80 + 1.60) / 2)  # mean of DE & GR petrol
+    assert option.cost == pytest.approx(round(expected, 2))
+    assert option.quality_flag is QualityFlag.REAL  # both quotes real -> real
 
 
 # --- route summary & validation --------------------------------------------
@@ -268,11 +329,11 @@ def test_zero_vehicles_rejected():
         agent.car_option(_base_request(vehicles=0))
 
 
-def test_zero_consumption_is_allowed_and_costs_zero_fuel():
+def test_zero_consumption_is_rejected():
+    # A zero consumption would silently cost zero fuel, so it is now rejected.
     agent = TransportAgent(_real_route_service(), _fuel_table(GR=FuelPriceEntry(1.5, 1.4)))
-    option = agent.car_option(_base_request(vehicle_consumption=0.0))
-    assert option.cost == pytest.approx(0.0)
-    assert option.distance_km is not None and option.distance_km > 0
+    with pytest.raises(ValueError, match="vehicle_consumption"):
+        agent.car_option(_base_request(vehicle_consumption=0.0))
 
 
 # --- backend bridge: fuel_prices rows -> FuelPriceTable ----------------------
@@ -735,3 +796,93 @@ def test_quality_flag_correct_per_source_via_evaluate():
     flight = agent.evaluate(_flight_request(origin_point=SKP, destination_point=BCN))
     assert car.quality_flag is QualityFlag.REAL
     assert flight.quality_flag is QualityFlag.ESTIMATED
+
+
+# ===========================================================================
+# Hardening (agents-hardening): validation, configurable round trip, degrade
+# ===========================================================================
+
+
+class _BoomService:
+    """A transport service stand-in whose resolve always fails entirely."""
+
+    def resolve(self, request):
+        raise AllProvidersFailed([("primary", "down"), ("estimate", "down")])
+
+
+def test_flight_invalid_iata_rejected():
+    agent = TransportAgent(flight_service=_real_flight_service())
+    with pytest.raises(ValueError, match="origin_iata"):
+        agent.flight_option(_flight_request(origin_iata="SK"))
+    with pytest.raises(ValueError, match="destination_iata"):
+        agent.flight_option(_flight_request(destination_iata="12A"))
+
+
+def test_flight_invalid_currency_rejected():
+    agent = TransportAgent(flight_service=_real_flight_service())
+    with pytest.raises(ValueError, match="currency"):
+        agent.flight_option(_flight_request(currency="euro"))
+
+
+def test_flight_round_trip_multipliers_are_configurable():
+    agent = TransportAgent(flight_service=_real_flight_service())
+    option = agent.flight_option(
+        _flight_request(
+            round_trip=True, round_trip_fare_multiplier=1.8, round_trip_duration_multiplier=1.5
+        )
+    )
+    assert option.cost == pytest.approx(BEST_PRICE * 1.8)
+    assert option.duration_minutes == round(BEST_DURATION * 1.5)
+
+
+def test_flight_degrades_to_unpriced_option_when_all_providers_fail():
+    agent = TransportAgent(flight_service=_BoomService())
+    option = agent.flight_option(_flight_request(origin_point=SKP, destination_point=BCN))
+    assert option.mode is TransportMode.AIRPLANE
+    assert option.cost is None
+    assert option.quality_flag is QualityFlag.ESTIMATED
+    assert option.distance_km is not None  # great-circle still reported
+    assert "unavailable" in option.route_summary
+
+
+def test_public_transport_degrades_when_all_providers_fail():
+    agent = TransportAgent(public_transport_service=_BoomService())
+    option = agent.public_transport_option(_transit_request())
+    assert option.cost is None and option.quality_flag is QualityFlag.ESTIMATED
+
+
+def test_public_transport_empty_origin_rejected():
+    agent = TransportAgent(public_transport_service=_real_transit_service())
+    with pytest.raises(ValueError, match="origin"):
+        agent.public_transport_option(_transit_request(origin="   "))
+
+
+def test_public_transport_unknown_mode_defaults_to_bus():
+    ferry = TransitResult(
+        mode="ferry",
+        price=40.0,
+        currency="eur",
+        origin="Skopje",
+        destination="Bari",
+        provider="fake",
+        duration_min=600,
+    )
+    agent = TransportAgent(public_transport_service=_FakeTransitService(ferry, "real"))
+    option = agent.public_transport_option(_transit_request(round_trip=False))
+    assert option.mode is TransportMode.BUS  # unknown 'ferry' defaults safely
+
+
+def test_compare_skips_a_failing_mode():
+    # A mode with no configured service raises inside evaluate; compare() isolates it
+    # and still returns the options it could produce.
+    agent = TransportAgent(
+        _real_route_service(),
+        _fuel_table(GR=FuelPriceEntry(1.6, 1.5)),
+        flight_service=_real_flight_service(),
+    )
+    options = agent.compare(
+        [_base_request(), _flight_request(), _transit_request()]  # transit has no service
+    )
+    modes = {o.mode for o in options}
+    assert TransportMode.CAR in modes and TransportMode.AIRPLANE in modes
+    assert len(options) == 2  # the bus/train request was skipped, not fatal

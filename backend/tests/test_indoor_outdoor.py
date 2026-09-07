@@ -112,3 +112,44 @@ def test_coerce_accepts_enum_string_and_junk():
     assert coerce("outdoor") is OUT
     assert coerce("nonsense") is MIX
     assert coerce(None) is MIX
+
+
+# ===========================================================================
+# Hardening (agents-hardening): whole-token matching, dominance, normalization
+# ===========================================================================
+
+
+def test_whole_token_matching_avoids_substring_false_positives():
+    # "parking" must not match the "park" outdoor keyword (the old substring bug);
+    # "terrain" must not match "rain"-style partials either.
+    assert classify_categories(["parking"]) is MIX
+    assert classify_categories(["car_parking_lot"]) is MIX
+
+
+def test_separator_and_plural_normalization():
+    # Mixed separators and plural/variant forms all normalize to the same token.
+    assert classify_categories(["Gardens-And-Parks"]) is OUT
+    assert classify_categories(["beaches"]) is OUT
+    assert classify_categories(["art galleries"]) is IN
+
+
+def test_dominant_class_wins_over_tie():
+    # Two indoor tokens vs one outdoor -> indoor dominates (no longer forced mixed).
+    assert classify_categories(["museum", "gallery", "park"]) is IN
+    # Two outdoor vs one indoor -> outdoor dominates.
+    assert classify_categories(["park", "garden", "museum"]) is OUT
+    # Genuine 1-1 tie stays mixed.
+    assert classify_categories(["castle", "museum"]) is MIX
+
+
+def test_expanded_categories_are_classified():
+    assert classify_categories(["restaurant"]) is IN
+    assert classify_categories(["nightclub"]) is IN
+    assert classify_categories(["zoo"]) is OUT
+    assert classify_categories(["botanical_garden"]) is OUT
+
+
+def test_unknown_provider_hint_is_not_trusted():
+    # An out-of-vocabulary hint must not be used as a classification.
+    assert classify_activity(["attraction"], hint="underwater") is MIX
+    assert classify_activity(["attraction"], hint="outdoor") is OUT

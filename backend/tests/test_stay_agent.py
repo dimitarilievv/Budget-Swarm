@@ -19,6 +19,7 @@ from ai_engine.providers.accommodation import (
     InsideAirbnbProvider,
     PriceStatsEstimateProvider,
 )
+from ai_engine.utils.api_clients import AllProvidersFailed, ProviderUnavailable
 
 
 def _row(price, **kw):
@@ -170,9 +171,43 @@ def test_limit_is_clamped_to_max():
     assert len(agent.options_for(destination_id=1, limit=99)) == MAX_LIMIT
 
 
-def test_limit_below_one_clamped_up():
+def test_invalid_limit_rejected():
+    # A non-positive limit is now rejected rather than silently clamped up.
     agent = _agent(rows=LISTINGS)
-    assert len(agent.options_for(destination_id=1, limit=0)) == 1
+    with pytest.raises(ValueError, match="limit"):
+        agent.options_for(destination_id=1, limit=0)
+
+
+def test_invalid_destination_id_rejected():
+    agent = _agent(rows=LISTINGS)
+    with pytest.raises(ValueError, match="destination_id"):
+        agent.options_for(destination_id=0)
+
+
+def test_invalid_currency_rejected():
+    agent = _agent(rows=LISTINGS)
+    with pytest.raises(ValueError, match="currency"):
+        agent.options_for(destination_id=1, currency="euro")
+
+
+def test_invalid_listing_is_dropped_not_fatal():
+    # A row with a bad price is dropped (logged), the good ones still returned.
+    rows = [
+        _row(-5.0, name="Broken"),  # invalid negative price
+        _row(60.0, name="Good"),
+    ]
+    agent = _agent(rows=rows)
+    names = [a.name for a in agent.options_for(destination_id=1)]
+    assert "Good" in names and "Broken" not in names
+
+
+def test_source_failure_degrades_to_empty():
+    class _BoomService:
+        def resolve(self, request):
+            raise AllProvidersFailed([("inside-airbnb", ProviderUnavailable("db down"))])
+
+    agent = StayAgent(_BoomService())
+    assert agent.options_for(destination_id=1) == []
 
 
 # --- degrade, don't crash ---------------------------------------------------

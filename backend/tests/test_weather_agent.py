@@ -10,10 +10,12 @@ from __future__ import annotations
 
 from datetime import date
 
+import pytest
 from db.retrieval import CacheEntry, read_through
 
 from ai_engine.agents.weather_agent import (
     RISK_WEATHER_CONFLICT,
+    RISK_WEATHER_PARTIAL,
     RISK_WEATHER_UNCHECKED,
     WeatherAgent,
     WeatherConflictPolicy,
@@ -212,7 +214,7 @@ def test_condition_label_triggers_conflict_regardless_of_probability():
 
 def test_precipitation_mm_threshold_is_optional_signal():
     policy = WeatherConflictPolicy(
-        precip_probability_threshold=101.0,  # never triggers on probability
+        precip_probability_threshold=100.0,  # days below carry no probability -> inert
         precipitation_mm_threshold=5.0,
         conflict_conditions=frozenset(),  # never triggers on label
     )
@@ -240,3 +242,73 @@ def test_configurable_threshold_changes_agent_derivation():
     )
     days = strict.profile_for(BARCELONA).days
     assert [d.weather_conflict for d in days] == [False, True, False]
+
+
+# ===========================================================================
+# Hardening (agents-hardening): validation, canonical matching, partial, sort
+# ===========================================================================
+
+
+def test_invalid_forecast_days_rejected():
+    agent = _agent(lambda _req: RECORDED_OM)
+    with pytest.raises(ValueError, match="forecast_days"):
+        agent.profile_for(BARCELONA, forecast_days=0)
+    with pytest.raises(ValueError, match="forecast_days"):
+        agent.profile_for(BARCELONA, forecast_days=30)
+
+
+def test_invalid_date_window_rejected():
+    agent = _agent(lambda _req: RECORDED_OM)
+    with pytest.raises(ValueError, match="start_date"):
+        agent.profile_for(BARCELONA, start_date="2026-09-05", end_date="2026-09-02")
+    with pytest.raises(ValueError, match="together"):
+        agent.profile_for(BARCELONA, start_date="2026-09-02")
+    with pytest.raises(ValueError, match="YYYY-MM-DD"):
+        agent.profile_for(BARCELONA, start_date="nope", end_date="2026-09-02")
+
+
+def test_conflict_policy_rejects_out_of_range_threshold():
+    with pytest.raises(ValueError, match="precip_probability_threshold"):
+        WeatherConflictPolicy(precip_probability_threshold=150.0)
+    with pytest.raises(ValueError, match="precipitation_mm_threshold"):
+        WeatherConflictPolicy(precipitation_mm_threshold=-1.0)
+
+
+def test_condition_matching_is_whole_token_not_substring():
+    policy = WeatherConflictPolicy(precip_probability_threshold=100.0)
+    # "terrain" contains "rain" as a substring but is not a wet condition.
+    assert policy.is_conflict(_day(conditions="dry terrain")) is False
+    assert policy.is_conflict(_day(conditions="rain showers")) is True
+
+
+def test_partial_forecast_is_flagged():
+    body = {
+        "daily": {
+            "time": ["bad", "2026-09-03", "2026-09-04"],
+            "temperature_2m_max": [20.0, 24.1, 25.0],
+            "temperature_2m_min": [10.0, 17.5, 18.0],
+            "precipitation_sum": [0.0, 1.0, 0.0],
+            "precipitation_probability_max": [5, 20, 10],
+            "windspeed_10m_max": [10.0, 12.0, 11.0],
+            "weathercode": [0, 1, 1],
+        }
+    }
+    profile = _agent(lambda _req: body).profile_for(BARCELONA)
+    assert len(profile.days) == 2
+    assert RISK_WEATHER_PARTIAL in profile.risk_flags
+
+
+def test_days_are_sorted_even_if_provider_unsorted():
+    body = {
+        "daily": {
+            "time": ["2026-09-04", "2026-09-02", "2026-09-03"],  # out of order
+            "temperature_2m_max": [26.0, 29.5, 24.1],
+            "temperature_2m_min": [18.2, 19.0, 17.5],
+            "precipitation_sum": [3.1, 0.0, 12.4],
+            "precipitation_probability_max": [10, 5, 20],
+            "windspeed_10m_max": [18.0, 12.0, 28.0],
+            "weathercode": [3, 0, 1],
+        }
+    }
+    dates = [d.forecast_date for d in _agent(lambda _req: body).profile_for(BARCELONA).days]
+    assert dates == sorted(dates)
