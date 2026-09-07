@@ -53,6 +53,14 @@ an optional, hard-cached upgrade whose prices are **indicative** and whose sourc
 an unofficial scraper disclosed as a limitation (technical-doc §9.3/§28). As with
 flights the fare is per person and a round trip doubles cost and duration.
 
+Whichever mode runs, every path ends at the **single normalization exit point**
+:meth:`TransportAgent._normalize` (BS-063), which builds the uniform,
+provider-agnostic :class:`TransportOption` and stamps its ``quality_flag`` — so the
+coordinator never sees a provider-specific field (technical-doc §17/§19). The user
+selects one mode, so :meth:`TransportAgent.evaluate` dispatches on the request type
+and runs **only that mode**; :meth:`TransportAgent.compare` is the opt-in path that
+evaluates several modes on the same normalized shape.
+
 ``ai_engine`` stays free of any backend/ORM import: the fuel price arrives through
 the small :class:`FuelPriceLookup` protocol, and the backend wires a DB-backed
 implementation in (see ``backend/db/fuel_lookup.py``). This module depends only on
@@ -62,6 +70,7 @@ the domain models, the transport providers and the standard library.
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal, Protocol, runtime_checkable
 
@@ -260,6 +269,10 @@ class PublicTransportTripRequest:
     destination_label: str | None = None
 
 
+# One request per mode; the request type is what selects the mode to evaluate.
+TransportTripRequest = CarTripRequest | FlightTripRequest | PublicTransportTripRequest
+
+
 # --- agent ------------------------------------------------------------------
 
 
@@ -297,6 +310,33 @@ class TransportAgent:
         self.flight_service = flight_service
         self.public_transport_service = public_transport_service
         self.fuel_country = fuel_country
+
+    def evaluate(self, request: TransportTripRequest) -> TransportOption:
+        """Evaluate the **one** transport mode the request selects (technical-doc §9).
+
+        The user picks a single mode, so exactly one request type is passed and only
+        that mode's path runs — no other provider is called. Dispatch is by request
+        type; the returned :class:`TransportOption` is the uniform, provider-agnostic
+        shape the coordinator consumes (see :meth:`_normalize`). To compare several
+        modes deliberately, use :meth:`compare` with one request per mode.
+        """
+        if isinstance(request, CarTripRequest):
+            return self.car_option(request)
+        if isinstance(request, FlightTripRequest):
+            return self.flight_option(request)
+        if isinstance(request, PublicTransportTripRequest):
+            return self.public_transport_option(request)
+        raise TypeError(f"unsupported transport request type: {type(request).__name__}")
+
+    def compare(self, requests: Sequence[TransportTripRequest]) -> list[TransportOption]:
+        """Evaluate several modes explicitly (opt-in "compare mode", technical-doc §9).
+
+        Each request selects one mode; the results are normalized identically, so the
+        caller can rank modes on the same :class:`TransportOption` fields. Default
+        behaviour remains single-mode :meth:`evaluate` — this is only used when the
+        system is explicitly configured to compare alternatives.
+        """
+        return [self.evaluate(request) for request in requests]
 
     def car_option(self, request: CarTripRequest) -> TransportOption:
         """Return the normalized :class:`TransportOption` for a car trip.
@@ -354,11 +394,11 @@ class TransportAgent:
             quality,
         )
 
-        return TransportOption(
+        return self._normalize(
             mode=TransportMode.CAR,
-            cost=round(fuel_cost, 2),
-            duration_minutes=round(total_duration_min),
-            distance_km=round(total_distance_km, 3),
+            cost=fuel_cost,
+            duration_minutes=total_duration_min,
+            distance_km=total_distance_km,
             route_summary=summary,
             quality_flag=quality,
         )
@@ -394,17 +434,11 @@ class TransportAgent:
 
         legs = 2 if request.round_trip else 1
         total_cost = flight.price * request.passengers * legs
-        total_duration_min = (
-            round(flight.duration_min * legs) if flight.duration_min is not None else None
-        )
+        total_duration_min = flight.duration_min * legs if flight.duration_min is not None else None
 
         # A flight has no road distance; report the great-circle distance (× legs)
         # when both endpoints are known, purely as an informative figure.
-        distance_km: float | None = None
-        if request.origin_point is not None and request.destination_point is not None:
-            distance_km = round(
-                haversine_km(request.origin_point, request.destination_point) * legs, 3
-            )
+        distance_km = _great_circle_legs(request.origin_point, request.destination_point, legs)
 
         summary = _flight_summary(request, flight)
         logger.debug(
@@ -420,9 +454,9 @@ class TransportAgent:
             flight.indicative,
         )
 
-        return TransportOption(
+        return self._normalize(
             mode=TransportMode.AIRPLANE,
-            cost=round(total_cost, 2),
+            cost=total_cost,
             duration_minutes=total_duration_min,
             distance_km=distance_km,
             route_summary=summary,
@@ -463,17 +497,11 @@ class TransportAgent:
 
         legs = 2 if request.round_trip else 1
         total_cost = trip.price * request.passengers * legs
-        total_duration_min = (
-            round(trip.duration_min * legs) if trip.duration_min is not None else None
-        )
+        total_duration_min = trip.duration_min * legs if trip.duration_min is not None else None
 
         # Bus/train providers do not report route length; give the informative
         # great-circle distance (× legs) when both endpoints are known.
-        distance_km: float | None = None
-        if request.origin_point is not None and request.destination_point is not None:
-            distance_km = round(
-                haversine_km(request.origin_point, request.destination_point) * legs, 3
-            )
+        distance_km = _great_circle_legs(request.origin_point, request.destination_point, legs)
 
         summary = _public_transport_summary(request, trip)
         logger.debug(
@@ -489,14 +517,50 @@ class TransportAgent:
             quality,
         )
 
-        return TransportOption(
+        return self._normalize(
             mode=mode,
-            cost=round(total_cost, 2),
+            cost=total_cost,
             duration_minutes=total_duration_min,
             distance_km=distance_km,
             route_summary=summary,
             quality_flag=quality,
         )
+
+    def _normalize(
+        self,
+        *,
+        mode: TransportMode,
+        cost: float | None,
+        duration_minutes: float | None,
+        distance_km: float | None,
+        route_summary: str | None,
+        quality_flag: QualityFlag,
+    ) -> TransportOption:
+        """The single exit point every mode routes through (technical-doc §17/§19).
+
+        Builds the uniform, provider-agnostic :class:`TransportOption` — the only
+        shape the coordinator ever sees — applying the common rounding (cost to
+        cents, duration to whole minutes, distance to metres) and stamping the
+        ``quality_flag``. Centralising construction here guarantees no mode can leak
+        a provider-specific field and that provenance is always set.
+        """
+        option = TransportOption(
+            mode=mode,
+            cost=round(cost, 2) if cost is not None else None,
+            duration_minutes=round(duration_minutes) if duration_minutes is not None else None,
+            distance_km=round(distance_km, 3) if distance_km is not None else None,
+            route_summary=route_summary,
+            quality_flag=quality_flag,
+        )
+        logger.debug(
+            "normalized TransportOption: mode=%s cost=%s duration=%s distance=%s quality=%s",
+            option.mode,
+            option.cost,
+            option.duration_minutes,
+            option.distance_km,
+            option.quality_flag,
+        )
+        return option
 
     def _fuel_country(self, request: CarTripRequest) -> str | None:
         """Pick the country whose fuel price the trip uses, per ``fuel_country``.
@@ -511,6 +575,19 @@ class TransportAgent:
 def _worst_quality(*flags: QualityFlag) -> QualityFlag:
     """The least-firm flag among ``flags`` (estimated < cached < real)."""
     return min(flags, key=lambda flag: _QUALITY_RANK[flag])
+
+
+def _great_circle_legs(
+    origin: GeoPoint | None, destination: GeoPoint | None, legs: int
+) -> float | None:
+    """Great-circle distance over ``legs`` when both endpoints are known, else None.
+
+    An informative straight-line figure for flight/bus/train options (whose
+    providers do not report route length); rounded at the normalization exit point.
+    """
+    if origin is None or destination is None:
+        return None
+    return haversine_km(origin, destination) * legs
 
 
 def _route_summary(request: CarTripRequest, route: Route, total_distance_km: float) -> str:

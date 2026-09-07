@@ -631,3 +631,107 @@ def test_public_transport_zero_passengers_rejected():
     agent = TransportAgent(public_transport_service=_real_transit_service())
     with pytest.raises(ValueError, match="passengers"):
         agent.public_transport_option(_transit_request(passengers=0))
+
+
+# ===========================================================================
+# Normalization + dispatch (BS-063): one exit point, only the selected mode
+# ===========================================================================
+
+
+class _SpyService:
+    """Wraps a real service and counts resolve() calls, to prove non-invocation."""
+
+    def __init__(self, inner):
+        self.inner = inner
+        self.calls = 0
+
+    def resolve(self, request):
+        self.calls += 1
+        return self.inner.resolve(request)
+
+
+def _full_agent(*, flight_service=None, public_transport_service=None) -> TransportAgent:
+    return TransportAgent(
+        _real_route_service(),
+        _fuel_table(GR=FuelPriceEntry(1.5, 1.4), **{EU_AVERAGE_CODE: FuelPriceEntry(1.8, 1.9)}),
+        flight_service=flight_service or _real_flight_service(),
+        public_transport_service=public_transport_service or _real_transit_service(),
+    )
+
+
+def test_evaluate_dispatches_each_request_type():
+    agent = _full_agent()
+    assert agent.evaluate(_base_request()).mode is TransportMode.CAR
+    assert agent.evaluate(_flight_request()).mode is TransportMode.AIRPLANE
+    assert agent.evaluate(_transit_request()).mode is TransportMode.BUS
+
+
+def test_evaluate_runs_only_the_selected_mode():
+    # Evaluating car must not touch the flight or bus/train services.
+    flight_spy = _SpyService(_real_flight_service())
+    transit_spy = _SpyService(_real_transit_service())
+    agent = _full_agent(flight_service=flight_spy, public_transport_service=transit_spy)
+
+    option = agent.evaluate(_base_request())
+    assert option.mode is TransportMode.CAR
+    assert flight_spy.calls == 0
+    assert transit_spy.calls == 0
+
+    agent.evaluate(_flight_request())
+    assert flight_spy.calls == 1 and transit_spy.calls == 0
+
+
+def test_evaluate_rejects_unknown_request_type():
+    agent = _full_agent()
+    with pytest.raises(TypeError, match="unsupported transport request"):
+        agent.evaluate(object())
+
+
+def test_compare_evaluates_each_request():
+    agent = _full_agent()
+    options = agent.compare([_base_request(), _flight_request(), _transit_request()])
+    assert [o.mode for o in options] == [
+        TransportMode.CAR,
+        TransportMode.AIRPLANE,
+        TransportMode.BUS,
+    ]
+
+
+def test_all_modes_emit_uniform_domain_option():
+    from ai_engine.domain import TransportOption as DomainOption
+
+    agent = _full_agent()
+    requests = [
+        _base_request(),
+        _flight_request(origin_point=SKP, destination_point=BCN),
+        _transit_request(origin_point=SKOPJE_CITY, destination_point=MUNICH),
+    ]
+    for request in requests:
+        option = agent.evaluate(request)
+        # Uniform, provider-agnostic shape.
+        assert isinstance(option, DomainOption)
+        assert isinstance(option.mode, TransportMode)
+        assert isinstance(option.quality_flag, QualityFlag)
+        # No provider-specific field can leak to the coordinator.
+        for leaked in ("provider", "indicative", "carrier", "airline", "transfers"):
+            assert not hasattr(option, leaked)
+        # Common rounding applied at the single exit point.
+        if option.duration_minutes is not None:
+            assert isinstance(option.duration_minutes, int)
+        if option.distance_km is not None:
+            assert round(option.distance_km, 3) == option.distance_km
+        if option.cost is not None:
+            assert round(option.cost, 2) == option.cost
+
+
+def test_quality_flag_correct_per_source_via_evaluate():
+    # Real car (real route + real fuel) vs estimated flight (no data, estimate).
+    agent = TransportAgent(
+        _real_route_service(),
+        _fuel_table(GR=FuelPriceEntry(1.5, 1.4, QualityFlag.REAL)),
+        flight_service=_tp_service(lambda _req: {"success": True, "data": []}),
+    )
+    car = agent.evaluate(_base_request())
+    flight = agent.evaluate(_flight_request(origin_point=SKP, destination_point=BCN))
+    assert car.quality_flag is QualityFlag.REAL
+    assert flight.quality_flag is QualityFlag.ESTIMATED
