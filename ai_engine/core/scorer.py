@@ -1,38 +1,52 @@
-"""Per-candidate-set normalization utilities for scoring (BS-068).
+"""Scoring: per-candidate-set normalization (BS-068) + factor scores (BS-069).
 
 The scorer turns each candidate destination's raw factors — cost, travel time,
-culture/nature/food scores, weather, … — into a single comparable number
-(technical-doc §14). Those raw factors live on wildly different scales (euros vs.
-minutes vs. a 0–1 index), so before they can be weighted and summed they must be
-brought onto one common ``[0, 1]`` scale. This module is that first step: **min-max
-normalization computed per request's candidate set** (BS-069 does the weighting on
-top).
+culture/nature/food scores, weather, … — into a small set of comparable numbers
+(technical-doc §14). It has two layers:
 
-Two things make this more than a textbook min-max:
+1. **Normalization** (BS-068) — min-max scaling computed per request's candidate
+   set, so factors on wildly different scales (euros vs. minutes vs. a 0–1 index)
+   land on one common ``[0, 1]`` scale.
+2. **Factor scores** (BS-069) — six deterministic per-candidate factors
+   (cost, preference, experience, weather, travel, accommodation), each in
+   ``[0, 1]`` and oriented so **bigger is always better**. BS-070 weights and sums
+   them into one overall score.
+
+Two things make the normalization more than a textbook min-max:
 
 * **Direction.** For a "higher is better" factor (a culture score) the largest raw
   value should map to ``1.0``; for a "lower is better" factor (cost, travel time)
   the *smallest* raw value should map to ``1.0``. Pass ``invert=True`` (or
-  :data:`LOWER_IS_BETTER`) for the latter, so every normalized factor reads the same
-  way downstream: **bigger is always better**.
+  :data:`LOWER_IS_BETTER`) for the latter.
 * **Degenerate sets.** A single candidate, or a set whose values are all equal, has
-  a zero range — the ``(x - min) / (max - min)`` formula divides by zero. That is not
-  an error here (a one-city request is normal): every such candidate is given the
-  same neutral :data:`DEGENERATE_VALUE`, so the factor simply stops differentiating
+  a zero range — ``(x - min) / (max - min)`` divides by zero. That is not an error
+  here (a one-city request is normal): every such candidate is given the same
+  neutral :data:`DEGENERATE_VALUE`, so the factor simply stops differentiating
   candidates instead of crashing.
 
-Missing data is handled explicitly: a ``None`` value (an un-enriched candidate) is
-excluded from the min/max range and assigned :data:`MISSING_VALUE` — ``0.0`` by
-default, so unknown data is penalized rather than silently rewarded.
+Missing data is handled explicitly: a ``None`` value is excluded from the min/max
+range and assigned :data:`MISSING_VALUE` — ``0.0`` by default, so unknown data is
+penalized rather than silently rewarded.
 
-This module is deterministic and dependency-free — no I/O, no randomness, no domain
-import — so it is trivially unit-testable and reusable by the coordinator/optimizer.
+Everything here is pure and deterministic — no I/O, no randomness — and depends only
+on the domain models (BS-038), so it is trivially unit-testable and reusable by the
+coordinator/optimizer.
 """
 
 from __future__ import annotations
 
 import logging
+import statistics
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+
+from ai_engine.domain import (
+    Accommodation,
+    Activity,
+    DestinationFeatures,
+    TransportOption,
+    WeatherProfile,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -139,3 +153,219 @@ def _clamp01(value: float) -> float:
     if value > 1.0:
         return 1.0
     return value
+
+
+# ============================================================================
+# Factor scores (BS-069) — six deterministic per-candidate factors in [0, 1]
+# ============================================================================
+#
+# The scorer reduces each candidate to six comparable factor scores (technical-doc
+# §14), every one in [0, 1] where bigger is better:
+#
+#   cost          cheaper total trip        (normalized across the set, inverted)
+#   preference    features fit the user     (intrinsic weighted average)
+#   experience    activities fill the days  (intrinsic coverage)
+#   weather       few weather-conflict days (intrinsic non-conflict fraction)
+#   travel        shorter journey           (normalized across the set, inverted)
+#   accommodation well-rated places to stay (intrinsic best-rating)
+#
+# cost and travel are magnitudes on open scales, so they are min-max normalized
+# across the request's candidate set; the other four are intrinsically bounded and
+# computed per candidate. Every function is pure and deterministic.
+
+# Neutral weather score when the forecast could not be obtained (weather-unchecked).
+WEATHER_UNCHECKED_SCORE = 0.5
+# Score when lodging options exist but none carry a rating (availability known,
+# quality unknown).
+UNRATED_ACCOMMODATION_SCORE = 0.5
+# Assumed sightseeing activities filled per day, for experience coverage.
+DEFAULT_ACTIVITIES_PER_DAY = 2
+_MAX_RATING = 5.0
+
+# Preference keyword -> the DestinationFeatures attribute it scores against.
+_PREFERENCE_FEATURES = {
+    "culture": "culture_score",
+    "nature": "nature_score",
+    "nightlife": "nightlife_score",
+    "food": "food_score",
+    "tourism": "tourism_score",
+    "season": "season_score",
+}
+
+# A user's relative interest per preference keyword (non-negative; ratios only).
+PreferenceWeights = Mapping[str, float]
+
+
+@dataclass(frozen=True)
+class CandidateInputs:
+    """One candidate's normalized agent outputs, the raw material for its factors.
+
+    Assembled by the coordinator from the per-candidate agent results. Any field may
+    be absent (``None`` / empty) — the factor functions degrade to a neutral or
+    penalized score rather than failing.
+    """
+
+    features: DestinationFeatures | None = None
+    transport: TransportOption | None = None
+    accommodations: Sequence[Accommodation] = field(default_factory=tuple)
+    activities: Sequence[Activity] = field(default_factory=tuple)
+    weather: WeatherProfile | None = None
+    nights: int = 1
+
+
+@dataclass(frozen=True)
+class FactorScores:
+    """The six deterministic factor scores for one candidate, each in ``[0, 1]``."""
+
+    cost: float = 0.0
+    preference: float = 0.0
+    experience: float = 0.0
+    weather: float = 0.0
+    travel: float = 0.0
+    accommodation: float = 0.0
+
+
+# --- intrinsic per-candidate factors (already bounded in [0, 1]) ------------
+
+
+def preference_score(features: DestinationFeatures | None, weights: PreferenceWeights) -> float:
+    """Weighted average of the destination's feature scores under the user's weights.
+
+    ``sum(weight_f * feature_f) / sum(weight_f)`` over the features the destination
+    actually has (each feature is already a 0-1 index). A missing feature is dropped
+    from *both* sums rather than counted as zero, so an un-enriched field does not
+    unfairly sink the score. Returns ``0.0`` when there are no features, no positive
+    weights, or no overlap. Deterministic.
+    """
+    if features is None:
+        return 0.0
+    weighted = 0.0
+    total = 0.0
+    for key, weight in weights.items():
+        if weight <= 0:
+            continue
+        attr = _PREFERENCE_FEATURES.get(key)
+        if attr is None:
+            logger.debug("preference: ignoring unknown preference key %r", key)
+            continue
+        value = getattr(features, attr, None)
+        if value is None:
+            continue
+        weighted += weight * value
+        total += weight
+    return _clamp01(weighted / total) if total > 0 else 0.0
+
+
+def experience_score(
+    activities: Sequence[Activity],
+    nights: int,
+    *,
+    activities_per_day: int = DEFAULT_ACTIVITIES_PER_DAY,
+) -> float:
+    """Coverage: how well the available activities fill the stay.
+
+    ``min(n_activities / target, 1.0)`` where ``target = max(1, nights *
+    activities_per_day)`` — the activities are already preference-filtered by the
+    ExperienceAgent, so their count is the fit signal. No activities -> ``0.0``; a
+    full slate -> ``1.0``. Deterministic.
+    """
+    target = max(1, nights * max(1, activities_per_day))
+    return _clamp01(len(activities) / target)
+
+
+def weather_score(weather: WeatherProfile | None) -> float:
+    """Fraction of forecast days that are *not* a weather conflict.
+
+    ``1 - conflict_days / total_days``. A candidate with no forecast
+    (weather-unchecked) scores a neutral :data:`WEATHER_UNCHECKED_SCORE` — the
+    unknown is neither rewarded nor penalized. Deterministic.
+    """
+    if weather is None or not weather.days:
+        return WEATHER_UNCHECKED_SCORE
+    conflicts = sum(1 for day in weather.days if day.weather_conflict)
+    return _clamp01(1.0 - conflicts / len(weather.days))
+
+
+def accommodation_score(accommodations: Sequence[Accommodation]) -> float:
+    """Quality of the lodging on offer, from the best available rating.
+
+    ``best_rating / 5``. With options but no ratings -> neutral
+    :data:`UNRATED_ACCOMMODATION_SCORE`; with no options at all -> ``0.0`` (you
+    cannot stay). Price is deliberately left to the cost factor, not double-counted
+    here. Deterministic.
+    """
+    if not accommodations:
+        return 0.0
+    ratings = [a.rating for a in accommodations if a.rating is not None]
+    if not ratings:
+        return UNRATED_ACCOMMODATION_SCORE
+    return _clamp01(max(ratings) / _MAX_RATING)
+
+
+# --- magnitude factors (normalized across the candidate set) ----------------
+
+
+def trip_cost(candidate: CandidateInputs) -> float | None:
+    """Total EUR trip cost: transport + typical accommodation * nights + activities.
+
+    Accommodation uses the **median** nightly price of the representative options (a
+    typical stay, not the cheapest or dearest). Activity entrance costs are summed
+    where known (``None`` = free/unknown). Returns ``None`` only when no component is
+    known at all, so the cost factor can mark it missing. Deterministic.
+    """
+    components: list[float] = []
+    if candidate.transport is not None and candidate.transport.cost is not None:
+        components.append(candidate.transport.cost)
+    prices = [a.price_per_night for a in candidate.accommodations if a.price_per_night is not None]
+    if prices:
+        components.append(statistics.median(prices) * max(1, candidate.nights))
+    activity_cost = sum(a.cost for a in candidate.activities if a.cost is not None)
+    if activity_cost:
+        components.append(activity_cost)
+    return sum(components) if components else None
+
+
+def travel_minutes(candidate: CandidateInputs) -> float | None:
+    """The journey duration in minutes (``None`` when transport/duration is unknown)."""
+    transport = candidate.transport
+    if transport is None or transport.duration_minutes is None:
+        return None
+    return float(transport.duration_minutes)
+
+
+# --- assembly ---------------------------------------------------------------
+
+
+def compute_factor_scores(
+    candidates: Sequence[CandidateInputs],
+    *,
+    weights: PreferenceWeights | None = None,
+    activities_per_day: int = DEFAULT_ACTIVITIES_PER_DAY,
+) -> list[FactorScores]:
+    """Compute all six factor scores for each candidate (technical-doc §14).
+
+    The intrinsic factors (preference, experience, weather, accommodation) are
+    computed per candidate; the magnitude factors (cost, travel) are min-max
+    normalized across the whole set and inverted, so cheaper/shorter scores higher.
+    Order is preserved. Pure and deterministic for the same inputs.
+    """
+    if not candidates:
+        return []
+    weights = weights or {}
+    cost_norm = minmax_normalize([trip_cost(c) for c in candidates], invert=LOWER_IS_BETTER)
+    travel_norm = minmax_normalize([travel_minutes(c) for c in candidates], invert=LOWER_IS_BETTER)
+    scores = [
+        FactorScores(
+            cost=cost_norm[i],
+            preference=preference_score(c.features, weights),
+            experience=experience_score(
+                c.activities, c.nights, activities_per_day=activities_per_day
+            ),
+            weather=weather_score(c.weather),
+            travel=travel_norm[i],
+            accommodation=accommodation_score(c.accommodations),
+        )
+        for i, c in enumerate(candidates)
+    ]
+    logger.debug("scorer: computed factor scores for %d candidate(s)", len(scores))
+    return scores
