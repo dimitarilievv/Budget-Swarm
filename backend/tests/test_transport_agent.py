@@ -1,22 +1,24 @@
-"""Unit tests for the car TransportAgent (BS-057).
+"""Unit tests for the TransportAgent — car (BS-057) and flight (BS-059).
 
-No network and no database: the ORS HTTP boundary is injected with a fake that
-replays a recorded GeoJSON response (or raises, to exercise the haversine
-fallback), and fuel prices come from an in-memory :class:`FuelPriceTable`. Covers
-the fuel-cost formula, round-trip handling, the vehicles multiplier, the
-quality_flag combination, and the missing-fuel-price fallbacks — plus the backend
-bridge that classifies ``fuel_prices`` rows.
+No network and no database: the ORS and Travelpayouts HTTP boundaries are injected
+with fakes that replay a recorded response (or raise, to exercise the fallbacks),
+fuel prices come from an in-memory :class:`FuelPriceTable`, and the flight cache is
+a :class:`FakeStore`. Covers the fuel-cost formula, the indicative flight pricing,
+round-trip handling, quality_flag propagation/combination, the estimate fallbacks,
+and the backend bridge that classifies ``fuel_prices`` rows.
 """
 
 from __future__ import annotations
 
 import pytest
+from db.retrieval import CacheEntry, read_through
 
 from ai_engine.agents.transport_agent import (
     DEFAULT_DIESEL_EUR_PER_L,
     DEFAULT_PETROL_EUR_PER_L,
     EU_AVERAGE_CODE,
     CarTripRequest,
+    FlightTripRequest,
     FuelPriceEntry,
     FuelPriceTable,
     FuelQuote,
@@ -24,8 +26,13 @@ from ai_engine.agents.transport_agent import (
     _worst_quality,
 )
 from ai_engine.domain import QualityFlag, TransportMode
+from ai_engine.providers.flight import (
+    DistanceFareEstimateProvider,
+    FlightService,
+    TravelpayoutsProvider,
+)
 from ai_engine.providers.route import OpenRouteServiceProvider, RouteService
-from ai_engine.utils.api_clients import ProviderUnavailable, RetryPolicy
+from ai_engine.utils.api_clients import ProviderUnavailable, RetryPolicy, read_through_hook
 from ai_engine.utils.geo import GeoPoint
 
 # Skopje -> Thessaloniki, matching the RouteProvider fixtures.
@@ -302,3 +309,149 @@ def test_load_fuel_price_table_classifies_rows(monkeypatch):
     # on the narrower "eu avg", not a bare "avg"); only the EU-average row is estimated.
     assert table.entries["MK"].quality_flag is QualityFlag.REAL
     assert table.entries["EU"].quality_flag is QualityFlag.ESTIMATED
+
+
+# ===========================================================================
+# Flight mode (BS-059)
+# ===========================================================================
+
+# Skopje (SKP) -> Barcelona (BCN), with coordinates for the estimate fallback.
+SKP = GeoPoint(lat=41.9616, lon=21.6214)
+BCN = GeoPoint(lat=41.2971, lon=2.0785)
+
+# A recorded Travelpayouts {success, data} response. The cheapest itinerary (95.5,
+# 1 transfer, 240 min) is the one the provider selects.
+RECORDED_TP = {
+    "success": True,
+    "data": [
+        {"price": 120.0, "duration": 185, "airline": "FR", "transfers": 0},
+        {"price": 95.5, "duration": 240, "airline": "W6", "transfers": 1},
+    ],
+}
+BEST_PRICE = 95.5
+BEST_DURATION = 240
+
+
+class FakeStore:
+    """Minimal CacheStore for exercising the per-city-pair flight cache."""
+
+    def __init__(self):
+        self.data = {}
+        self.puts = 0
+
+    def get(self, provider, signature):
+        return self.data.get((provider, signature))
+
+    def put(self, provider, signature, body, expires_at):
+        self.puts += 1
+        self.data[(provider, signature)] = CacheEntry(body, None, expires_at)
+
+
+def _tp_service(transport, *, cache=None) -> FlightService:
+    """A FlightService whose Travelpayouts primary uses the injected transport."""
+    primary = TravelpayoutsProvider(transport, retry=_instant_retry(), cache=cache)
+    return FlightService(primary=primary, fallback=DistanceFareEstimateProvider())
+
+
+def _real_flight_service(**kw) -> FlightService:
+    return _tp_service(lambda _req: RECORDED_TP, **kw)
+
+
+def _flight_request(**overrides) -> FlightTripRequest:
+    kwargs = dict(origin_iata="SKP", destination_iata="BCN")
+    kwargs.update(overrides)
+    return FlightTripRequest(**kwargs)
+
+
+def test_flight_returns_indicative_cost_and_duration():
+    agent = TransportAgent(flight_service=_real_flight_service())
+    option = agent.flight_option(_flight_request(round_trip=False))
+    assert option.mode is TransportMode.AIRPLANE
+    assert option.cost == pytest.approx(BEST_PRICE)  # cheapest itinerary, 1 pax, one way
+    assert option.duration_minutes == BEST_DURATION
+    assert option.quality_flag is QualityFlag.REAL
+
+
+def test_flight_round_trip_and_passengers_scale_cost():
+    agent = TransportAgent(flight_service=_real_flight_service())
+    option = agent.flight_option(_flight_request(round_trip=True, passengers=3))
+    assert option.cost == pytest.approx(BEST_PRICE * 3 * 2)  # per-person, both legs
+    assert option.duration_minutes == BEST_DURATION * 2
+
+
+def test_flight_reports_great_circle_distance_when_coordinates_given():
+    agent = TransportAgent(flight_service=_real_flight_service())
+    with_coords = agent.flight_option(
+        _flight_request(origin_point=SKP, destination_point=BCN, round_trip=False)
+    )
+    without = agent.flight_option(_flight_request(round_trip=False))
+    assert with_coords.distance_km is not None and with_coords.distance_km > 1000
+    assert without.distance_km is None
+
+
+def test_flight_estimate_fallback_when_no_data():
+    # Travelpayouts returns an empty data list -> distance estimate answers.
+    agent = TransportAgent(flight_service=_tp_service(lambda _req: {"success": True, "data": []}))
+    option = agent.flight_option(_flight_request(origin_point=SKP, destination_point=BCN))
+    assert option.quality_flag is QualityFlag.ESTIMATED
+    assert option.cost is not None and option.cost > 0
+    assert option.duration_minutes is not None and option.duration_minutes > 0
+
+
+def test_flight_estimate_fallback_when_provider_unavailable():
+    def down(_req):
+        raise ProviderUnavailable("TP down")
+
+    agent = TransportAgent(flight_service=_tp_service(down))
+    option = agent.flight_option(_flight_request(origin_point=SKP, destination_point=BCN))
+    assert option.quality_flag is QualityFlag.ESTIMATED
+    assert option.cost is not None and option.cost > 0
+
+
+def test_flight_cached_flag_on_repeat_fetch():
+    # A configured cache hook: first call fetches (real), second is served cached.
+    store = FakeStore()
+    hook = read_through_hook(read_through, store)
+    agent = TransportAgent(flight_service=_real_flight_service(cache=hook))
+    first = agent.flight_option(_flight_request(round_trip=False))
+    second = agent.flight_option(_flight_request(round_trip=False))
+    assert first.quality_flag is QualityFlag.REAL
+    assert second.quality_flag is QualityFlag.CACHED
+    assert second.cost == pytest.approx(first.cost)
+    assert store.puts == 1  # only the miss hit the "network"
+
+
+def test_flight_summary_uses_labels_and_transfers():
+    agent = TransportAgent(flight_service=_real_flight_service())
+    option = agent.flight_option(
+        _flight_request(origin_label="Skopje", destination_label="Barcelona", round_trip=True)
+    )
+    # cheapest itinerary has 1 transfer.
+    assert option.route_summary == "Skopje → Barcelona by air, 1 stop (round trip, indicative)"
+
+
+def test_flight_summary_direct_falls_back_to_iata():
+    # A direct-only response (transfers=0) and no labels -> IATA codes + "direct".
+    direct = {"success": True, "data": [{"price": 80.0, "duration": 150, "transfers": 0}]}
+    agent = TransportAgent(flight_service=_tp_service(lambda _req: direct))
+    option = agent.flight_option(_flight_request(round_trip=False))
+    assert option.route_summary == "SKP → BCN by air, direct (one way, indicative)"
+
+
+def test_flight_option_requires_flight_service():
+    agent = TransportAgent(_real_route_service(), _fuel_table(GR=FuelPriceEntry(1.5, 1.4)))
+    with pytest.raises(ValueError, match="flight_service"):
+        agent.flight_option(_flight_request())
+
+
+def test_zero_passengers_rejected():
+    agent = TransportAgent(flight_service=_real_flight_service())
+    with pytest.raises(ValueError, match="passengers"):
+        agent.flight_option(_flight_request(passengers=0))
+
+
+def test_car_option_requires_car_capabilities():
+    # A flight-only agent cannot cost a car trip.
+    agent = TransportAgent(flight_service=_real_flight_service())
+    with pytest.raises(ValueError, match="route_service"):
+        agent.car_option(_base_request())
