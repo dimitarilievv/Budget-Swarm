@@ -25,7 +25,13 @@ from abc import ABC
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
-from ai_engine.utils.api_clients import BaseProvider, EstimateProvider, ProviderNoResult
+from ai_engine.utils.api_clients import (
+    QUALITY_ESTIMATED,
+    QUALITY_REAL,
+    BaseProvider,
+    EstimateProvider,
+    ProviderNoResult,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +98,9 @@ class AccommodationOption:
     latitude: float | None = None
     longitude: float | None = None
     representative: str | None = None  # 'budget' | 'typical' | 'comfort'
+    # Per-option provenance carried from the source row (a real listing) or the
+    # estimate provider ('estimated'), so honesty survives normalization (BS-062).
+    quality_flag: str = QUALITY_REAL
 
 
 def _to_float(value: Any) -> float | None:
@@ -153,6 +162,7 @@ class InsideAirbnbProvider(AccommodationProvider):
                     latitude=row.latitude,
                     longitude=row.longitude,
                     representative=labels[pos] if len(idxs) <= len(labels) else None,
+                    quality_flag=getattr(row, "quality_flag", None) or QUALITY_REAL,
                 )
             )
         return options
@@ -198,6 +208,7 @@ class PriceStatsEstimateProvider(EstimateProvider[AccommodationRequest, list[Acc
                 provider=self.name,
                 accom_type="estimate",
                 representative=label,
+                quality_flag=QUALITY_ESTIMATED,
             )
             for label, price in present
         ][: request.limit]
