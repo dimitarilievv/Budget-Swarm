@@ -11,10 +11,18 @@ The selection itself is done by the :class:`~ai_engine.providers.accommodation.A
 price-sorted listings into representatives, and — for a city with no listings — its
 fallback synthesizes options from that city's precomputed price statistics (Q1 /
 median / Q3, BS-035), flagged ``estimated``. StayAgent orchestrates that call,
-enforces the bound, maps each provider option onto the normalized domain
-:class:`~ai_engine.domain.models.Accommodation`, and stamps its ``quality_flag`` —
-so the coordinator only ever sees the provider-agnostic domain shape (technical-doc
-§17/§19), never a listing id, vendor field or raw row.
+enforces the bound, and routes every option through a **single normalization exit
+point** (:meth:`StayAgent._normalize`, BS-062) that maps it onto the normalized
+domain :class:`~ai_engine.domain.models.Accommodation` — so the coordinator only ever
+sees the provider-agnostic domain shape (technical-doc §17/§19), never a listing id,
+vendor field or raw row.
+
+Estimates are flagged honestly per option: the domain ``quality_flag`` is the
+least-firm of the option's own provenance (a ``real`` listing vs. a stats-based
+``estimated`` option, carried through from the source row) and the service-level
+flag. So a city served from real listings yields ``real`` options while one that
+falls back to per-city statistics yields ``estimated`` options — the estimate path
+is never silently presented as firm data.
 
 "Degrade, don't crash" (ADR-005): a destination with neither listings nor price
 statistics yields an **empty list**, logged, rather than an error — a missing stay
@@ -45,6 +53,10 @@ logger = logging.getLogger(__name__)
 # not an exhaustive listing dump (technical-doc §10).
 DEFAULT_LIMIT = 3
 MAX_LIMIT = 5
+
+# Firmness ranking so an option's flag can be the least-firm of its inputs
+# (estimated < cached < real) — mirrors TransportAgent's combination rule.
+_QUALITY_RANK = {QualityFlag.ESTIMATED: 0, QualityFlag.CACHED: 1, QualityFlag.REAL: 2}
 
 
 class StayAgent:
@@ -99,14 +111,15 @@ class StayAgent:
             )
             return []
 
-        quality = QualityFlag(result.quality_flag)
-        options = [self._normalize(option, quality) for option in (result.data or [])]
-        bounded = options[:bound]
+        service_quality = QualityFlag(result.quality_flag)
+        bounded = [self._normalize(option, service_quality) for option in (result.data or [])][
+            :bound
+        ]
         logger.debug(
-            "stay: destination %s -> %d representative option(s) [%s]",
+            "stay: destination %s -> %d representative option(s) [service=%s]",
             destination_id,
             len(bounded),
-            quality,
+            service_quality,
         )
         return bounded
 
@@ -115,13 +128,19 @@ class StayAgent:
         requested = self.default_limit if limit is None else limit
         return max(1, min(self.max_limit, requested))
 
-    def _normalize(self, option: AccommodationOption, quality: QualityFlag) -> Accommodation:
+    def _normalize(
+        self, option: AccommodationOption, service_quality: QualityFlag
+    ) -> Accommodation:
         """Map a provider :class:`AccommodationOption` onto the domain model.
 
-        Only the normalized fields the coordinator needs are carried across; the
-        provider label, currency and representative tag do not leak into the domain
-        shape (technical-doc §19).
+        The single normalization exit point (technical-doc §17/§19): only the
+        normalized fields the coordinator needs are carried across — the provider
+        label, currency and representative tag do **not** leak into the domain
+        shape. The option's ``quality_flag`` is the least-firm of the option's own
+        provenance (a real listing vs. a stats-based estimate) and the service-level
+        flag, so an estimate is always honestly flagged.
         """
+        quality = _worst_quality(service_quality, QualityFlag(option.quality_flag))
         return Accommodation(
             price_per_night=option.price_per_night,
             quality_flag=quality,
@@ -131,3 +150,8 @@ class StayAgent:
             latitude=option.latitude,
             longitude=option.longitude,
         )
+
+
+def _worst_quality(*flags: QualityFlag) -> QualityFlag:
+    """The least-firm flag among ``flags`` (estimated < cached < real)."""
+    return min(flags, key=lambda flag: _QUALITY_RANK[flag])

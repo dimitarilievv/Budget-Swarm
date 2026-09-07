@@ -100,6 +100,31 @@ def test_normalization_maps_fields_and_hides_provider_data():
         assert not hasattr(first, leaked)
 
 
+# --- honest per-option quality flagging (BS-062) ----------------------------
+
+
+def test_real_listings_are_flagged_real():
+    agent = _agent(rows=LISTINGS)
+    options = agent.options_for(destination_id=1)
+    assert all(o.quality_flag is QualityFlag.REAL for o in options)
+
+
+def test_estimated_listing_row_is_flagged_estimated_per_option():
+    # A stored row that is itself an estimate must not be presented as firm data,
+    # even on the real-listings path — flagging is per option, not per path.
+    rows = [
+        _row(25.0, name="Real", quality_flag="real"),
+        _row(45.0, name="Synthesized", quality_flag="estimated"),
+        _row(70.0, name="Real2", quality_flag="real"),
+    ]
+    agent = _agent(rows=rows)
+    options = agent.options_for(destination_id=1)
+    by_name = {o.name: o.quality_flag for o in options}
+    assert by_name["Real"] is QualityFlag.REAL
+    assert by_name["Synthesized"] is QualityFlag.ESTIMATED
+    assert by_name["Real2"] is QualityFlag.REAL
+
+
 # --- selection uses price stats (no listings) -------------------------------
 
 
@@ -107,7 +132,18 @@ def test_uses_price_stats_when_no_listings():
     agent = _agent(rows=[], stats=_stats(price_q1=30.0, price_median=50.0, price_q3=80.0))
     options = agent.options_for(destination_id=7)
     assert [o.price_per_night for o in options] == [30.0, 50.0, 80.0]  # Q1 / median / Q3
+    # Estimate path: every option flagged estimated.
     assert all(o.quality_flag is QualityFlag.ESTIMATED for o in options)
+
+
+def test_all_outputs_are_domain_accommodation_models():
+    # Both paths emit only the domain Accommodation shape, no provider fields.
+    for agent in (_agent(rows=LISTINGS), _agent(rows=[], stats=_stats())):
+        for option in agent.options_for(destination_id=1):
+            assert isinstance(option, Accommodation)
+            assert isinstance(option.quality_flag, QualityFlag)
+            for leaked in ("provider", "currency", "representative", "accom_type", "indicative"):
+                assert not hasattr(option, leaked)
 
 
 def test_stats_estimate_respects_limit():
