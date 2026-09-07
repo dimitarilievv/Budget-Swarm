@@ -1,4 +1,9 @@
-"""TransportAgent — car costing via OpenRouteService + the fuel-cost formula (BS-057).
+"""TransportAgent — car costing (BS-057) and indicative flight pricing (BS-059).
+
+The agent normalizes the user's chosen transport mode into a
+:class:`~ai_engine.domain.models.TransportOption` (technical-doc §9). The MVP mode
+is **car**; **airplane** is a Post-MVP mode added here on top of the same
+provider/fallback machinery.
 
 For the MVP transport mode (**car**, technical-doc §9.2) this agent turns a routing
 result into a normalized :class:`~ai_engine.domain.models.TransportOption`. It does
@@ -29,10 +34,18 @@ technical-doc §22). A car cost can therefore always be produced: the route alwa
 resolves (fallback) and the fuel price always resolves (EU-average / static
 default), so :meth:`TransportAgent.car_option` never fails to return.
 
+For the Post-MVP **airplane** mode (technical-doc §9.1) :meth:`TransportAgent.flight_option`
+turns a :class:`~ai_engine.providers.flight.FlightService` result into a
+:class:`TransportOption`. Travelpayouts prices are **indicative** (a cached 2–7 day
+window, per city-pair), so the option is flagged ``cached`` when served from the
+cache and ``real`` on a fresh fetch, degrading to ``estimated`` when the
+distance-based fare fallback answers instead (BS-001, BS-048). Fares are per person,
+so the cost scales with the passenger count (unlike shared car fuel).
+
 ``ai_engine`` stays free of any backend/ORM import: the fuel price arrives through
 the small :class:`FuelPriceLookup` protocol, and the backend wires a DB-backed
 implementation in (see ``backend/db/fuel_lookup.py``). This module depends only on
-the domain models, the route provider and the standard library.
+the domain models, the route/flight providers and the standard library.
 """
 
 from __future__ import annotations
@@ -42,9 +55,10 @@ from dataclasses import dataclass
 from typing import Literal, Protocol, runtime_checkable
 
 from ai_engine.domain import QualityFlag, TransportMode, TransportOption
+from ai_engine.providers.flight import Flight, FlightRequest, FlightService
 from ai_engine.providers.route import Route, RouteRequest, RouteService
 from ai_engine.utils.api_clients import ProviderResult
-from ai_engine.utils.geo import GeoPoint
+from ai_engine.utils.geo import GeoPoint, haversine_km
 
 logger = logging.getLogger(__name__)
 
@@ -183,35 +197,63 @@ class CarTripRequest:
     destination_label: str | None = None
 
 
+@dataclass(frozen=True)
+class FlightTripRequest:
+    """Everything the agent needs to cost one flight to a candidate destination.
+
+    The flight is priced by IATA city/airport codes (what Travelpayouts needs);
+    ``origin_point`` / ``destination_point`` are optional coordinates used only by
+    the distance-based fare fallback and to report a great-circle ``distance_km``.
+    ``passengers`` scales the cost because flight fares are per person (unlike
+    shared car fuel). ``round_trip`` doubles the indicative cost and duration — a
+    deliberately simple, honestly-flagged approximation for a Post-MVP mode.
+    """
+
+    origin_iata: str
+    destination_iata: str
+    origin_point: GeoPoint | None = None
+    destination_point: GeoPoint | None = None
+    passengers: int = 1
+    round_trip: bool = True
+    depart_date: str | None = None  # YYYY-MM or YYYY-MM-DD; None = cheapest known
+    currency: str = "eur"
+    origin_label: str | None = None
+    destination_label: str | None = None
+
+
 # --- agent ------------------------------------------------------------------
 
 
 class TransportAgent:
-    """Cost the car mode for candidate destinations (technical-doc §9).
+    """Cost the selected transport mode for candidate destinations (technical-doc §9).
 
-    Constructed with a :class:`RouteService` (routing capability) and a
-    :class:`FuelPriceLookup` (cached fuel prices). ``fuel_country`` selects which
-    country's fuel price the trip uses:
+    Holds the per-mode capabilities the wired modes need; a caller supplies only
+    those it uses. Car mode needs a :class:`RouteService` + a
+    :class:`FuelPriceLookup`; flight mode needs a
+    :class:`~ai_engine.providers.flight.FlightService`. ``fuel_country`` selects
+    which country's fuel price a car trip uses:
 
-    * ``"destination"`` (default, per this ticket) — price at the destination
-      country;
+    * ``"destination"`` (default) — price at the destination country;
     * ``"origin"`` — the technical-doc §9.2 fill-up model (whole route on the
       origin country's price); for the North-Macedonia origin this is normally the
       EU-average estimate, honestly flagged.
 
     Either way the chosen country falls back to the other when its code is missing,
-    so a price is always resolvable.
+    so a price is always resolvable. Calling a mode whose capability was not
+    supplied raises :class:`ValueError`.
     """
 
     def __init__(
         self,
-        route_service: RouteService,
-        fuel_prices: FuelPriceLookup,
+        route_service: RouteService | None = None,
+        fuel_prices: FuelPriceLookup | None = None,
         *,
+        flight_service: FlightService | None = None,
         fuel_country: Literal["destination", "origin"] = "destination",
     ) -> None:
         self.route_service = route_service
         self.fuel_prices = fuel_prices
+        self.flight_service = flight_service
         self.fuel_country = fuel_country
 
     def car_option(self, request: CarTripRequest) -> TransportOption:
@@ -222,6 +264,8 @@ class TransportAgent:
         least-firm ``quality_flag`` of the route and the fuel price. Never raises
         for a missing route or price — both degrade to an estimate.
         """
+        if self.route_service is None or self.fuel_prices is None:
+            raise ValueError("car_option requires a route_service and fuel_prices")
         if request.vehicle_consumption is None or request.vehicle_consumption < 0:
             raise ValueError(
                 f"vehicle_consumption must be a non-negative number, got "
@@ -277,6 +321,72 @@ class TransportAgent:
             quality_flag=quality,
         )
 
+    def flight_option(self, request: FlightTripRequest) -> TransportOption:
+        """Return the normalized :class:`TransportOption` for a flight (Post-MVP).
+
+        Resolves an indicative fare + duration from the :class:`FlightService`
+        (Travelpayouts → distance-based estimate), scales the per-person price by
+        the passenger count and, for a round trip, doubles cost and duration. The
+        option's ``quality_flag`` comes straight from the service — ``real`` on a
+        fresh fetch, ``cached`` from the per-city-pair cache, ``estimated`` from the
+        distance fallback — so an indicative or estimated fare is always disclosed.
+        Never raises for missing flight data: the estimate answers instead.
+        """
+        if self.flight_service is None:
+            raise ValueError("flight_option requires a flight_service")
+        if request.passengers < 1:
+            raise ValueError(f"passengers must be >= 1, got {request.passengers!r}")
+
+        flight_result: ProviderResult[Flight] = self.flight_service.resolve(
+            FlightRequest(
+                origin=request.origin_iata,
+                destination=request.destination_iata,
+                origin_point=request.origin_point,
+                destination_point=request.destination_point,
+                currency=request.currency,
+                depart_date=request.depart_date,
+            )
+        )
+        flight = flight_result.data
+        quality = QualityFlag(flight_result.quality_flag)
+
+        legs = 2 if request.round_trip else 1
+        total_cost = flight.price * request.passengers * legs
+        total_duration_min = (
+            round(flight.duration_min * legs) if flight.duration_min is not None else None
+        )
+
+        # A flight has no road distance; report the great-circle distance (× legs)
+        # when both endpoints are known, purely as an informative figure.
+        distance_km: float | None = None
+        if request.origin_point is not None and request.destination_point is not None:
+            distance_km = round(
+                haversine_km(request.origin_point, request.destination_point) * legs, 3
+            )
+
+        summary = _flight_summary(request, flight)
+        logger.debug(
+            "flight_option: %.2f %s × %d pax × %d leg(s) = %.2f (provider=%s, quality=%s, "
+            "indicative=%s)",
+            flight.price,
+            flight.currency,
+            request.passengers,
+            legs,
+            total_cost,
+            flight.provider,
+            quality,
+            flight.indicative,
+        )
+
+        return TransportOption(
+            mode=TransportMode.AIRPLANE,
+            cost=round(total_cost, 2),
+            duration_minutes=total_duration_min,
+            distance_km=distance_km,
+            route_summary=summary,
+            quality_flag=quality,
+        )
+
     def _fuel_country(self, request: CarTripRequest) -> str | None:
         """Pick the country whose fuel price the trip uses, per ``fuel_country``.
 
@@ -299,3 +409,22 @@ def _route_summary(request: CarTripRequest, route: Route, total_distance_km: flo
     if request.origin_label and request.destination_label:
         return f"{request.origin_label} → {request.destination_label} by car, {distance}"
     return f"By car, {distance}"
+
+
+def _flight_summary(request: FlightTripRequest, flight: Flight) -> str:
+    """A short human-readable flight description (never a provider payload).
+
+    Uses the endpoint labels when given, else the IATA codes, and describes stops
+    from the fare's ``transfers`` count. Flight fares are always indicative, so the
+    summary says so.
+    """
+    origin = request.origin_label or request.origin_iata.upper()
+    destination = request.destination_label or request.destination_iata.upper()
+    if flight.transfers is None:
+        stops = ""
+    elif flight.transfers == 0:
+        stops = ", direct"
+    else:
+        stops = f", {flight.transfers} stop" + ("s" if flight.transfers != 1 else "")
+    trip = "round trip" if request.round_trip else "one way"
+    return f"{origin} → {destination} by air{stops} ({trip}, indicative)"
