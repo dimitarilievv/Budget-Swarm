@@ -1,11 +1,12 @@
-"""Unit tests for the TransportAgent — car (BS-057) and flight (BS-059).
+"""Unit tests for the TransportAgent — car (BS-057), flight (BS-059), bus/train (BS-061).
 
-No network and no database: the ORS and Travelpayouts HTTP boundaries are injected
-with fakes that replay a recorded response (or raise, to exercise the fallbacks),
-fuel prices come from an in-memory :class:`FuelPriceTable`, and the flight cache is
-a :class:`FakeStore`. Covers the fuel-cost formula, the indicative flight pricing,
-round-trip handling, quality_flag propagation/combination, the estimate fallbacks,
-and the backend bridge that classifies ``fuel_prices`` rows.
+No network and no database: the ORS, Travelpayouts and Apify-FlixBus HTTP boundaries
+are injected with fakes that replay a recorded response (or raise, to exercise the
+fallbacks), fuel prices come from an in-memory :class:`FuelPriceTable`, and the
+per-city-pair caches use a :class:`FakeStore`. Covers the fuel-cost formula, the
+indicative flight and bus/train pricing, round-trip/passenger handling, quality_flag
+propagation/combination, the estimate fallbacks, and the backend bridge that
+classifies ``fuel_prices`` rows.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from ai_engine.agents.transport_agent import (
     FuelPriceEntry,
     FuelPriceTable,
     FuelQuote,
+    PublicTransportTripRequest,
     TransportAgent,
     _worst_quality,
 )
@@ -31,8 +33,19 @@ from ai_engine.providers.flight import (
     FlightService,
     TravelpayoutsProvider,
 )
+from ai_engine.providers.public_transport import (
+    ApifyFlixbusProvider,
+    DistanceEstimatePublicTransportProvider,
+    PublicTransportService,
+)
+from ai_engine.providers.public_transport import TransportOption as TransitResult
 from ai_engine.providers.route import OpenRouteServiceProvider, RouteService
-from ai_engine.utils.api_clients import ProviderUnavailable, RetryPolicy, read_through_hook
+from ai_engine.utils.api_clients import (
+    ProviderResult,
+    ProviderUnavailable,
+    RetryPolicy,
+    read_through_hook,
+)
 from ai_engine.utils.geo import GeoPoint
 
 # Skopje -> Thessaloniki, matching the RouteProvider fixtures.
@@ -455,3 +468,166 @@ def test_car_option_requires_car_capabilities():
     agent = TransportAgent(flight_service=_real_flight_service())
     with pytest.raises(ValueError, match="route_service"):
         agent.car_option(_base_request())
+
+
+# ===========================================================================
+# Bus/train mode (BS-061)
+# ===========================================================================
+
+# Skopje -> Munich, the BS-005 verified FlixBus corridor (coords for the estimate).
+SKOPJE_CITY = GeoPoint(lat=41.9981, lon=21.4254)
+MUNICH = GeoPoint(lat=48.1351, lon=11.5820)
+
+# A recorded Apify FlixBus actor response. The sold-out row is filtered; the
+# cheapest remaining (29.99, 11h, 3 legs) is selected.
+FLIXBUS_ROWS = [
+    {
+        "priceTotal": 39.99,
+        "seatsAvailable": 10,
+        "durationHours": 9,
+        "durationMinutes": 30,
+        "legCount": 2,
+        "operator": "FlixBus",
+    },
+    {
+        "priceTotal": 29.99,
+        "seatsAvailable": 5,
+        "durationHours": 11,
+        "durationMinutes": 0,
+        "legCount": 3,
+        "operator": "FlixBus",
+    },
+    {"priceTotal": 0, "seatsAvailable": 0, "durationHours": 8, "durationMinutes": 0},
+]
+BEST_BUS_PRICE = 29.99
+BEST_BUS_DURATION = 660  # 11h
+BEST_BUS_STOPS = 2  # legCount 3 - 1
+
+
+def _apify_service(transport, *, cache=None) -> PublicTransportService:
+    primary = ApifyFlixbusProvider(transport, retry=_instant_retry(), cache=cache)
+    return PublicTransportService(real_providers=[primary])
+
+
+def _real_transit_service(**kw) -> PublicTransportService:
+    return _apify_service(lambda _req: FLIXBUS_ROWS, **kw)
+
+
+def _transit_request(**overrides) -> PublicTransportTripRequest:
+    kwargs = dict(origin="Skopje", destination="Munich")
+    kwargs.update(overrides)
+    return PublicTransportTripRequest(**kwargs)
+
+
+class _FakeTransitService:
+    """A PublicTransportService stand-in returning a fixed result + flag."""
+
+    def __init__(self, data: TransitResult, quality: str) -> None:
+        self._data = data
+        self._quality = quality
+
+    def resolve(self, request):
+        return ProviderResult(self._data, self._quality, "fake", "live")
+
+
+def test_public_transport_returns_option_for_covered_route():
+    agent = TransportAgent(public_transport_service=_real_transit_service())
+    option = agent.public_transport_option(_transit_request(round_trip=False))
+    assert option.mode is TransportMode.BUS
+    assert option.cost == pytest.approx(BEST_BUS_PRICE)  # cheapest available, 1 pax, one way
+    assert option.duration_minutes == BEST_BUS_DURATION
+    assert option.quality_flag is QualityFlag.REAL
+
+
+def test_public_transport_round_trip_and_passengers_scale():
+    agent = TransportAgent(public_transport_service=_real_transit_service())
+    option = agent.public_transport_option(_transit_request(round_trip=True, passengers=2))
+    assert option.cost == pytest.approx(BEST_BUS_PRICE * 2 * 2)
+    assert option.duration_minutes == BEST_BUS_DURATION * 2
+
+
+def test_public_transport_distance_fallback_when_no_real_provider():
+    # Estimate-first: no real providers configured -> coach estimate (needs coords).
+    agent = TransportAgent(public_transport_service=PublicTransportService())
+    option = agent.public_transport_option(
+        _transit_request(origin_point=SKOPJE_CITY, destination_point=MUNICH)
+    )
+    assert option.quality_flag is QualityFlag.ESTIMATED
+    assert option.mode is TransportMode.BUS
+    assert option.cost is not None and option.cost > 0
+    assert option.duration_minutes is not None and option.duration_minutes > 0
+
+
+def test_public_transport_falls_back_when_provider_empty():
+    # A real provider that returns no bookable trips -> distance estimate answers.
+    agent = TransportAgent(public_transport_service=_apify_service(lambda _req: []))
+    option = agent.public_transport_option(
+        _transit_request(origin_point=SKOPJE_CITY, destination_point=MUNICH)
+    )
+    assert option.quality_flag is QualityFlag.ESTIMATED
+    assert option.cost is not None and option.cost > 0
+
+
+def test_public_transport_cached_flag_on_repeat_fetch():
+    store = FakeStore()
+    hook = read_through_hook(read_through, store)
+    agent = TransportAgent(public_transport_service=_real_transit_service(cache=hook))
+    first = agent.public_transport_option(_transit_request(round_trip=False))
+    second = agent.public_transport_option(_transit_request(round_trip=False))
+    assert first.quality_flag is QualityFlag.REAL
+    assert second.quality_flag is QualityFlag.CACHED
+    assert second.cost == pytest.approx(first.cost)
+    assert store.puts == 1
+
+
+def test_public_transport_reports_distance_when_coordinates_given():
+    agent = TransportAgent(public_transport_service=_real_transit_service())
+    with_coords = agent.public_transport_option(
+        _transit_request(origin_point=SKOPJE_CITY, destination_point=MUNICH, round_trip=False)
+    )
+    without = agent.public_transport_option(_transit_request(round_trip=False))
+    assert with_coords.distance_km is not None and with_coords.distance_km > 1000
+    assert without.distance_km is None
+
+
+def test_public_transport_summary_names_carrier_and_stops():
+    agent = TransportAgent(public_transport_service=_real_transit_service())
+    option = agent.public_transport_option(
+        _transit_request(origin_label="Skopje", destination_label="Munich", round_trip=True)
+    )
+    assert option.route_summary == (
+        "Skopje → Munich by bus (FlixBus), 2 stops (round trip, indicative)"
+    )
+
+
+def test_public_transport_maps_train_mode():
+    # The provider mode string 'train' maps to the domain TransportMode.TRAIN.
+    train = TransitResult(
+        mode="train",
+        price=55.0,
+        currency="eur",
+        origin="Skopje",
+        destination="Vienna",
+        provider="flix-rest",
+        duration_min=480,
+        stops=0,
+        carrier="FlixTrain",
+    )
+    agent = TransportAgent(public_transport_service=_FakeTransitService(train, "cached"))
+    option = agent.public_transport_option(_transit_request(round_trip=False))
+    assert option.mode is TransportMode.TRAIN
+    assert option.quality_flag is QualityFlag.CACHED
+    assert option.cost == pytest.approx(55.0)
+    assert option.route_summary.startswith("Skopje → Munich by train (FlixTrain), direct")
+
+
+def test_public_transport_option_requires_service():
+    agent = TransportAgent(_real_route_service(), _fuel_table(GR=FuelPriceEntry(1.5, 1.4)))
+    with pytest.raises(ValueError, match="public_transport_service"):
+        agent.public_transport_option(_transit_request())
+
+
+def test_public_transport_zero_passengers_rejected():
+    agent = TransportAgent(public_transport_service=_real_transit_service())
+    with pytest.raises(ValueError, match="passengers"):
+        agent.public_transport_option(_transit_request(passengers=0))
