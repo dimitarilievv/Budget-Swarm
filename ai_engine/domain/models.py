@@ -193,7 +193,9 @@ class Activity:
 
     Normalized from OpenTripMap / OpenStreetMap POIs. ``indoor_outdoor`` lets the
     optimizer weigh an activity against the :class:`WeatherProfile`; ``cost`` is an
-    optional EUR entrance price (``None`` = free/unknown).
+    optional EUR entrance price (``None`` = free/unknown). ``description`` is an
+    optional short summary from enrichment (e.g. Wikipedia), source-agnostic and
+    ``None`` when the activity was not enriched.
     """
 
     name: str
@@ -204,6 +206,7 @@ class Activity:
     indoor_outdoor: IndoorOutdoor = IndoorOutdoor.MIXED
     est_duration_minutes: int | None = None
     cost: float | None = None
+    description: str | None = None
     quality_flag: QualityFlag = QualityFlag.REAL
 
     def __post_init__(self) -> None:
