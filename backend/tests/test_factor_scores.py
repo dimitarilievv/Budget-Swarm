@@ -207,3 +207,43 @@ def test_activities_per_day_is_configurable():
     acts = [Activity(name=f"A{i}") for i in range(3)]
     # target = 3 nights * 1/day = 3 -> 3/3 = 1.0.
     assert experience_score(acts, nights=3, activities_per_day=1) == 1.0
+
+
+# ===========================================================================
+# Hardening (bs-070 follow-up): cost fairness, nights validation
+# ===========================================================================
+
+
+def test_trip_cost_requires_transport_cost():
+    # Accommodation present but transport cost unknown -> cost is unknown (None), not
+    # an artificially cheap partial total.
+    c = CandidateInputs(
+        transport=TransportOption(mode=TransportMode.CAR, cost=None),
+        accommodations=[Accommodation(price_per_night=60.0)],
+        nights=3,
+    )
+    assert trip_cost(c) is None
+    # No transport at all -> also None.
+    assert trip_cost(CandidateInputs(accommodations=[Accommodation(price_per_night=60.0)])) is None
+
+
+def test_missing_transport_cost_is_penalized_not_rewarded():
+    # A city missing its transport cost must not out-rank a fully-costed cheaper city.
+    full_cheap = CandidateInputs(
+        transport=TransportOption(mode=TransportMode.CAR, cost=100.0, duration_minutes=120),
+        accommodations=[Accommodation(price_per_night=50.0)],
+        nights=2,
+    )
+    missing_transport = CandidateInputs(
+        transport=TransportOption(mode=TransportMode.CAR, cost=None, duration_minutes=120),
+        accommodations=[Accommodation(price_per_night=50.0)],
+        nights=2,
+    )
+    scores = compute_factor_scores([full_cheap, missing_transport])
+    assert scores[0].cost == 1.0  # fully-costed, cheapest known
+    assert scores[1].cost == 0.0  # unknown cost -> penalized as missing
+
+
+def test_candidate_inputs_rejects_bad_nights():
+    with pytest.raises(ValueError, match="nights"):
+        CandidateInputs(nights=0)

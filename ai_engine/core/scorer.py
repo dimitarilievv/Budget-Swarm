@@ -38,7 +38,7 @@ from __future__ import annotations
 import logging
 import statistics
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from ai_engine.domain import (
     Accommodation,
@@ -212,6 +212,10 @@ class CandidateInputs:
     weather: WeatherProfile | None = None
     nights: int = 1
 
+    def __post_init__(self) -> None:
+        if self.nights < 1:
+            raise ValueError(f"nights must be >= 1, got {self.nights!r}")
+
 
 @dataclass(frozen=True)
 class FactorScores:
@@ -308,21 +312,22 @@ def accommodation_score(accommodations: Sequence[Accommodation]) -> float:
 def trip_cost(candidate: CandidateInputs) -> float | None:
     """Total EUR trip cost: transport + typical accommodation * nights + activities.
 
-    Accommodation uses the **median** nightly price of the representative options (a
-    typical stay, not the cheapest or dearest). Activity entrance costs are summed
-    where known (``None`` = free/unknown). Returns ``None`` only when no component is
-    known at all, so the cost factor can mark it missing. Deterministic.
+    The **transport cost is required**: it is the dominant, distance-driven component
+    that differentiates candidates, so a trip whose transport cost is unknown has an
+    unknown total and returns ``None`` — the cost factor then penalizes it as missing
+    rather than making it look artificially cheap for lacking a component. When
+    transport cost is known, accommodation (the **median** nightly price of the
+    representative options — a typical stay) and known activity entrance costs
+    (``None`` = free/unknown) are added. Deterministic.
     """
-    components: list[float] = []
-    if candidate.transport is not None and candidate.transport.cost is not None:
-        components.append(candidate.transport.cost)
+    if candidate.transport is None or candidate.transport.cost is None:
+        return None
+    total = candidate.transport.cost
     prices = [a.price_per_night for a in candidate.accommodations if a.price_per_night is not None]
     if prices:
-        components.append(statistics.median(prices) * max(1, candidate.nights))
-    activity_cost = sum(a.cost for a in candidate.activities if a.cost is not None)
-    if activity_cost:
-        components.append(activity_cost)
-    return sum(components) if components else None
+        total += statistics.median(prices) * max(1, candidate.nights)
+    total += sum(a.cost for a in candidate.activities if a.cost is not None)
+    return total
 
 
 def travel_minutes(candidate: CandidateInputs) -> float | None:
@@ -369,3 +374,151 @@ def compute_factor_scores(
     ]
     logger.debug("scorer: computed factor scores for %d candidate(s)", len(scores))
     return scores
+
+
+# ============================================================================
+# Weighted overall score (BS-070) — configurable, preference-modulated weights
+# ============================================================================
+#
+# The six factor scores collapse into one ``overall_score`` per candidate — a
+# weighted sum minus any soft penalties (technical-doc §14, ADR-006):
+#
+#     overall_score = Σ (weight_f · factor_f) − penalty
+#
+# Weights are configurable (:class:`FactorWeights`; the defaults below are the
+# "config") and are **modulated by the user's preferences**: a thematically
+# concentrated preference (culture-heavy) lifts the ``preference`` factor's weight,
+# so the ranking tilts toward destinations that fit what the user cares about. The
+# weights are normalized at use, so lifting one factor proportionally lowers the
+# rest. Scoring stays separate from the optimizer's hard constraints/objective
+# (ADR-006): ``penalty`` here is a soft deduction the caller supplies, not a
+# feasibility rule.
+
+# Baseline factor weights (the request-level "config"): a budget-first profile.
+# Need not sum to 1 — they are normalized when applied.
+DEFAULT_WEIGHTS_MAP = {
+    "cost": 0.30,
+    "preference": 0.25,
+    "experience": 0.15,
+    "weather": 0.10,
+    "travel": 0.10,
+    "accommodation": 0.10,
+}
+
+# How strongly a concentrated preference lifts the preference factor weight:
+# modulated = base · (1 + strength · peak_share). At 1.0, an all-in thematic
+# preference (one theme with all the weight) doubles the preference weight.
+DEFAULT_PREFERENCE_MODULATION_STRENGTH = 1.0
+
+_FACTOR_NAMES = ("cost", "preference", "experience", "weather", "travel", "accommodation")
+
+
+@dataclass(frozen=True)
+class FactorWeights:
+    """Relative importance of each factor in the overall score (the scoring config).
+
+    Any non-negative weights are accepted; only their ratios matter because
+    :meth:`normalized` rescales them to sum to 1 before use. At least one must be
+    positive.
+    """
+
+    cost: float = DEFAULT_WEIGHTS_MAP["cost"]
+    preference: float = DEFAULT_WEIGHTS_MAP["preference"]
+    experience: float = DEFAULT_WEIGHTS_MAP["experience"]
+    weather: float = DEFAULT_WEIGHTS_MAP["weather"]
+    travel: float = DEFAULT_WEIGHTS_MAP["travel"]
+    accommodation: float = DEFAULT_WEIGHTS_MAP["accommodation"]
+
+    def __post_init__(self) -> None:
+        for name in _FACTOR_NAMES:
+            value = getattr(self, name)
+            if value < 0:
+                raise ValueError(f"weight {name} must be non-negative, got {value!r}")
+        if self.total() <= 0:
+            raise ValueError("at least one factor weight must be positive")
+
+    def total(self) -> float:
+        return sum(getattr(self, name) for name in _FACTOR_NAMES)
+
+    def normalized(self) -> FactorWeights:
+        """A copy whose weights sum to 1.0 (preserving their ratios)."""
+        total = self.total()
+        return FactorWeights(**{name: getattr(self, name) / total for name in _FACTOR_NAMES})
+
+
+DEFAULT_WEIGHTS = FactorWeights()
+
+
+def modulate_weights(
+    base: FactorWeights,
+    preferences: PreferenceWeights | None,
+    *,
+    strength: float = DEFAULT_PREFERENCE_MODULATION_STRENGTH,
+) -> FactorWeights:
+    """Lift the ``preference`` factor weight by how concentrated the user's prefs are.
+
+    ``peak_share`` is the largest single preference's share of the total positive
+    preference weight (1.0 = all-in on one theme, e.g. culture-heavy); the preference
+    factor weight becomes ``base.preference · (1 + strength · peak_share)``. With no
+    positive preferences the weights are returned unchanged. The other weights are
+    left as-is and shrink proportionally only when :meth:`FactorWeights.normalized`
+    is applied. Deterministic.
+    """
+    positive = {k: w for k, w in (preferences or {}).items() if w and w > 0}
+    if not positive:
+        return base
+    peak_share = max(positive.values()) / sum(positive.values())
+    boosted = base.preference * (1.0 + max(0.0, strength) * peak_share)
+    logger.debug(
+        "scorer: modulating preference weight %.3f -> %.3f (peak_share=%.2f)",
+        base.preference,
+        boosted,
+        peak_share,
+    )
+    return replace(base, preference=boosted)
+
+
+def overall_score(
+    factors: FactorScores,
+    weights: FactorWeights = DEFAULT_WEIGHTS,
+    *,
+    penalty: float = 0.0,
+) -> float:
+    """Weighted sum of the factor scores minus ``penalty``, clamped to ``[0, 1]``.
+
+    Weights are normalized to sum to 1, so the weighted sum is in ``[0, 1]``; a
+    non-negative ``penalty`` (a soft deduction from the caller — never a hard
+    constraint) lowers it. A negative penalty is rejected — it would be a silent
+    bonus, not a deduction. Deterministic.
+    """
+    if penalty < 0:
+        raise ValueError(f"penalty must be non-negative, got {penalty!r}")
+    w = weights.normalized()
+    # Sum over the canonical factor names so a new factor cannot be silently omitted.
+    score = sum(getattr(w, name) * getattr(factors, name) for name in _FACTOR_NAMES)
+    return _clamp01(score - penalty)
+
+
+def score_candidates(
+    factor_scores: Sequence[FactorScores],
+    *,
+    weights: FactorWeights = DEFAULT_WEIGHTS,
+    preferences: PreferenceWeights | None = None,
+    penalties: Sequence[float] | None = None,
+) -> list[float]:
+    """Overall score for each candidate, with preference-modulated weights applied once.
+
+    ``penalties`` (optional) must align with ``factor_scores`` one-to-one; omitted
+    means no penalties. The weights are modulated by ``preferences`` a single time and
+    reused for every candidate, so the ranking is consistent and deterministic.
+    """
+    if penalties is not None and len(penalties) != len(factor_scores):
+        raise ValueError(
+            f"penalties length ({len(penalties)}) must match factor_scores "
+            f"({len(factor_scores)})"
+        )
+    effective = modulate_weights(weights, preferences)
+    pens = penalties if penalties is not None else [0.0] * len(factor_scores)
+    return [
+        overall_score(f, effective, penalty=p) for f, p in zip(factor_scores, pens, strict=True)
+    ]
