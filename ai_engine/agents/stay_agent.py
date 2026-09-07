@@ -44,7 +44,12 @@ from ai_engine.providers.accommodation import (
     AccommodationRequest,
     AccommodationService,
 )
-from ai_engine.utils.api_clients import ProviderError, ProviderResult
+from ai_engine.utils.api_clients import (
+    AllProvidersFailed,
+    ProviderError,
+    ProviderResult,
+    ProviderUnavailable,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +102,17 @@ class StayAgent:
         ``quality_flag``. A destination with no accommodation data at all yields an
         empty list (logged), never an error.
         """
+        if destination_id is None or destination_id < 1:
+            raise ValueError(f"destination_id must be a positive integer, got {destination_id!r}")
+        if limit is not None and limit < 1:
+            raise ValueError(f"limit must be >= 1, got {limit!r}")
+        if not isinstance(currency, str) or len(currency) != 3 or not currency.isalpha():
+            raise ValueError(f"currency must be a 3-letter code, got {currency!r}")
+        if currency.lower() != "eur":
+            # Prices are normalized to EUR upstream (BS-035); we do not convert, so a
+            # non-EUR request is served as EUR and flagged here for visibility.
+            logger.warning("stay: currency %r requested but prices are EUR-normalized", currency)
+
         bound = self._bounded_limit(limit)
         request = AccommodationRequest(
             destination_id=destination_id, limit=bound, currency=currency
@@ -105,16 +121,24 @@ class StayAgent:
         try:
             result: ProviderResult[list[AccommodationOption]] = self.accommodations.resolve(request)
         except ProviderError as exc:
-            # No listings and no price statistics for this city — degrade to none.
-            logger.warning(
-                "stay: no accommodation data for destination %s (%s)", destination_id, exc
-            )
+            # Distinguish "this city has no listings and no price stats" from a real
+            # DB/provider failure: both degrade to an empty list, but a genuine
+            # failure is logged louder so it is visible in operations.
+            if _is_source_failure(exc):
+                logger.warning(
+                    "stay: accommodation source failed for destination %s (%s); no options",
+                    destination_id,
+                    exc,
+                )
+            else:
+                logger.info(
+                    "stay: no accommodation data for destination %s (%s)", destination_id, exc
+                )
             return []
 
         service_quality = QualityFlag(result.quality_flag)
-        bounded = [self._normalize(option, service_quality) for option in (result.data or [])][
-            :bound
-        ]
+        normalized = (self._normalize(option, service_quality) for option in (result.data or []))
+        bounded = [acc for acc in normalized if acc is not None][:bound]
         logger.debug(
             "stay: destination %s -> %d representative option(s) [service=%s]",
             destination_id,
@@ -130,7 +154,7 @@ class StayAgent:
 
     def _normalize(
         self, option: AccommodationOption, service_quality: QualityFlag
-    ) -> Accommodation:
+    ) -> Accommodation | None:
         """Map a provider :class:`AccommodationOption` onto the domain model.
 
         The single normalization exit point (technical-doc §17/§19): only the
@@ -141,17 +165,38 @@ class StayAgent:
         flag, so an estimate is always honestly flagged.
         """
         quality = _worst_quality(service_quality, QualityFlag(option.quality_flag))
-        return Accommodation(
-            price_per_night=option.price_per_night,
-            quality_flag=quality,
-            name=option.name,
-            accommodation_type=option.accom_type,
-            rating=option.rating,
-            latitude=option.latitude,
-            longitude=option.longitude,
-        )
+        try:
+            return Accommodation(
+                price_per_night=option.price_per_night,
+                quality_flag=quality,
+                name=option.name,
+                accommodation_type=option.accom_type,
+                rating=option.rating,
+                latitude=option.latitude,
+                longitude=option.longitude,
+            )
+        except ValueError as exc:
+            # A listing with an invalid price / rating / coordinate is dropped and
+            # logged rather than crashing the whole request or reaching the
+            # coordinator as bad data.
+            logger.warning(
+                "stay: dropping accommodation %r with invalid data (%s)", option.name, exc
+            )
+            return None
 
 
 def _worst_quality(*flags: QualityFlag) -> QualityFlag:
     """The least-firm flag among ``flags`` (estimated < cached < real)."""
     return min(flags, key=lambda flag: _QUALITY_RANK[flag])
+
+
+def _is_source_failure(exc: ProviderError) -> bool:
+    """True when a resolve failure was the source being unreachable, not just empty.
+
+    ``AllProvidersFailed`` records each attempt's reason; any
+    :class:`ProviderUnavailable` among them means a genuine failure, versus every
+    provider simply having no data (:class:`ProviderNoResult`) for this city.
+    """
+    if isinstance(exc, AllProvidersFailed):
+        return any(isinstance(reason, ProviderUnavailable) for _name, reason in exc.attempts)
+    return isinstance(exc, ProviderUnavailable)
