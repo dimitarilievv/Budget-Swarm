@@ -11,10 +11,12 @@ the result, and maps each POI onto the normalized domain
 Two deliberate shaping decisions:
 
 * **Category filtering.** A traveller who wants museums and nightlife should not
-  be handed every park in the city. The agent keeps a POI when any of its category
-  tokens matches a requested preference keyword (case-insensitive substring), so
-  the coarse OpenTripMap ``kinds`` / OSM tags map onto high-level preferences
-  without a brittle fixed lookup. With no preferences given, nothing is filtered.
+  be handed every park in the city. The agent keeps a POI when one of its
+  normalized category tokens matches a requested preference — matching is on whole,
+  singularized tokens expanded through a small alias map (so "nature" pulls in
+  "park"/"garden"/… and "park" no longer matches an unrelated "parking"), mapping
+  the coarse OpenTripMap ``kinds`` / OSM tags onto high-level preferences. With no
+  preferences given, nothing is filtered.
 * **A bounded, popularity-first set.** The provider is asked for a stable
   candidate pool per destination (so its per-destination cache stays effective),
   the pool is filtered, and only the top ``limit`` are returned — OpenTripMap
@@ -49,7 +51,8 @@ the standard library.
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+import re
+from collections.abc import Iterable, Sequence
 
 from ai_engine.agents.duration import estimate_duration_minutes
 from ai_engine.agents.indoor_outdoor import classify_activity
@@ -57,7 +60,12 @@ from ai_engine.domain import Activity, QualityFlag
 from ai_engine.providers.attraction import Activity as AttractionActivity
 from ai_engine.providers.attraction import AttractionRequest, AttractionService
 from ai_engine.providers.enrichment import ActivityEnricher
-from ai_engine.utils.api_clients import ProviderError, ProviderResult
+from ai_engine.utils.api_clients import (
+    AllProvidersFailed,
+    ProviderError,
+    ProviderResult,
+    ProviderUnavailable,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +129,10 @@ class ExperienceAgent:
         summary (Post-MVP; a lookup failure simply leaves it ``None``). A destination
         with no POIs yields an empty list (logged), never an error.
         """
+        if limit is not None and limit < 1:
+            raise ValueError(f"limit must be >= 1, got {limit!r}")
+        if radius_m < 1:
+            raise ValueError(f"radius_m must be a positive number of metres, got {radius_m!r}")
         bound = self._bounded_limit(limit)
         request = AttractionRequest(
             center=center,
@@ -132,13 +144,23 @@ class ExperienceAgent:
         try:
             result: ProviderResult[list[AttractionActivity]] = self.attractions.resolve(request)
         except ProviderError as exc:
-            logger.warning(
-                "experience: no POIs for destination %s (%s)", destination or center, exc
-            )
+            # Distinguish "this city genuinely has no POIs" from "the POI source
+            # failed": both degrade to an empty list (the trip proceeds), but a real
+            # source failure is logged louder so it is visible in operations.
+            if _is_source_failure(exc):
+                logger.warning(
+                    "experience: POI source failed for %s (%s); proceeding with no activities",
+                    destination or center,
+                    exc,
+                )
+            else:
+                logger.info(
+                    "experience: no POIs for destination %s (%s)", destination or center, exc
+                )
             return []
 
         quality = QualityFlag(result.quality_flag)
-        wanted = _normalize_keywords(categories)
+        wanted = _wanted_tokens(_normalize_keywords(categories))
         matched = [poi for poi in (result.data or []) if _matches(poi, wanted)]
         activities = [self._normalize(poi, quality, enrich=enrich) for poi in matched[:bound]]
         logger.debug(
@@ -185,11 +207,93 @@ class ExperienceAgent:
         """Optional Wikipedia summary for a POI, or ``None`` (never raises).
 
         Post-MVP: only runs when an enricher is configured; a lookup failure or a
-        missing page degrades to ``None`` so enrichment never blocks the plan.
+        missing page degrades to ``None`` so enrichment never blocks the plan. The
+        call is guarded here too, so even a misbehaving enricher that raises cannot
+        interrupt the main planning flow (ADR-005).
         """
         if self.enricher is None:
             return None
-        return self.enricher.summary_for(poi.name, poi.wikidata)
+        try:
+            return self.enricher.summary_for(poi.name, poi.wikidata)
+        except Exception as exc:  # noqa: BLE001 - enrichment is optional; never fatal
+            logger.info("experience: enrichment failed for %r (%s); no description", poi.name, exc)
+            return None
+
+
+# High-level preference keyword -> the canonical category tokens that satisfy it.
+# Lets a user ask for "nature" or "culture" and match the fine-grained OpenTripMap
+# kinds / OSM tags, while keeping matching to whole tokens (so "park" no longer
+# matches "parking" the way a bare substring test did). Extend deliberately.
+PREFERENCE_ALIASES: dict[str, frozenset[str]] = {
+    "museum": frozenset({"museum", "gallery", "exhibition"}),
+    "culture": frozenset(
+        {
+            "museum",
+            "gallery",
+            "theatre",
+            "theater",
+            "monument",
+            "historic",
+            "castle",
+            "heritage",
+            "architecture",
+            "cultural",
+            "cathedral",
+            "church",
+            "palace",
+        }
+    ),
+    "history": frozenset({"historic", "monument", "castle", "ruin", "archaeology", "heritage"}),
+    "art": frozenset({"gallery", "museum", "art", "sculpture"}),
+    "nature": frozenset(
+        {
+            "park",
+            "garden",
+            "natural",
+            "beach",
+            "forest",
+            "mountain",
+            "lake",
+            "river",
+            "viewpoint",
+            "nature",
+            "reserve",
+            "waterfall",
+            "island",
+        }
+    ),
+    "nightlife": frozenset({"bar", "club", "nightclub", "pub", "nightlife", "casino"}),
+    "food": frozenset({"restaurant", "cafe", "food", "market", "winery", "brewery", "bakery"}),
+    "shopping": frozenset({"mall", "market", "shop", "shopping", "boutique"}),
+    "religion": frozenset({"church", "cathedral", "mosque", "temple", "synagogue", "religion"}),
+}
+
+_TOKEN_SPLIT = re.compile(r"[^a-z0-9]+")
+
+
+def _is_source_failure(exc: ProviderError) -> bool:
+    """True when a resolve failure was a source being unreachable, not just empty.
+
+    ``AllProvidersFailed`` records each attempt's reason; if any reason is a
+    :class:`ProviderUnavailable` the source genuinely failed (vs. every provider
+    simply having no data for this city). A bare :class:`ProviderUnavailable` counts
+    too; a :class:`ProviderNoResult` is "no data", not a failure.
+    """
+    if isinstance(exc, AllProvidersFailed):
+        return any(isinstance(reason, ProviderUnavailable) for _name, reason in exc.attempts)
+    return isinstance(exc, ProviderUnavailable)
+
+
+def _singular(token: str) -> str:
+    """Crudely singularize a token so 'parks' and 'park' compare equal."""
+    return token[:-1] if len(token) > 3 and token.endswith("s") else token
+
+
+def _tokenize(value: str | None) -> set[str]:
+    """Split a category string into normalized, singularized word tokens."""
+    if not value:
+        return set()
+    return {_singular(tok) for tok in _TOKEN_SPLIT.split(value.lower()) if tok}
 
 
 def _normalize_keywords(categories: Sequence[str] | None) -> set[str]:
@@ -199,14 +303,34 @@ def _normalize_keywords(categories: Sequence[str] | None) -> set[str]:
     return {c.strip().lower() for c in categories if c and c.strip()}
 
 
-def _matches(poi: AttractionActivity, keywords: set[str]) -> bool:
-    """True when a POI has no filter to satisfy, or any category token matches.
+def _wanted_tokens(keywords: Iterable[str]) -> set[str]:
+    """Expand preference keywords into the set of canonical tokens that satisfy them.
 
-    A keyword matches if it is a case-insensitive substring of any of the POI's
-    category tokens (its primary ``category`` plus the full ``categories`` list), so
-    "museum" matches the OpenTripMap kind "museums".
+    Each keyword contributes its own singularized token plus any alias tokens, so a
+    high-level preference ("nature") pulls in its concrete categories ("park",
+    "garden", …) while matching stays token-exact, not substring.
     """
-    if not keywords:
+    wanted: set[str] = set()
+    for keyword in keywords:
+        key = keyword.strip().lower()
+        if not key:
+            continue
+        wanted.add(_singular(key))
+        wanted.update(_singular(alias) for alias in PREFERENCE_ALIASES.get(key, ()))
+    return wanted
+
+
+def _matches(poi: AttractionActivity, wanted: set[str]) -> bool:
+    """True when a POI has no filter to satisfy, or a category token matches one.
+
+    Matching is on whole, singularized tokens (from the POI's ``category`` plus its
+    full ``categories`` list) against the expanded preference tokens — so "museum"
+    matches the kind "museums" and "nature" matches "gardens_and_parks", but "park"
+    no longer matches an unrelated "parking".
+    """
+    if not wanted:
         return True
-    tokens = [t.lower() for t in ([poi.category, *poi.categories]) if t]
-    return any(keyword in token for keyword in keywords for token in tokens)
+    tokens: set[str] = set()
+    for value in (poi.category, *poi.categories):
+        tokens |= _tokenize(value)
+    return bool(tokens & wanted)

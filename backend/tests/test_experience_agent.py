@@ -23,7 +23,7 @@ from ai_engine.providers.attraction import (
     OpenTripMapProvider,
     OverpassProvider,
 )
-from ai_engine.utils.api_clients import RetryPolicy, read_through_hook
+from ai_engine.utils.api_clients import ProviderUnavailable, RetryPolicy, read_through_hook
 from ai_engine.utils.geo import GeoPoint
 
 BARCELONA = GeoPoint(lat=41.3874, lon=2.1686)
@@ -291,4 +291,72 @@ def test_enrichment_requested_without_enricher_is_noop():
 def test_enrichment_failure_leaves_description_none():
     agent = ExperienceAgent(_service(lambda _req: RECORDED_POIS), enricher=_FakeEnricher(fail=True))
     activities = agent.activities_for(BARCELONA, enrich=True)
+    assert activities and all(a.description is None for a in activities)
+
+
+# ===========================================================================
+# Hardening (agents-hardening): alias matching, validation, failure modes
+# ===========================================================================
+
+
+def test_high_level_preference_alias_matches_concrete_kinds():
+    # "nature" expands to park/garden/... and matches the OTM kinds.
+    agent = _agent()
+    names = [a.name for a in agent.activities_for(BARCELONA, categories=["nature"])]
+    assert "Park Güell" in names  # gardens_and_parks
+    assert "Picasso Museum" not in names
+
+
+def test_substring_false_positive_is_avoided():
+    # "park" must NOT match an unrelated "parking" category (the old substring bug).
+    parking = [
+        {
+            "xid": "P1",
+            "name": "Central Parking",
+            "rate": 5,
+            "kinds": "parking",
+            "point": {"lon": 2.1, "lat": 41.3},
+        },
+    ]
+    agent = _agent(lambda _req: parking)
+    assert agent.activities_for(BARCELONA, categories=["park"]) == []
+
+
+def test_invalid_limit_rejected():
+    agent = _agent()
+    with pytest.raises(ValueError, match="limit"):
+        agent.activities_for(BARCELONA, limit=0)
+    with pytest.raises(ValueError, match="limit"):
+        agent.activities_for(BARCELONA, limit=-3)
+
+
+def test_invalid_radius_rejected():
+    agent = _agent()
+    with pytest.raises(ValueError, match="radius_m"):
+        agent.activities_for(BARCELONA, radius_m=0)
+
+
+def test_source_failure_degrades_to_empty():
+    # Both OTM and Overpass unreachable -> AllProvidersFailed -> empty, not a crash.
+    def down(_req):
+        raise ProviderUnavailable("OTM down")
+
+    agent = ExperienceAgent(
+        _service(
+            down,
+            overpass_transport=lambda _req: (_ for _ in ()).throw(
+                ProviderUnavailable("overpass down")
+            ),
+        )
+    )
+    assert agent.activities_for(BARCELONA, destination="Barcelona") == []
+
+
+def test_enrichment_that_raises_never_interrupts():
+    class _BoomEnricher:
+        def summary_for(self, name, wikidata=None):
+            raise RuntimeError("wiki exploded")
+
+    agent = ExperienceAgent(_service(lambda _req: RECORDED_POIS), enricher=_BoomEnricher())
+    activities = agent.activities_for(BARCELONA, categories=["museum"], enrich=True)
     assert activities and all(a.description is None for a in activities)
