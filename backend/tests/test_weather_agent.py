@@ -16,6 +16,7 @@ from ai_engine.agents.weather_agent import (
     RISK_WEATHER_CONFLICT,
     RISK_WEATHER_UNCHECKED,
     WeatherAgent,
+    WeatherConflictPolicy,
 )
 from ai_engine.domain import QualityFlag, WeatherDay, WeatherProfile
 from ai_engine.providers.weather import OpenMeteoProvider, WeatherService
@@ -176,3 +177,66 @@ def test_day_with_bad_date_is_skipped():
     agent = _agent(lambda _req: body)
     profile = agent.profile_for(BARCELONA)
     assert [d.forecast_date for d in profile.days] == [date(2026, 9, 3)]
+
+
+# --- conflict-flag derivation: policy (BS-068) ------------------------------
+
+
+def _day(**kw) -> WeatherDay:
+    return WeatherDay(forecast_date=date(2026, 9, 2), **kw)
+
+
+def test_conflict_at_and_above_threshold_boundary():
+    policy = WeatherConflictPolicy()  # default 60%
+    assert policy.is_conflict(_day(precip_probability=60.0)) is True  # == threshold
+    assert policy.is_conflict(_day(precip_probability=60.1)) is True
+    assert policy.is_conflict(_day(precip_probability=59.9)) is False
+
+
+def test_no_conflict_when_clear_and_probability_none():
+    assert WeatherConflictPolicy().is_conflict(_day(conditions="clear")) is False
+
+
+def test_threshold_is_configurable():
+    strict = WeatherConflictPolicy(precip_probability_threshold=40.0)
+    assert strict.is_conflict(_day(precip_probability=40.0, conditions="overcast")) is True
+    assert strict.is_conflict(_day(precip_probability=39.9, conditions="overcast")) is False
+
+
+def test_condition_label_triggers_conflict_regardless_of_probability():
+    policy = WeatherConflictPolicy()
+    assert policy.is_conflict(_day(conditions="heavy rain", precip_probability=0.0)) is True
+    assert policy.is_conflict(_day(conditions="thunderstorm", precip_probability=None)) is True
+    assert policy.is_conflict(_day(conditions="clear", precip_probability=0.0)) is False
+
+
+def test_precipitation_mm_threshold_is_optional_signal():
+    policy = WeatherConflictPolicy(
+        precip_probability_threshold=101.0,  # never triggers on probability
+        precipitation_mm_threshold=5.0,
+        conflict_conditions=frozenset(),  # never triggers on label
+    )
+    assert policy.is_conflict(_day(precipitation_mm=5.0)) is True
+    assert policy.is_conflict(_day(precipitation_mm=4.9)) is False
+
+
+# --- conflict flags exposed to the coordinator (BS-068) ---------------------
+
+
+def test_per_day_conflict_flags_exposed_on_profile():
+    # day0 clear/5% -> no; day1 heavy rain/90% -> yes; day2 overcast/65% -> yes.
+    agent = _agent(lambda _req: RECORDED_OM)
+    profile = agent.profile_for(BARCELONA)
+    assert [d.weather_conflict for d in profile.days] == [False, True, True]
+    assert RISK_WEATHER_CONFLICT in profile.risk_flags
+
+
+def test_configurable_threshold_changes_agent_derivation():
+    # At a 95% threshold, day2 (overcast, 65%) no longer conflicts; day1 still does
+    # because its "heavy rain" label is a wet condition regardless of probability.
+    agent = _agent(lambda _req: RECORDED_OM)
+    strict = WeatherAgent(
+        agent.weather, conflict_policy=WeatherConflictPolicy(precip_probability_threshold=95.0)
+    )
+    days = strict.profile_for(BARCELONA).days
+    assert [d.weather_conflict for d in days] == [False, True, False]

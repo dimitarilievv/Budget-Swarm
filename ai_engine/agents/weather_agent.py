@@ -10,10 +10,14 @@ derived ``risk_flags``.
 
 **It does not schedule or replan the itinerary.** That is the optimizer's job
 (technical-doc §13): WeatherAgent only *reports* the forecast and flags derived
-hazards — ``weather_conflict`` when any day is unfit for outdoor activities (the
-interface the optimizer later uses to down-weight outdoor plans), and
-``weather_unchecked`` when the forecast could not be obtained at all. It never
-decides which activity happens on which day.
+hazards. Each :class:`~ai_engine.domain.models.WeatherDay` carries a deterministic
+``weather_conflict`` flag derived by a **configurable** :class:`WeatherConflictPolicy`
+(BS-068) — precipitation probability at/above a tunable threshold, a precipitation
+total, or a wet condition label — and this per-day flag is what the coordinator
+turns into the OR-Tools weather constraint. The profile-level ``risk_flags`` summarise
+these: ``weather_conflict`` when any day conflicts, and ``weather_unchecked`` when the
+forecast could not be obtained at all. The agent never decides which activity happens
+on which day.
 
 "Degrade, don't crash" (ADR-005): the service already degrades to
 **weather-unchecked** (an empty, ``estimated`` result) when Open-Meteo is down with
@@ -31,6 +35,7 @@ backend/pipeline's job).
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, field, replace
 from datetime import date
 
 from ai_engine.domain import QualityFlag, WeatherDay, WeatherProfile
@@ -44,6 +49,48 @@ logger = logging.getLogger(__name__)
 RISK_WEATHER_CONFLICT = "weather_conflict"
 RISK_WEATHER_UNCHECKED = "weather_unchecked"
 
+# Default precipitation-probability (%) at/above which a day is a weather conflict.
+DEFAULT_PRECIP_PROBABILITY_THRESHOLD = 60.0
+# Condition-label substrings that mark a day as wet regardless of probability.
+DEFAULT_CONFLICT_CONDITIONS = frozenset(
+    {"rain", "drizzle", "snow", "sleet", "thunder", "showers", "storm"}
+)
+
+
+@dataclass(frozen=True)
+class WeatherConflictPolicy:
+    """The deterministic rule that decides if a day is a weather conflict (BS-068).
+
+    A day conflicts when **any** configured signal fires (technical-doc §12): its
+    precipitation probability is at or above ``precip_probability_threshold``, its
+    precipitation total is at or above ``precipitation_mm_threshold`` (when set), or
+    its condition label contains one of ``conflict_conditions`` (rain/snow/thunder
+    …). The probability threshold is the primary, configurable knob; the whole
+    policy is an immutable value so a caller can tune it (e.g. a stricter 40% for a
+    rain-averse traveller) without touching the agent. The result feeds the OR-Tools
+    weather constraint, so the rule is deterministic — no randomness, no I/O.
+    """
+
+    precip_probability_threshold: float = DEFAULT_PRECIP_PROBABILITY_THRESHOLD
+    precipitation_mm_threshold: float | None = None
+    conflict_conditions: frozenset[str] = field(default_factory=lambda: DEFAULT_CONFLICT_CONDITIONS)
+
+    def is_conflict(self, day: WeatherDay) -> bool:
+        """True when ``day`` is unfit for outdoor activities under this policy."""
+        if (
+            day.precip_probability is not None
+            and day.precip_probability >= self.precip_probability_threshold
+        ):
+            return True
+        if (
+            self.precipitation_mm_threshold is not None
+            and day.precipitation_mm is not None
+            and day.precipitation_mm >= self.precipitation_mm_threshold
+        ):
+            return True
+        label = (day.conditions or "").lower()
+        return any(keyword in label for keyword in self.conflict_conditions)
+
 
 class WeatherAgent:
     """Retrieve and normalize the per-day forecast for a candidate (technical-doc §12).
@@ -53,8 +100,11 @@ class WeatherAgent:
     destination and date window. It performs no itinerary scheduling.
     """
 
-    def __init__(self, weather: WeatherService) -> None:
+    def __init__(
+        self, weather: WeatherService, *, conflict_policy: WeatherConflictPolicy | None = None
+    ) -> None:
         self.weather = weather
+        self.conflict_policy = conflict_policy or WeatherConflictPolicy()
 
     def profile_for(
         self,
@@ -95,9 +145,9 @@ class WeatherAgent:
             )
 
         quality = QualityFlag(result.quality_flag)
-        days = tuple(self._to_day(forecast) for forecast in (result.data or []))
-        days = tuple(day for day in days if day is not None)
-        risk_flags = self._risk_flags(result.data or [], days)
+        mapped = (self._to_day(forecast) for forecast in (result.data or []))
+        days = tuple(day for day in mapped if day is not None)
+        risk_flags = self._risk_flags(days)
         logger.debug(
             "weather: %s -> %d day(s), risks=%s [%s]",
             destination or center,
@@ -107,19 +157,20 @@ class WeatherAgent:
         )
         return WeatherProfile(days=days, risk_flags=risk_flags, quality_flag=quality)
 
-    @staticmethod
-    def _to_day(forecast: DayForecast) -> WeatherDay | None:
+    def _to_day(self, forecast: DayForecast) -> WeatherDay | None:
         """Map one provider per-day forecast onto a domain :class:`WeatherDay`.
 
-        A row with an unparseable date is skipped (logged) rather than aborting the
-        whole profile.
+        The per-day ``weather_conflict`` flag is (re-)derived here with this agent's
+        configurable :class:`WeatherConflictPolicy` (BS-068) rather than trusting the
+        provider's fixed-threshold bool, so the threshold is tunable. A row with an
+        unparseable date is skipped (logged) rather than aborting the whole profile.
         """
         try:
             forecast_date = date.fromisoformat(forecast.date)
         except (ValueError, TypeError):
             logger.info("weather: skipping day with bad date %r", forecast.date)
             return None
-        return WeatherDay(
+        day = WeatherDay(
             forecast_date=forecast_date,
             temp_min=forecast.temp_min,
             temp_max=forecast.temp_max,
@@ -128,16 +179,17 @@ class WeatherAgent:
             wind_speed=forecast.wind_speed,
             conditions=forecast.conditions,
         )
+        return replace(day, weather_conflict=self.conflict_policy.is_conflict(day))
 
     @staticmethod
-    def _risk_flags(forecasts: list[DayForecast], days: tuple[WeatherDay, ...]) -> tuple[str, ...]:
-        """Derive hazard flags (reporting only — no itinerary decisions).
+    def _risk_flags(days: tuple[WeatherDay, ...]) -> tuple[str, ...]:
+        """Derive profile-level hazard flags from the per-day conflict flags.
 
-        ``weather_unchecked`` when there is no forecast at all; otherwise
-        ``weather_conflict`` when any day is unfit for outdoor activities.
+        Reporting only — no itinerary decisions. ``weather_unchecked`` when there is
+        no forecast at all; otherwise ``weather_conflict`` when any day conflicts.
         """
         if not days:
             return (RISK_WEATHER_UNCHECKED,)
-        if any(getattr(f, "weather_conflict", False) for f in forecasts):
+        if any(day.weather_conflict for day in days):
             return (RISK_WEATHER_CONFLICT,)
         return ()
