@@ -20,6 +20,11 @@ Two deliberate shaping decisions:
   the pool is filtered, and only the top ``limit`` are returned — OpenTripMap
   already orders by popularity, so the most notable matching POIs survive.
 
+Every activity is assigned an ``indoor_outdoor`` class during normalization via the
+curated mapping in :mod:`ai_engine.agents.indoor_outdoor` (BS-066) — the interface
+to weather replanning (technical-doc §11.3) — with the provider's source-level
+classification used only as a fallback when the mapping is ambiguous.
+
 Normalization is the single exit point: only the domain fields the coordinator
 needs are carried across; the provider label, popularity score, source id and
 Wikidata id do **not** leak into the domain shape (technical-doc §17/§19). POIs are
@@ -39,7 +44,8 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 
-from ai_engine.domain import Activity, IndoorOutdoor, QualityFlag
+from ai_engine.agents.indoor_outdoor import classify_activity
+from ai_engine.domain import Activity, QualityFlag
 from ai_engine.providers.attraction import Activity as AttractionActivity
 from ai_engine.providers.attraction import AttractionRequest, AttractionService
 from ai_engine.utils.api_clients import ProviderError, ProviderResult
@@ -147,7 +153,11 @@ class ExperienceAgent:
             category=poi.category,
             latitude=poi.latitude,
             longitude=poi.longitude,
-            indoor_outdoor=_coerce_indoor_outdoor(poi.indoor_outdoor),
+            # Curated indoor/outdoor feature step (BS-066): classify from the POI's
+            # category tokens, falling back to the provider's source-level hint.
+            indoor_outdoor=classify_activity(
+                [poi.category, *poi.categories], hint=poi.indoor_outdoor
+            ),
             quality_flag=quality,
         )
 
@@ -170,11 +180,3 @@ def _matches(poi: AttractionActivity, keywords: set[str]) -> bool:
         return True
     tokens = [t.lower() for t in ([poi.category, *poi.categories]) if t]
     return any(keyword in token for keyword in keywords for token in tokens)
-
-
-def _coerce_indoor_outdoor(value: str | None) -> IndoorOutdoor:
-    """Map the provider's indoor/outdoor string onto the enum (default MIXED)."""
-    try:
-        return IndoorOutdoor(value)
-    except ValueError:
-        return IndoorOutdoor.MIXED
