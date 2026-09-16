@@ -15,6 +15,13 @@ from .optimizer import (
     SolveStatus,
 )
 from .pipeline import EngineInput, TripPlan, run
+from .scheduler import (
+    ActivityScheduler,
+    Schedule,
+    ScheduledActivity,
+    SchedulingPolicy,
+    parse_opening_hours,
+)
 
 __all__ = [
     "run",
@@ -25,4 +32,9 @@ __all__ = [
     "OptimizationResult",
     "SolveStatus",
     "ExclusionReason",
+    "ActivityScheduler",
+    "Schedule",
+    "ScheduledActivity",
+    "SchedulingPolicy",
+    "parse_opening_hours",
 ]
