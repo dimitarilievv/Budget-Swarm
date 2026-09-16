@@ -206,9 +206,7 @@ class CoordinatorAgent:
         weather-unchecked). Never raises on a missing part: a thin candidate degrades,
         it does not fail.
         """
-        quality_flags: dict[str, QualityFlag] = {
-            PART_DESTINATION: outputs.destination.quality_flag
-        }
+        quality_flags: dict[str, QualityFlag] = {PART_DESTINATION: outputs.destination.quality_flag}
         degraded: list[str] = []
 
         # Transport — a single option (or missing).

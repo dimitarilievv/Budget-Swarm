@@ -308,9 +308,7 @@ def test_nights_must_be_at_least_one():
 def test_aggregate_all_preserves_order():
     a = AgentOutputs(destination=_destination(), transport=_transport(), nights=1)
     b = AgentOutputs(
-        destination=Destination(
-            city="Prague", country="Czechia", latitude=50.08, longitude=14.44
-        ),
+        destination=Destination(city="Prague", country="Czechia", latitude=50.08, longitude=14.44),
         transport=_transport(),
         nights=1,
     )
