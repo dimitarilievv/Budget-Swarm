@@ -5,3 +5,4 @@ sqlalchemy
 alembic
 psycopg[binary]
 httpx
+ortools

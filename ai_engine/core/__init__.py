@@ -1,12 +1,28 @@
 """Engine reasoning core: pipeline orchestration, scoring, and optimization.
 
-Only the pipeline entry point is implemented so far (a stub, BS-044); ``scorer``
-and ``optimizer`` arrive with their own tickets. Re-exported here so callers can
-``from ai_engine.core import run, EngineInput, TripPlan``.
+The pipeline entry point (a stub, BS-044) and the CP-SAT optimizer (BS-072) are
+implemented; the scorer lives alongside in ``scorer``. Re-exported here so callers
+can ``from ai_engine.core import run, EngineInput, TripPlan, Optimizer, ...``.
 """
 
 from __future__ import annotations
 
+from .optimizer import (
+    ExclusionReason,
+    OptimizationInput,
+    OptimizationResult,
+    Optimizer,
+    SolveStatus,
+)
 from .pipeline import EngineInput, TripPlan, run
 
-__all__ = ["run", "EngineInput", "TripPlan"]
+__all__ = [
+    "run",
+    "EngineInput",
+    "TripPlan",
+    "Optimizer",
+    "OptimizationInput",
+    "OptimizationResult",
+    "SolveStatus",
+    "ExclusionReason",
+]
