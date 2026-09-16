@@ -10,6 +10,7 @@ a constraint — an over-budget or overlapping schedule is never returned.
 from __future__ import annotations
 
 import itertools
+from datetime import date
 
 import pytest
 
@@ -18,14 +19,24 @@ from ai_engine.core.scheduler import (
     ActivityScheduler,
     SchedulingPolicy,
     parse_opening_hours,
+    weather_conflict_flags,
 )
-from ai_engine.domain import Activity
+from ai_engine.domain import Activity, IndoorOutdoor, WeatherDay, WeatherProfile
 
 
 def _activity(
-    name: str, *, minutes: int | None = 120, opening_hours: str | None = None
+    name: str,
+    *,
+    minutes: int | None = 120,
+    opening_hours: str | None = None,
+    indoor_outdoor: IndoorOutdoor = IndoorOutdoor.MIXED,
 ) -> Activity:
-    return Activity(name=name, est_duration_minutes=minutes, opening_hours=opening_hours)
+    return Activity(
+        name=name,
+        est_duration_minutes=minutes,
+        opening_hours=opening_hours,
+        indoor_outdoor=indoor_outdoor,
+    )
 
 
 def _no_overlaps(items) -> bool:
@@ -224,3 +235,124 @@ def test_schedule_is_deterministic():
 )
 def test_parse_opening_hours(text, expected):
     assert parse_opening_hours(text) == expected
+
+
+# --- weather constraint + dynamic replanning (BS-074) -----------------------
+
+_OUTDOOR = IndoorOutdoor.OUTDOOR
+_INDOOR = IndoorOutdoor.INDOOR
+_MIXED = IndoorOutdoor.MIXED
+
+
+def test_no_outdoor_activity_on_a_conflict_day():
+    # Day 1 is a weather conflict; no outdoor activity may land on it.
+    policy = SchedulingPolicy(available_minutes=240)  # 2 slots/day
+    acts = [
+        _activity("O1", indoor_outdoor=_OUTDOOR),
+        _activity("O2", indoor_outdoor=_OUTDOOR),
+        _activity("I1", indoor_outdoor=_INDOOR),
+    ]
+    result = ActivityScheduler(policy).schedule(acts, days=2, weather_conflicts=[False, True])
+    for item in result.items:
+        if item.activity.indoor_outdoor is _OUTDOOR:
+            assert item.day != 1
+
+
+def test_single_outdoor_moves_to_the_clear_day():
+    # Day 0 conflict, day 1 clear -> the only outdoor activity must sit on day 1.
+    result = ActivityScheduler().schedule(
+        [_activity("Sole", indoor_outdoor=_OUTDOOR)],
+        days=2,
+        weather_conflicts=[True, False],
+    )
+    assert result.scheduled_count == 1
+    assert result.items[0].day == 1
+
+
+def test_outdoor_dropped_and_indoor_swapped_in_is_flagged():
+    # One slot, one conflict day: the higher-value outdoor wins the slot weather-naively,
+    # but the forecast forbids it -> the indoor alternative is swapped in and flagged.
+    policy = SchedulingPolicy(available_minutes=120)  # one slot on the single day
+    outdoor = _activity("Castle", indoor_outdoor=_OUTDOOR)
+    indoor = _activity("Museum", indoor_outdoor=_INDOOR)
+    result = ActivityScheduler(policy).schedule(
+        [outdoor, indoor], days=1, weights=[0.9, 0.5], weather_conflicts=[True]
+    )
+
+    assert result.status is SolveStatus.OPTIMAL
+    # The outdoor activity is not placed on the conflict day (it is dropped).
+    assert all(it.activity.name != "Castle" for it in result.items)
+    assert outdoor in result.unscheduled
+    # The indoor replacement is scheduled and recorded as rescheduled (a weather swap-in).
+    museum = next(it for it in result.items if it.activity.name == "Museum")
+    assert museum.day == 0
+    assert museum.was_rescheduled is True
+
+
+def test_indoor_activity_allowed_on_conflict_day_not_flagged():
+    result = ActivityScheduler().schedule(
+        [_activity("Gallery", indoor_outdoor=_INDOOR)], days=1, weather_conflicts=[True]
+    )
+    assert result.scheduled_count == 1
+    assert result.items[0].day == 0
+    assert result.items[0].was_rescheduled is False
+
+
+def test_mixed_activity_allowed_on_conflict_day():
+    result = ActivityScheduler().schedule(
+        [_activity("Market", indoor_outdoor=_MIXED)], days=1, weather_conflicts=[True]
+    )
+    assert result.scheduled_count == 1
+    assert result.items[0].day == 0
+
+
+def test_no_conflict_flags_means_no_reschedule():
+    acts = [_activity("A", indoor_outdoor=_OUTDOOR), _activity("B", indoor_outdoor=_INDOOR)]
+    result = ActivityScheduler().schedule(acts, days=2, weather_conflicts=[False, False])
+    assert result.scheduled_count == 2
+    assert all(not it.was_rescheduled for it in result.items)
+
+
+def test_outdoor_with_every_day_conflicting_is_unscheduled_not_fatal():
+    result = ActivityScheduler().schedule(
+        [_activity("OnlyOutdoor", indoor_outdoor=_OUTDOOR)],
+        days=2,
+        weather_conflicts=[True, True],
+    )
+    assert result.status is SolveStatus.OPTIMAL
+    assert result.scheduled_count == 0
+    assert result.unscheduled  # returned, not raised
+
+
+def test_weather_conflicts_length_must_match_days():
+    with pytest.raises(ValueError, match="weather_conflicts length"):
+        ActivityScheduler().schedule([_activity("A")], days=2, weather_conflicts=[True])
+
+
+def test_weather_replan_is_deterministic():
+    policy = SchedulingPolicy(available_minutes=120)
+    acts = [_activity("O", indoor_outdoor=_OUTDOOR), _activity("I", indoor_outdoor=_INDOOR)]
+    kwargs = dict(days=1, weights=[0.9, 0.5], weather_conflicts=[True])
+    r1 = ActivityScheduler(policy).schedule(acts, **kwargs)
+    r2 = ActivityScheduler(policy).schedule(acts, **kwargs)
+    assert [(it.activity.name, it.day, it.was_rescheduled) for it in r1.items] == [
+        (it.activity.name, it.day, it.was_rescheduled) for it in r2.items
+    ]
+
+
+# --- weather_conflict_flags helper ------------------------------------------
+
+
+def test_weather_conflict_flags_from_profile():
+    profile = WeatherProfile(
+        days=[
+            WeatherDay(forecast_date=date(2026, 9, 1), weather_conflict=True),
+            WeatherDay(forecast_date=date(2026, 9, 2), weather_conflict=False),
+            WeatherDay(forecast_date=date(2026, 9, 3), weather_conflict=True),
+        ]
+    )
+    assert weather_conflict_flags(profile) == [True, False, True]
+
+
+def test_weather_conflict_flags_empty_profile():
+    assert weather_conflict_flags(WeatherProfile()) == []
