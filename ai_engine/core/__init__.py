@@ -15,6 +15,13 @@ from .optimizer import (
     SolveStatus,
 )
 from .pipeline import EngineInput, TripPlan, run
+from .planner import (
+    NoPlanAvailableError,
+    OptimalPlan,
+    Planner,
+    PlanRequest,
+    RankedCandidate,
+)
 from .scheduler import (
     ActivityScheduler,
     Schedule,
@@ -39,4 +46,9 @@ __all__ = [
     "SchedulingPolicy",
     "parse_opening_hours",
     "weather_conflict_flags",
+    "Planner",
+    "PlanRequest",
+    "OptimalPlan",
+    "RankedCandidate",
+    "NoPlanAvailableError",
 ]
