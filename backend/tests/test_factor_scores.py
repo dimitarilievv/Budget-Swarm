@@ -19,6 +19,7 @@ from ai_engine.core.scorer import (
     FactorScores,
     accommodation_score,
     compute_factor_scores,
+    cost_breakdown,
     experience_score,
     preference_score,
     travel_minutes,
@@ -132,6 +133,34 @@ def test_trip_cost_sums_transport_median_accom_and_activities():
 
 def test_trip_cost_is_none_when_nothing_known():
     assert trip_cost(CandidateInputs()) is None
+
+
+def test_cost_breakdown_components_sum_to_total():
+    c = CandidateInputs(
+        transport=TransportOption(mode=TransportMode.CAR, cost=100.0),
+        accommodations=[
+            Accommodation(price_per_night=40.0),
+            Accommodation(price_per_night=60.0),
+            Accommodation(price_per_night=200.0),
+        ],
+        activities=[Activity(name="Museum", cost=12.0), Activity(name="Park")],
+        nights=3,
+    )
+    breakdown = cost_breakdown(c)
+    assert breakdown.transport == pytest.approx(100.0)
+    assert breakdown.accommodation == pytest.approx(180.0)  # median 60 * 3 nights
+    assert breakdown.activities == pytest.approx(12.0)
+    assert breakdown.total == pytest.approx(292.0)
+    assert breakdown.total == trip_cost(c)
+
+
+def test_cost_breakdown_total_none_without_transport_cost():
+    c = CandidateInputs(accommodations=[Accommodation(price_per_night=50.0)])
+    breakdown = cost_breakdown(c)
+    assert breakdown.transport is None
+    assert breakdown.total is None
+    # Accommodation is still reported even though the trip cannot be totalled.
+    assert breakdown.accommodation == pytest.approx(50.0)
 
 
 def test_travel_minutes_reads_duration_or_none():

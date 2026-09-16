@@ -174,6 +174,41 @@ def test_ranked_candidates_feasible_first_by_score():
     assert plan.ranked_candidates[-1].exclusion_reason is ExclusionReason.OVER_BUDGET
 
 
+def test_ranked_candidate_exposes_scores_costs_and_feasible_flag():
+    # One feasible, one over-budget; both appear with full per-factor + cost detail.
+    cheap = _candidate("Cheap", transport_cost=100.0, nightly=50.0, nights=3, culture=0.6)
+    pricey = _candidate("Pricey", transport_cost=9000.0, culture=0.9)
+    plan = Planner().plan(_request([cheap, pricey], budget=1000.0, preferences={"culture": 1.0}))
+
+    by_city = {rc.destination.city: rc for rc in plan.ranked_candidates}
+    cheap_rc = by_city["Cheap"]
+    # Scores present (api.md fields).
+    assert 0.0 <= cheap_rc.overall_score <= 1.0
+    assert cheap_rc.preference_score == pytest.approx(0.6)  # culture-only preference
+    assert 0.0 <= cheap_rc.experience_score <= 1.0
+    assert 0.0 <= cheap_rc.weather_score <= 1.0
+    # Cost breakdown present and consistent: transport 100 + median(50)*3 = 250.
+    assert cheap_rc.transport_cost == pytest.approx(100.0)
+    assert cheap_rc.accommodation_cost == pytest.approx(150.0)
+    assert cheap_rc.total_cost == pytest.approx(250.0)
+    assert cheap_rc.feasible is True
+    # The infeasible one still carries its scores/costs (shown for transparency).
+    assert by_city["Pricey"].feasible is False
+    assert by_city["Pricey"].total_cost == pytest.approx(9150.0)
+
+
+def test_chosen_plan_is_the_top_feasible_ranked_candidate():
+    cands = [
+        _candidate("A", culture=0.3),
+        _candidate("B", culture=0.9),
+        _candidate("C", culture=0.5),
+    ]
+    plan = Planner().plan(_request(cands, preferences={"culture": 1.0}))
+    top_feasible = next(rc for rc in plan.ranked_candidates if rc.feasible)
+    assert plan.destination.city == top_feasible.destination.city
+    assert plan.overall_score == pytest.approx(top_feasible.overall_score)
+
+
 # --- no feasible solution ---------------------------------------------------
 
 

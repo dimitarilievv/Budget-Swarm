@@ -49,9 +49,12 @@ from ai_engine.core.scheduler import (
 )
 from ai_engine.core.scorer import (
     DEFAULT_WEIGHTS,
+    CostBreakdown,
+    FactorScores,
     FactorWeights,
     PreferenceWeights,
     compute_factor_scores,
+    cost_breakdown,
     score_candidates,
 )
 from ai_engine.domain import (
@@ -128,13 +131,64 @@ class PlanRequest:
 
 @dataclass(frozen=True)
 class RankedCandidate:
-    """A candidate's standing: its objective score and feasibility (for the comparison page)."""
+    """A candidate's standing for the comparison page (api.md ``ranked_candidates``).
+
+    Carries the objective ``overall_score``, the full per-factor :class:`FactorScores`
+    (so the UI can show the preference/experience/weather/… breakdown), the cost
+    breakdown, and the ``feasible`` flag. An **infeasible** candidate is kept and shown
+    for transparency — it violated a hard constraint (e.g. over budget) and was excluded
+    from selection, never chosen (api.md); ``exclusion_reason`` says which constraint.
+
+    The flat ``*_score`` / ``*_cost`` properties expose exactly the fields api.md's
+    ranked-candidate entry names, so the backend maps this one-to-one.
+    """
 
     aggregate: CandidateAggregate
     overall_score: float
+    factor_scores: FactorScores
+    costs: CostBreakdown
     feasible: bool
-    total_cost: float | None
     exclusion_reason: ExclusionReason | None = None
+
+    @property
+    def destination(self) -> Destination:
+        return self.aggregate.destination
+
+    @property
+    def total_cost(self) -> float | None:
+        return self.costs.total
+
+    @property
+    def transport_cost(self) -> float | None:
+        return self.costs.transport
+
+    @property
+    def accommodation_cost(self) -> float | None:
+        return self.costs.accommodation
+
+    @property
+    def preference_score(self) -> float:
+        return self.factor_scores.preference
+
+    @property
+    def experience_score(self) -> float:
+        return self.factor_scores.experience
+
+    @property
+    def weather_score(self) -> float:
+        return self.factor_scores.weather
+
+    @property
+    def cost_score(self) -> float:
+        return self.factor_scores.cost
+
+    @property
+    def travel_score(self) -> float:
+        return self.factor_scores.travel
+
+    @property
+    def accommodation_score(self) -> float:
+        return self.factor_scores.accommodation
 
 
 @dataclass(frozen=True)
@@ -209,7 +263,7 @@ class Planner:
             )
         )
 
-        ranked = _rank_candidates(candidates, overall, result)
+        ranked = _rank_candidates(candidates, overall, factor_scores, result)
 
         if result.selected is None or result.selected_index is None:
             logger.info(
@@ -258,6 +312,7 @@ class Planner:
 def _rank_candidates(
     candidates: Sequence[CandidateAggregate],
     overall: Sequence[float],
+    factor_scores: Sequence[FactorScores],
     result,
 ) -> tuple[RankedCandidate, ...]:
     """Rank all candidates by objective score, feasible first (for the comparison page)."""
@@ -265,13 +320,15 @@ def _rank_candidates(
         RankedCandidate(
             aggregate=candidates[i],
             overall_score=overall[i],
+            factor_scores=factor_scores[i],
+            costs=cost_breakdown(candidates[i].scorer_inputs),
             feasible=result.decisions[i].feasible,
-            total_cost=result.decisions[i].total_cost,
             exclusion_reason=result.decisions[i].exclusion_reason,
         )
         for i in range(len(candidates))
     ]
-    # Feasible candidates first, then by descending objective score.
+    # Feasible candidates first, then by descending objective score. The top feasible
+    # entry is therefore the chosen plan (the feasible max-objective candidate).
     ranked.sort(key=lambda r: (not r.feasible, -r.overall_score))
     return tuple(ranked)
 

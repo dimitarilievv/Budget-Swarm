@@ -309,6 +309,45 @@ def accommodation_score(accommodations: Sequence[Accommodation]) -> float:
 # --- magnitude factors (normalized across the candidate set) ----------------
 
 
+@dataclass(frozen=True)
+class CostBreakdown:
+    """The components of a candidate's total EUR trip cost (for the response/comparison).
+
+    ``transport`` is the reach cost; ``accommodation`` is the **median** nightly price of
+    the representative options times the nights (a typical stay); ``activities`` is the
+    sum of the known activity entrance fees. ``total`` mirrors :func:`trip_cost` — it is
+    ``None`` exactly when transport cost is unknown (the trip cannot be costed), and
+    otherwise equals ``transport + accommodation + activities``. A component is ``None``
+    when its data is absent (no accommodation options, no transport).
+    """
+
+    transport: float | None
+    accommodation: float | None
+    activities: float
+    total: float | None
+
+
+def cost_breakdown(candidate: CandidateInputs) -> CostBreakdown:
+    """Break a candidate's trip cost into transport / accommodation / activities.
+
+    The single source of truth behind :func:`trip_cost` and the response's
+    ``cost_breakdown`` / ranked-candidate cost fields. Deterministic.
+    """
+    transport = candidate.transport.cost if candidate.transport is not None else None
+    prices = [a.price_per_night for a in candidate.accommodations if a.price_per_night is not None]
+    accommodation = statistics.median(prices) * max(1, candidate.nights) if prices else None
+    activities = sum(a.cost for a in candidate.activities if a.cost is not None)
+    # Transport cost is required to cost the trip at all (it is the dominant,
+    # distance-driven component); without it the total is unknown, not a cheap partial.
+    if transport is None:
+        total = None
+    else:
+        total = transport + (accommodation or 0.0) + activities
+    return CostBreakdown(
+        transport=transport, accommodation=accommodation, activities=activities, total=total
+    )
+
+
 def trip_cost(candidate: CandidateInputs) -> float | None:
     """Total EUR trip cost: transport + typical accommodation * nights + activities.
 
@@ -320,14 +359,7 @@ def trip_cost(candidate: CandidateInputs) -> float | None:
     representative options — a typical stay) and known activity entrance costs
     (``None`` = free/unknown) are added. Deterministic.
     """
-    if candidate.transport is None or candidate.transport.cost is None:
-        return None
-    total = candidate.transport.cost
-    prices = [a.price_per_night for a in candidate.accommodations if a.price_per_night is not None]
-    if prices:
-        total += statistics.median(prices) * max(1, candidate.nights)
-    total += sum(a.cost for a in candidate.activities if a.cost is not None)
-    return total
+    return cost_breakdown(candidate).total
 
 
 def travel_minutes(candidate: CandidateInputs) -> float | None:
