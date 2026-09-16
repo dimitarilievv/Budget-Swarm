@@ -59,8 +59,13 @@ logger = logging.getLogger(__name__)
 _COST_SCALE = 100
 
 # Objective scores are floats in [0, 1] (BS-069/070). When an objective is supplied
-# (BS-073) they are scaled to integer micro-units for CP-SAT's integer objective.
+# (BS-075) they are scaled to integer micro-units for CP-SAT's integer objective.
 _SCORE_SCALE = 1_000_000
+
+# The score term is multiplied by this before the (much smaller, cents-scale) cost is
+# subtracted, so score always dominates and cost only breaks ties between equal-score
+# candidates. Comfortably keeps the combined objective within 64-bit integer range.
+_COST_TIEBREAK_SCALE = 100_000_000
 
 # Default solve time cap. The destination-selection model is tiny (k ≈ 4-6 booleans),
 # so this is a safety bound, not a tuning knob.
@@ -227,11 +232,18 @@ class Optimizer:
         budget_cents = _to_cents(problem.budget)
         model.Add(sum(_to_cents(d.total_cost) * select[d.index] for d in feasible) <= budget_cents)
 
-        # Optional objective (BS-073 seam): maximize the selected candidate's score.
+        # Optional objective (BS-075): maximize the selected candidate's score, breaking
+        # ties toward the cheaper trip. The score is scaled up by _COST_TIEBREAK_SCALE so
+        # any score difference dominates; cost (in cents) only decides between candidates
+        # of equal score, making an otherwise-arbitrary tie principled and deterministic.
         if problem.objective_scores is not None:
             model.Maximize(
                 sum(
-                    _to_score_units(problem.objective_scores[d.index]) * select[d.index]
+                    (
+                        _to_score_units(problem.objective_scores[d.index]) * _COST_TIEBREAK_SCALE
+                        - _to_cents(d.total_cost)
+                    )
+                    * select[d.index]
                     for d in feasible
                 )
             )

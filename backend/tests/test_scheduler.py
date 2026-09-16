@@ -225,11 +225,12 @@ def test_schedule_is_deterministic():
         (None, None),
         ("", None),
         ("closed", None),
-        ("24/7", (0, 1440)),
-        ("09:00-17:00", (540, 1020)),
-        ("9:00-17:00", (540, 1020)),
-        ("Mo-Su 09:00-18:00", (540, 1080)),
-        ("Mo-Fr 08:00-12:00,13:00-17:00", (480, 1020)),  # span across the lunch gap
+        ("24/7", ((0, 1440),)),
+        ("09:00-17:00", ((540, 1020),)),
+        ("9:00-17:00", ((540, 1020),)),
+        ("Mo-Su 09:00-18:00", ((540, 1080),)),
+        # A lunch-break split yields both windows (not the encompassing span).
+        ("Mo-Fr 08:00-12:00,13:00-17:00", ((480, 720), (780, 1020))),
         ("20:00-02:00", None),  # overnight / close <= open -> ignored
     ],
 )
@@ -356,3 +357,50 @@ def test_weather_conflict_flags_from_profile():
 
 def test_weather_conflict_flags_empty_profile():
     assert weather_conflict_flags(WeatherProfile()) == []
+
+
+# --- multi-window opening hours (lunch-break split) -------------------------
+
+
+def test_activity_placed_inside_one_window_not_the_closed_gap():
+    # Open 09:00–11:00 and 14:00–16:00; a 120-min visit must fill one window exactly,
+    # never the closed 11:00–14:00 gap.
+    act = _activity("Split", minutes=120, opening_hours="09:00-11:00,14:00-16:00")
+    result = ActivityScheduler().schedule([act], days=1)
+    item = result.items[0]
+    assert (item.start_minute, item.end_minute) in {(540, 660), (840, 960)}
+
+
+def test_activity_that_fits_no_window_is_unscheduled():
+    # Two 90-min windows, but the visit needs 120 -> fits neither.
+    act = _activity("TooLong", minutes=120, opening_hours="09:00-10:30,14:00-15:30")
+    result = ActivityScheduler().schedule([act], days=1)
+    assert result.scheduled_count == 0
+    assert act in result.unscheduled
+
+
+# --- transition buffer (travel between activities) --------------------------
+
+
+def test_transition_buffer_charges_travel_between_activities():
+    # 360-min budget, 120-min activities. With no buffer 3 fit; a 60-min buffer means
+    # 120*3 + 60*2 = 480 > 360, so only 2 fit (120*2 + 60 = 300 <= 360).
+    acts = [_activity(n) for n in ("A", "B", "C")]
+    no_buffer = ActivityScheduler(SchedulingPolicy(available_minutes=360)).schedule(acts, days=1)
+    with_buffer = ActivityScheduler(
+        SchedulingPolicy(available_minutes=360, transition_buffer_minutes=60)
+    ).schedule(acts, days=1)
+    assert no_buffer.scheduled_count == 3
+    assert with_buffer.scheduled_count == 2
+
+
+def test_transition_buffer_does_not_penalize_a_single_activity():
+    # A lone activity pays no transition buffer (nothing to travel between).
+    policy = SchedulingPolicy(available_minutes=120, transition_buffer_minutes=60)
+    result = ActivityScheduler(policy).schedule([_activity("Solo", minutes=120)], days=1)
+    assert result.scheduled_count == 1
+
+
+def test_negative_transition_buffer_rejected():
+    with pytest.raises(ValueError, match="transition_buffer_minutes"):
+        SchedulingPolicy(transition_buffer_minutes=-1)

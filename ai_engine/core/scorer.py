@@ -370,6 +370,120 @@ def travel_minutes(candidate: CandidateInputs) -> float | None:
     return float(transport.duration_minutes)
 
 
+# ============================================================================
+# Per-activity valuation + representative accommodation (Phase-6 reconciliation)
+# ============================================================================
+#
+# The optimizer schedules only a subset of a destination's activities. To keep the
+# *most preference-relevant* ones (rather than an arbitrary subset that merely fits the
+# time budget), each activity is valued against the user's preference vector and that
+# value drives the scheduler's selection. The mapping below is deterministic
+# classification logic (an activity's OSM/OpenTripMap category → a preference theme),
+# not ingested data — analogous to the labelled approximation constants elsewhere.
+
+# Baseline value every schedulable activity carries, so an off-theme or uncategorized
+# activity is still worth doing (and fills spare time) rather than being ignored.
+_ACTIVITY_VALUE_BASE = 0.3
+# Value used when preferences or the activity's theme give no signal either way.
+_NEUTRAL_ACTIVITY_VALUE = 0.5
+
+# Preference theme -> substrings that identify it in an activity's free-text category.
+# Matched case-insensitively as substrings, covering the common POI category words.
+_ACTIVITY_THEME_KEYWORDS: Mapping[str, tuple[str, ...]] = {
+    "culture": (
+        "museum",
+        "gallery",
+        "monument",
+        "castle",
+        "historic",
+        "architecture",
+        "church",
+        "cathedral",
+        "palace",
+        "memorial",
+        "theatre",
+        "theater",
+        "cultural",
+        "heritage",
+        "ruins",
+        "archaeolog",
+        "fort",
+        "tower",
+    ),
+    "nature": (
+        "park",
+        "garden",
+        "nature",
+        "beach",
+        "viewpoint",
+        "mountain",
+        "lake",
+        "forest",
+        "natural",
+        "waterfall",
+        "hill",
+        "reserve",
+        "zoo",
+        "botanic",
+    ),
+    "nightlife": ("bar", "club", "nightlife", "pub", "nightclub", "lounge"),
+    "food": ("restaurant", "cafe", "food", "market", "cuisine", "winery", "brewery"),
+    "tourism": ("attraction", "tourism", "landmark", "sightseeing", "tourist", "square"),
+}
+
+
+def _activity_theme(category: str | None) -> str | None:
+    """Classify an activity's category into a preference theme (``None`` if unknown)."""
+    if not category:
+        return None
+    lowered = category.lower()
+    for theme, keywords in _ACTIVITY_THEME_KEYWORDS.items():
+        if any(word in lowered for word in keywords):
+            return theme
+    return None
+
+
+def activity_value(activity: Activity, preferences: PreferenceWeights) -> float:
+    """How well one activity fits the user's preferences, in ``[0, 1]``.
+
+    The activity's category is classified into a preference theme; the value is the
+    theme's share of the user's positive preference weight, lifted onto a
+    ``[_ACTIVITY_VALUE_BASE, 1]`` floor so an off-theme activity still has worth (it can
+    fill spare time) but a preferred-theme activity scores higher. With no usable
+    preferences or an unrecognised category it returns a neutral value. Deterministic.
+    """
+    positive = {k: w for k, w in preferences.items() if w and w > 0 and k in _PREFERENCE_FEATURES}
+    theme = _activity_theme(activity.category)
+    if not positive or theme is None:
+        return _NEUTRAL_ACTIVITY_VALUE
+    share = positive.get(theme, 0.0) / sum(positive.values())
+    return _clamp01(_ACTIVITY_VALUE_BASE + (1.0 - _ACTIVITY_VALUE_BASE) * share)
+
+
+def activity_values(activities: Sequence[Activity], preferences: PreferenceWeights) -> list[float]:
+    """:func:`activity_value` for each activity, aligned to input order."""
+    return [activity_value(a, preferences) for a in activities]
+
+
+def representative_accommodation(
+    accommodations: Sequence[Accommodation],
+) -> Accommodation | None:
+    """Pick the single representative lodging for the plan — a *typical* priced stay.
+
+    Chooses the median-priced option (ties broken toward the better rating), matching
+    the median nightly price :func:`cost_breakdown` uses, so the reported plan's
+    accommodation and its cost are consistent. Returns ``None`` for no options, and the
+    first option when none carry a price. Deterministic.
+    """
+    if not accommodations:
+        return None
+    priced = [a for a in accommodations if a.price_per_night is not None]
+    if not priced:
+        return accommodations[0]
+    ordered = sorted(priced, key=lambda a: (a.price_per_night, -(a.rating or 0.0)))
+    return ordered[len(ordered) // 2]
+
+
 # --- assembly ---------------------------------------------------------------
 
 

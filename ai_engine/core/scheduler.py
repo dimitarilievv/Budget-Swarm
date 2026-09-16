@@ -64,34 +64,35 @@ _TAKE_BASE_VALUE = 1
 _TIME_RANGE = re.compile(r"(\d{1,2}):(\d{2})\s*[-–—]\s*(\d{1,2}):(\d{2})")
 
 
-def parse_opening_hours(text: str | None) -> tuple[int, int] | None:
-    """Parse opening hours into a ``(open_minute, close_minute)`` window, or ``None``.
+def parse_opening_hours(text: str | None) -> tuple[tuple[int, int], ...] | None:
+    """Parse opening hours into the open ``(open_minute, close_minute)`` windows, or ``None``.
 
     Handles the common OSM ``opening_hours`` shapes the POI sources emit — ``"24/7"``,
-    ``"Mo-Su 09:00-18:00"``, a bare ``"09:00-17:00"`` — by extracting the ``HH:MM-HH:MM``
-    clock ranges. Multiple ranges (e.g. a lunch-break split) are approximated by their
-    **encompassing span** ``(earliest open, latest close)``: a single-window model
-    cannot represent a midday gap, so this stays permissive rather than over-constrain.
-    Returns ``None`` when there is no data or nothing parseable — the caller then leaves
-    the activity unconstrained ("opening hours respected *where available*"). Overnight
-    or malformed ranges (close ≤ open) are ignored. Deterministic and pure.
+    ``"Mo-Su 09:00-18:00"``, a bare ``"09:00-17:00"`` — by extracting every
+    ``HH:MM-HH:MM`` clock range. A day with a **lunch-break split**
+    (``"08:00-12:00,13:00-17:00"``) returns *both* windows, so the scheduler can require
+    an activity to fall entirely inside one of them rather than approximating the closed
+    gap away. Windows are returned sorted and de-duplicated. Returns ``None`` when there
+    is no data or nothing parseable — the caller then leaves the activity unconstrained
+    ("opening hours respected *where available*"). Overnight or malformed ranges
+    (close ≤ open) are ignored. Deterministic and pure.
     """
     if not text or not text.strip():
         return None
     lowered = text.lower()
     if "24/7" in lowered or "24/365" in lowered:
-        return (0, _MINUTES_PER_DAY)
-    ranges: list[tuple[int, int]] = []
+        return ((0, _MINUTES_PER_DAY),)
+    ranges: set[tuple[int, int]] = set()
     for match in _TIME_RANGE.finditer(text):
         oh, om, ch, cm = (int(g) for g in match.groups())
         open_min = oh * 60 + om
         close_min = ch * 60 + cm
         if 0 <= open_min < close_min <= _MINUTES_PER_DAY:
-            ranges.append((open_min, close_min))
+            ranges.add((open_min, close_min))
     if not ranges:
         logger.debug("scheduler: no parseable opening hours in %r; leaving unconstrained", text)
         return None
-    return (min(o for o, _ in ranges), max(c for _, c in ranges))
+    return tuple(sorted(ranges))
 
 
 @dataclass(frozen=True)
@@ -102,13 +103,18 @@ class SchedulingPolicy:
     from midnight). ``available_minutes`` is the per-day activity time budget; it
     defaults to the full window length and may be set smaller to model a more relaxed
     pace. ``default_activity_minutes`` is used for activities whose duration was never
-    estimated.
+    estimated. ``transition_buffer_minutes`` is the travel/transition time assumed
+    *between* consecutive activities on a day: it is charged against the day's time
+    budget (each extra activity on a day consumes one buffer), so a packed day leaves
+    room to actually move between sights. It is a per-day budget accounting, not a literal
+    gap enforced between time slots; ``0`` (the default) keeps the original behaviour.
     """
 
     day_start_minute: int = _DEFAULT_DAY_START
     day_end_minute: int = _DEFAULT_DAY_END
     available_minutes: int | None = None
     default_activity_minutes: int = _DEFAULT_ACTIVITY_MINUTES
+    transition_buffer_minutes: int = 0
     max_time_seconds: float = 5.0
 
     def __post_init__(self) -> None:
@@ -120,6 +126,10 @@ class SchedulingPolicy:
         if self.default_activity_minutes < 1:
             raise ValueError(
                 f"default_activity_minutes must be >= 1, got {self.default_activity_minutes!r}"
+            )
+        if self.transition_buffer_minutes < 0:
+            raise ValueError(
+                f"transition_buffer_minutes must be >= 0, got {self.transition_buffer_minutes!r}"
             )
         window = self.day_end_minute - self.day_start_minute
         if self.available_minutes is not None and not (1 <= self.available_minutes <= window):
@@ -227,6 +237,10 @@ class ActivityScheduler:
             return Schedule(status=SolveStatus.OPTIMAL, items=(), unscheduled=(), days=days)
 
         conflict_days = frozenset(d for d, c in enumerate(weather_conflicts or ()) if c)
+        has_outdoor = any(a.indoor_outdoor == IndoorOutdoor.OUTDOOR for a in activities)
+        # The weather constraint only bites when a conflict day and an outdoor activity
+        # both exist; otherwise the reshuffle would be identical to the baseline.
+        weather_active = bool(conflict_days) and has_outdoor
 
         # Weather-naive baseline: what the plan would be ignoring the forecast. This is
         # the reference the reschedule is measured against (technical-doc §12).
@@ -234,10 +248,10 @@ class ActivityScheduler:
             activities, days, weights, forbidden_outdoor_days=frozenset(), hint=None
         )
 
-        if not conflict_days:
-            return self._build_schedule(
-                activities, days, base_status, base_place, conflict_days, {}
-            )
+        if not weather_active:
+            # No conflict, or nothing outdoor to move — the baseline is the final plan and
+            # nothing was rescheduled (pass no conflict days so nothing is flagged).
+            return self._build_schedule(activities, days, base_status, base_place, frozenset(), {})
 
         # Reshuffle: forbid outdoor activities on conflict days and re-solve, warm-started
         # from the baseline so unaffected items stay put and only the forced moves change.
@@ -266,6 +280,7 @@ class ActivityScheduler:
         """
         policy = self._policy
         budget = policy.budget_minutes
+        buffer = policy.transition_buffer_minutes
         model = cp_model.CpModel()
 
         take: dict[int, cp_model.IntVar] = {}
@@ -281,27 +296,23 @@ class ActivityScheduler:
             take[ai] = take_var
             is_outdoor = activity.indoor_outdoor == IndoorOutdoor.OUTDOOR
 
-            # Earliest start / latest end for this activity within a day, tightened by
-            # its opening hours when known.
-            lo, hi = policy.day_start_minute, policy.day_end_minute
-            window = parse_opening_hours(activity.opening_hours)
-            if window is not None:
-                lo = max(lo, window[0])
-                hi = min(hi, window[1])
-
-            if dur > budget or hi - lo < dur:
-                # Cannot be placed on any day (too long, or opening window too small).
+            # The open windows this activity's duration can actually fit into today,
+            # from its opening hours (possibly several — a lunch-break split).
+            windows = self._activity_windows(activity, dur)
+            if dur > budget or not windows:
+                # Cannot be placed on any day (too long, or no open window fits it).
                 model.Add(take_var == 0)
                 logger.debug(
-                    "scheduler: %r cannot be placed (dur=%d, window=[%d,%d], budget=%d)",
+                    "scheduler: %r cannot be placed (dur=%d, windows=%s, budget=%d)",
                     activity.name,
                     dur,
-                    lo,
-                    hi,
+                    windows,
                     budget,
                 )
                 continue
 
+            lo = min(w[0] for w in windows)
+            hi = max(w[1] for w in windows)
             day_presence = []
             for d in range(days):
                 pres = model.NewBoolVar(f"pres_{ai}_{d}")
@@ -311,6 +322,16 @@ class ActivityScheduler:
                 start = model.NewIntVar(lo, hi - dur, f"start_{ai}_{d}")
                 end = model.NewIntVar(lo + dur, hi, f"end_{ai}_{d}")
                 interval = model.NewOptionalIntervalVar(start, dur, end, pres, f"iv_{ai}_{d}")
+                # With a lunch-break split, the visit must fall entirely inside *one* of
+                # the open windows, not the closed gap between them.
+                if len(windows) > 1:
+                    selectors = []
+                    for wi, (wlo, whi) in enumerate(windows):
+                        sel = model.NewBoolVar(f"win_{ai}_{d}_{wi}")
+                        model.Add(start >= wlo).OnlyEnforceIf(sel)
+                        model.Add(start + dur <= whi).OnlyEnforceIf(sel)
+                        selectors.append(sel)
+                    model.Add(sum(selectors) == pres)
                 intervals_by_day[d].append(interval)
                 presence[(ai, d)] = pres
                 starts[(ai, d)] = start
@@ -323,15 +344,17 @@ class ActivityScheduler:
             if day_intervals:
                 model.AddNoOverlap(day_intervals)
 
-        # Per-day time budget: the placed durations on a day must fit the budget.
+        # Per-day time budget: the placed durations, plus a transition buffer for each
+        # activity beyond the first, must fit the budget. Charging (dur + buffer) and
+        # allowing (budget + buffer) yields sum(dur) + (count - 1) * buffer <= budget.
         for d in range(days):
             terms = [
-                presence[(ai, d)] * durations[ai]
+                presence[(ai, d)] * (durations[ai] + buffer)
                 for ai in range(len(activities))
                 if (ai, d) in presence
             ]
             if terms:
-                model.Add(sum(terms) <= budget)
+                model.Add(sum(terms) <= budget + buffer)
 
         # Objective: maximize the total value of the activities done (each taken one
         # also worth a small base value so the schedule fills available time).
@@ -380,6 +403,19 @@ class ActivityScheduler:
 
         result_status = SolveStatus.OPTIMAL if status == cp_model.OPTIMAL else SolveStatus.FEASIBLE
         return result_status, placement
+
+    def _activity_windows(self, activity: Activity, dur: int) -> list[tuple[int, int]]:
+        """The open windows within the day that can fit ``dur`` for this activity.
+
+        Clips the parsed opening-hours windows to the policy's day window and keeps only
+        those wide enough for the visit. An activity with no (or unparseable) hours gets
+        the full day window. An empty result means it cannot be placed at all.
+        """
+        policy = self._policy
+        parsed = parse_opening_hours(activity.opening_hours)
+        raw = parsed if parsed is not None else ((policy.day_start_minute, policy.day_end_minute),)
+        clipped = ((max(policy.day_start_minute, o), min(policy.day_end_minute, c)) for o, c in raw)
+        return [(lo, hi) for lo, hi in clipped if hi - lo >= dur]
 
     def _build_schedule(
         self,
