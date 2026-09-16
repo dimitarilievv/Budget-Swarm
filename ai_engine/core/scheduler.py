@@ -12,6 +12,11 @@ subject to the scheduling hard constraints:
 * **Opening hours where known** — when an activity carries parseable opening hours, it
   may only be placed inside that window; an activity with no (or unparseable) hours is
   unconstrained ("respected *where data exists*").
+* **Weather (BS-074)** — outdoor activities may not be scheduled on a forecast
+  weather-conflict day (technical-doc §12). When any day conflicts the scheduler
+  **replans**: it re-solves against a weather-naive baseline and marks each item that
+  the weather logic moved off a bad day, or swapped in to replace one, as
+  :attr:`ScheduledActivity.was_rescheduled`.
 
 Like the destination model this is deterministic and inspectable (no LLM), and it is
 kept **separate** from destination selection so each concern is independently testable;
@@ -36,7 +41,7 @@ from dataclasses import dataclass
 from ortools.sat.python import cp_model
 
 from ai_engine.core.optimizer import SolveStatus
-from ai_engine.domain import Activity
+from ai_engine.domain import Activity, IndoorOutdoor, WeatherProfile
 
 logger = logging.getLogger(__name__)
 
@@ -133,12 +138,19 @@ class SchedulingPolicy:
 
 @dataclass(frozen=True)
 class ScheduledActivity:
-    """One activity placed on the itinerary: which day and clock window it occupies."""
+    """One activity placed on the itinerary: which day and clock window it occupies.
+
+    ``was_rescheduled`` records that the weather logic moved this item off a
+    weather-conflict day or swapped it in as a clear-day replacement (technical-doc
+    §12; it maps to the ``trip_activities.was_rescheduled`` column). It is ``False``
+    for an ordinary placement and whenever no weather conflict applied.
+    """
 
     activity: Activity
     day: int  # 0-based day index within the stay
     start_minute: int  # clock minutes from midnight
     end_minute: int
+    was_rescheduled: bool = False
 
 
 @dataclass(frozen=True)
@@ -180,14 +192,26 @@ class ActivityScheduler:
         days: int,
         *,
         weights: Sequence[float] | None = None,
+        weather_conflicts: Sequence[bool] | None = None,
     ) -> Schedule:
         """Select and place activities across ``days`` under the scheduling constraints.
 
         ``weights`` (optional) is the per-activity value used to prefer the most
         worthwhile activities when time is scarce; omitted means every activity is
-        equally valuable (maximize how many are done). Never raises on infeasible data:
-        an activity that cannot fit any day (too long, or an opening window narrower
-        than its duration) is simply returned unscheduled.
+        equally valuable (maximize how many are done).
+
+        ``weather_conflicts`` (optional) is one flag per day (aligned to the day index,
+        length ``days``) marking a day unfit for outdoor activities (WeatherAgent's
+        deterministic conflict flag, BS-067/068). When any day conflicts the scheduler
+        **replans** (technical-doc §12): outdoor activities are forbidden on conflict
+        days, and each item that the weather logic moved off a bad day — or swapped in
+        to replace one — is marked :attr:`ScheduledActivity.was_rescheduled`. Indoor and
+        mixed activities are unaffected. Derive the flags from a
+        :class:`~ai_engine.domain.WeatherProfile` with :func:`weather_conflict_flags`.
+
+        Never raises on infeasible data: an activity that cannot fit any day (too long,
+        an opening window narrower than its duration, or outdoor with every day a
+        conflict) is simply returned unscheduled.
         """
         if days < 1:
             raise ValueError(f"days must be >= 1, got {days!r}")
@@ -195,15 +219,56 @@ class ActivityScheduler:
             raise ValueError(
                 f"weights length ({len(weights)}) must match activities ({len(activities)})"
             )
+        if weather_conflicts is not None and len(weather_conflicts) != days:
+            raise ValueError(
+                f"weather_conflicts length ({len(weather_conflicts)}) must match days ({days})"
+            )
         if not activities:
             return Schedule(status=SolveStatus.OPTIMAL, items=(), unscheduled=(), days=days)
 
+        conflict_days = frozenset(d for d, c in enumerate(weather_conflicts or ()) if c)
+
+        # Weather-naive baseline: what the plan would be ignoring the forecast. This is
+        # the reference the reschedule is measured against (technical-doc §12).
+        base_status, base_place = self._solve_once(
+            activities, days, weights, forbidden_outdoor_days=frozenset(), hint=None
+        )
+
+        if not conflict_days:
+            return self._build_schedule(
+                activities, days, base_status, base_place, conflict_days, {}
+            )
+
+        # Reshuffle: forbid outdoor activities on conflict days and re-solve, warm-started
+        # from the baseline so unaffected items stay put and only the forced moves change.
+        status, place = self._solve_once(
+            activities, days, weights, forbidden_outdoor_days=conflict_days, hint=base_place
+        )
+        base_days = {ai: day for ai, (day, _s, _e) in base_place.items()}
+        logger.info("scheduler: replanned around %d weather-conflict day(s)", len(conflict_days))
+        return self._build_schedule(activities, days, status, place, conflict_days, base_days)
+
+    def _solve_once(
+        self,
+        activities: Sequence[Activity],
+        days: int,
+        weights: Sequence[float] | None,
+        *,
+        forbidden_outdoor_days: frozenset[int],
+        hint: dict[int, tuple[int, int, int]] | None,
+    ) -> tuple[SolveStatus, dict[int, tuple[int, int, int]]]:
+        """Build and solve one scheduling model; return the status and placement map.
+
+        The placement maps an activity index to ``(day, start_minute, end_minute)`` for
+        each scheduled activity. ``forbidden_outdoor_days`` are days on which outdoor
+        activities may not be placed (the weather constraint); ``hint`` warm-starts the
+        solver from a prior placement so a re-solve perturbs the plan minimally.
+        """
         policy = self._policy
         budget = policy.budget_minutes
         model = cp_model.CpModel()
 
         take: dict[int, cp_model.IntVar] = {}
-        # (activity_index, day) -> (presence bool, start var); intervals grouped per day.
         presence: dict[tuple[int, int], cp_model.IntVar] = {}
         starts: dict[tuple[int, int], cp_model.IntVar] = {}
         durations: dict[int, int] = {}
@@ -214,6 +279,7 @@ class ActivityScheduler:
             durations[ai] = dur
             take_var = model.NewBoolVar(f"take_{ai}")
             take[ai] = take_var
+            is_outdoor = activity.indoor_outdoor == IndoorOutdoor.OUTDOOR
 
             # Earliest start / latest end for this activity within a day, tightened by
             # its opening hours when known.
@@ -239,6 +305,9 @@ class ActivityScheduler:
             day_presence = []
             for d in range(days):
                 pres = model.NewBoolVar(f"pres_{ai}_{d}")
+                # Weather constraint: an outdoor activity may not sit on a conflict day.
+                if is_outdoor and d in forbidden_outdoor_days:
+                    model.Add(pres == 0)
                 start = model.NewIntVar(lo, hi - dur, f"start_{ai}_{d}")
                 end = model.NewIntVar(lo + dur, hi, f"end_{ai}_{d}")
                 interval = model.NewOptionalIntervalVar(start, dur, end, pres, f"iv_{ai}_{d}")
@@ -274,6 +343,14 @@ class ActivityScheduler:
             )
         )
 
+        # Warm start from a prior placement so a re-solve keeps unaffected items put.
+        if hint:
+            for ai, (day, start_minute, _end) in hint.items():
+                if (ai, day) in presence:
+                    model.AddHint(presence[(ai, day)], 1)
+                    model.AddHint(starts[(ai, day)], start_minute)
+                    model.AddHint(take[ai], 1)
+
         solver = cp_model.CpSolver()
         solver.parameters.num_search_workers = 1  # deterministic
         solver.parameters.random_seed = 0
@@ -288,48 +365,88 @@ class ActivityScheduler:
                 len(activities),
                 days,
             )
-            return Schedule(
-                status=SolveStatus.INFEASIBLE,
-                items=(),
-                unscheduled=tuple(activities),
-                days=days,
-            )
+            return SolveStatus.INFEASIBLE, {}
 
-        items: list[ScheduledActivity] = []
-        unscheduled: list[Activity] = []
-        for ai, activity in enumerate(activities):
+        placement: dict[int, tuple[int, int, int]] = {}
+        for ai in range(len(activities)):
             placed_day = next(
                 (d for d in range(days) if (ai, d) in presence and solver.Value(presence[(ai, d)])),
                 None,
             )
             if placed_day is None:
-                unscheduled.append(activity)
                 continue
             start_minute = int(solver.Value(starts[(ai, placed_day)]))
+            placement[ai] = (placed_day, start_minute, start_minute + durations[ai])
+
+        result_status = SolveStatus.OPTIMAL if status == cp_model.OPTIMAL else SolveStatus.FEASIBLE
+        return result_status, placement
+
+    def _build_schedule(
+        self,
+        activities: Sequence[Activity],
+        days: int,
+        status: SolveStatus,
+        placement: dict[int, tuple[int, int, int]],
+        conflict_days: frozenset[int],
+        base_days: dict[int, int],
+    ) -> Schedule:
+        """Assemble the :class:`Schedule` from a solved placement, flagging reschedules.
+
+        An item is ``was_rescheduled`` when the weather logic caused it: an outdoor
+        activity whose weather-naive baseline day was a conflict day (it had to move or
+        drop), or an activity swapped in that the baseline had not scheduled at all.
+        """
+        if status is SolveStatus.INFEASIBLE:
+            return Schedule(status=status, items=(), unscheduled=tuple(activities), days=days)
+
+        items: list[ScheduledActivity] = []
+        unscheduled: list[Activity] = []
+        for ai, activity in enumerate(activities):
+            if ai not in placement:
+                unscheduled.append(activity)
+                continue
+            day, start_minute, end_minute = placement[ai]
+            base_day = base_days.get(ai)
+            outdoor = activity.indoor_outdoor == IndoorOutdoor.OUTDOOR
+            was_rescheduled = bool(conflict_days) and (
+                (outdoor and base_day is not None and base_day in conflict_days) or base_day is None
+            )
             items.append(
                 ScheduledActivity(
                     activity=activity,
-                    day=placed_day,
+                    day=day,
                     start_minute=start_minute,
-                    end_minute=start_minute + durations[ai],
+                    end_minute=end_minute,
+                    was_rescheduled=was_rescheduled,
                 )
             )
 
         items.sort(key=lambda it: (it.day, it.start_minute))
-        result_status = SolveStatus.OPTIMAL if status == cp_model.OPTIMAL else SolveStatus.FEASIBLE
         logger.info(
-            "scheduler: placed %d/%d activit(y/ies) across %d day(s) (status=%s)",
+            "scheduler: placed %d/%d activit(y/ies) across %d day(s) (status=%s, rescheduled=%d)",
             len(items),
             len(activities),
             days,
-            result_status.value,
+            status.value,
+            sum(1 for it in items if it.was_rescheduled),
         )
         return Schedule(
-            status=result_status,
+            status=status,
             items=tuple(items),
             unscheduled=tuple(unscheduled),
             days=days,
         )
+
+
+def weather_conflict_flags(weather: WeatherProfile) -> list[bool]:
+    """The per-day outdoor-conflict flags of a forecast, aligned to the stay's day index.
+
+    A convenience bridge from the domain :class:`~ai_engine.domain.WeatherProfile`
+    (BS-067) to the ``weather_conflicts`` argument of :meth:`ActivityScheduler.schedule`:
+    returns ``[day.weather_conflict for day in weather.days]``. An empty (weather-
+    unchecked) profile yields ``[]``, i.e. no constraint.
+    """
+    return [day.weather_conflict for day in weather.days]
 
 
 def _weight_units(weight: float) -> int:

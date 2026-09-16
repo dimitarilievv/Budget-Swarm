@@ -21,6 +21,7 @@ from .scheduler import (
     ScheduledActivity,
     SchedulingPolicy,
     parse_opening_hours,
+    weather_conflict_flags,
 )
 
 __all__ = [
@@ -37,4 +38,5 @@ __all__ = [
     "ScheduledActivity",
     "SchedulingPolicy",
     "parse_opening_hours",
+    "weather_conflict_flags",
 ]
