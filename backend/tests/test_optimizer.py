@@ -197,6 +197,14 @@ def test_objective_selects_highest_scoring_feasible_candidate():
     assert result.selected.destination.city == "B"
 
 
+def test_equal_scores_break_the_tie_toward_the_cheaper_trip():
+    cheap = _candidate("Cheap", transport_cost=100.0)
+    pricey = _candidate("Pricey", transport_cost=400.0)
+    # Identical objective scores -> the cheaper trip must win the tie.
+    result = Optimizer().solve(_problem([cheap, pricey], scores=[0.5, 0.5]))
+    assert result.selected is cheap
+
+
 def test_objective_never_selects_an_infeasible_candidate():
     cheap = _candidate("Cheap", transport_cost=100.0)
     pricey = _candidate("Pricey", transport_cost=9000.0)  # over budget

@@ -49,19 +49,34 @@ from ai_engine.core.scheduler import (
 )
 from ai_engine.core.scorer import (
     DEFAULT_WEIGHTS,
+    CostBreakdown,
+    FactorScores,
     FactorWeights,
     PreferenceWeights,
+    activity_values,
     compute_factor_scores,
+    cost_breakdown,
+    experience_score,
+    representative_accommodation,
     score_candidates,
 )
 from ai_engine.domain import (
     Accommodation,
     Activity,
     Destination,
+    QualityFlag,
     TransportMode,
     TransportOption,
     WeatherProfile,
 )
+
+# How strongly data-quality degradation lowers a candidate's objective score: a soft
+# deduction per estimated/missing part, so an honest-but-firm candidate is preferred
+# over an equally attractive one built on estimates (technical-doc §22, ADR-005). The
+# total deduction per candidate is capped so provenance nudges the ranking, never
+# dominates it. ``0`` disables quality penalties entirely.
+_DEFAULT_QUALITY_PENALTY_WEIGHT = 0.03
+_MAX_QUALITY_PENALTY = 0.30
 
 if TYPE_CHECKING:  # pragma: no cover - typing only, avoids a core -> agents runtime dep
     from ai_engine.agents.coordinator_agent import CandidateAggregate
@@ -99,6 +114,7 @@ class PlanRequest:
     duration_days: int | None = None
     factor_weights: FactorWeights = DEFAULT_WEIGHTS
     penalties: Sequence[float] | None = None
+    quality_penalty_weight: float = _DEFAULT_QUALITY_PENALTY_WEIGHT
     scheduling_policy: SchedulingPolicy | None = None
 
     def __post_init__(self) -> None:
@@ -106,6 +122,10 @@ class PlanRequest:
             raise ValueError(f"budget must be non-negative, got {self.budget!r}")
         if self.nights < 1:
             raise ValueError(f"nights must be >= 1, got {self.nights!r}")
+        if self.quality_penalty_weight < 0:
+            raise ValueError(
+                f"quality_penalty_weight must be non-negative, got {self.quality_penalty_weight!r}"
+            )
         object.__setattr__(
             self,
             "transport_mode",
@@ -128,34 +148,97 @@ class PlanRequest:
 
 @dataclass(frozen=True)
 class RankedCandidate:
-    """A candidate's standing: its objective score and feasibility (for the comparison page)."""
+    """A candidate's standing for the comparison page (api.md ``ranked_candidates``).
+
+    Carries the objective ``overall_score``, the full per-factor :class:`FactorScores`
+    (so the UI can show the preference/experience/weather/… breakdown), the cost
+    breakdown, and the ``feasible`` flag. An **infeasible** candidate is kept and shown
+    for transparency — it violated a hard constraint (e.g. over budget) and was excluded
+    from selection, never chosen (api.md); ``exclusion_reason`` says which constraint.
+
+    The flat ``*_score`` / ``*_cost`` properties expose exactly the fields api.md's
+    ranked-candidate entry names, so the backend maps this one-to-one.
+    """
 
     aggregate: CandidateAggregate
     overall_score: float
+    factor_scores: FactorScores
+    costs: CostBreakdown
     feasible: bool
-    total_cost: float | None
     exclusion_reason: ExclusionReason | None = None
+
+    @property
+    def destination(self) -> Destination:
+        return self.aggregate.destination
+
+    @property
+    def total_cost(self) -> float | None:
+        return self.costs.total
+
+    @property
+    def transport_cost(self) -> float | None:
+        return self.costs.transport
+
+    @property
+    def accommodation_cost(self) -> float | None:
+        return self.costs.accommodation
+
+    @property
+    def preference_score(self) -> float:
+        return self.factor_scores.preference
+
+    @property
+    def experience_score(self) -> float:
+        return self.factor_scores.experience
+
+    @property
+    def weather_score(self) -> float:
+        return self.factor_scores.weather
+
+    @property
+    def cost_score(self) -> float:
+        return self.factor_scores.cost
+
+    @property
+    def travel_score(self) -> float:
+        return self.factor_scores.travel
+
+    @property
+    def accommodation_score(self) -> float:
+        return self.factor_scores.accommodation
 
 
 @dataclass(frozen=True)
 class OptimalPlan:
     """The extracted optimal feasible plan (technical-doc §13 step 7).
 
-    The chosen destination and everything about the stay: transport, accommodations,
-    the ordered weather-aware ``itinerary`` (each item carrying its day/time and
-    ``was_rescheduled`` flag), plus any activities that did not fit. ``overall_score`` is
-    the chosen candidate's objective value — the very number the solver maximized — and
+    The chosen destination and everything about the stay: transport, the single
+    representative ``accommodation`` (plus all ``accommodations`` considered), the ordered
+    weather-aware ``itinerary`` (each item carrying its day/time and ``was_rescheduled``
+    flag), and any activities that did not fit.
+
+    Crucially, ``total_cost`` / ``cost_breakdown`` are the plan's **realized** cost — the
+    chosen accommodation for the nights plus only the *scheduled* activities — not the
+    pre-schedule budget proxy, so the number reported matches the itinerary handed back.
+    ``experience_score`` is likewise recomputed from the scheduled activities.
+    ``overall_score`` remains the objective value the solver maximized (ranking is on the
+    proxy; the realized figures are for reporting). ``degraded_sources`` names the parts
+    of the chosen plan that are estimated or missing (for ``meta.degraded_sources``), and
     ``ranked_candidates`` lists every candidate by score for the comparison page.
     """
 
     destination: Destination
     transport: TransportOption
+    accommodation: Accommodation | None
     accommodations: tuple[Accommodation, ...]
     itinerary: tuple[ScheduledActivity, ...]
     unscheduled_activities: tuple[Activity, ...]
     weather: WeatherProfile | None
     total_cost: float
+    cost_breakdown: CostBreakdown
     overall_score: float
+    experience_score: float
+    degraded_sources: tuple[str, ...]
     ranked_candidates: tuple[RankedCandidate, ...]
     status: SolveStatus
 
@@ -188,14 +271,19 @@ class Planner:
             raise NoPlanAvailableError("no candidate destinations were supplied")
 
         # 1. Score: factor scores -> one weighted, penalty-adjusted overall score each.
+        # Penalties combine any caller-supplied ones with data-quality deductions, so an
+        # estimate-heavy candidate is gently down-ranked (technical-doc §22).
         factor_scores = compute_factor_scores(
             [c.scorer_inputs for c in candidates], weights=request.preferences
+        )
+        penalties = _effective_penalties(
+            candidates, request.penalties, request.quality_penalty_weight
         )
         overall = score_candidates(
             factor_scores,
             weights=request.factor_weights,
             preferences=request.preferences,
-            penalties=request.penalties,
+            penalties=penalties,
         )
 
         # 2. Objective + solve: the overall scores ARE the objective (technical-doc §15.2).
@@ -209,7 +297,7 @@ class Planner:
             )
         )
 
-        ranked = _rank_candidates(candidates, overall, result)
+        ranked = _rank_candidates(candidates, overall, factor_scores, result)
 
         if result.selected is None or result.selected_index is None:
             logger.info(
@@ -223,24 +311,41 @@ class Planner:
         chosen = result.selected
         chosen_index = result.selected_index
 
-        # 3. Schedule the chosen destination's activities into a weather-aware itinerary.
+        # 3. Schedule the chosen destination's activities into a weather-aware itinerary,
+        # keeping the most preference-relevant activities when time is scarce.
         scheduler = self._scheduler or ActivityScheduler(request.scheduling_policy)
         days = request.duration_days or request.nights
         conflicts = _aligned_conflicts(chosen.weather, days)
-        schedule = scheduler.schedule(chosen.activities, days, weather_conflicts=conflicts)
+        weights = activity_values(chosen.activities, request.preferences)
+        schedule = scheduler.schedule(
+            chosen.activities, days, weights=weights, weather_conflicts=conflicts
+        )
 
-        # 4. Extract the optimal plan. Transport is guaranteed present (feasibility
-        # required a costed transport option).
+        # 4. Extract the optimal plan with the plan's *realized* cost and experience —
+        # the chosen accommodation for the nights plus only the scheduled activities — so
+        # the reported figures match the itinerary handed back. Transport is guaranteed
+        # present (feasibility required a costed transport option).
         assert chosen.transport is not None  # feasibility invariant (BS-072)
+        accommodation = representative_accommodation(chosen.accommodations)
+        scheduled_activities = [it.activity for it in schedule.items]
+        realized_costs = _realized_cost(
+            chosen.transport, accommodation, scheduled_activities, request.nights
+        )
+        realized_experience = experience_score(scheduled_activities, request.nights)
+
         plan = OptimalPlan(
             destination=chosen.destination,
             transport=chosen.transport,
+            accommodation=accommodation,
             accommodations=chosen.accommodations,
             itinerary=schedule.items,
             unscheduled_activities=schedule.unscheduled,
             weather=chosen.weather,
-            total_cost=result.total_cost if result.total_cost is not None else 0.0,
+            total_cost=realized_costs.total if realized_costs.total is not None else 0.0,
+            cost_breakdown=realized_costs,
             overall_score=overall[chosen_index],
+            experience_score=realized_experience,
+            degraded_sources=_degraded_sources(chosen),
             ranked_candidates=ranked,
             status=result.status,
         )
@@ -258,6 +363,7 @@ class Planner:
 def _rank_candidates(
     candidates: Sequence[CandidateAggregate],
     overall: Sequence[float],
+    factor_scores: Sequence[FactorScores],
     result,
 ) -> tuple[RankedCandidate, ...]:
     """Rank all candidates by objective score, feasible first (for the comparison page)."""
@@ -265,15 +371,89 @@ def _rank_candidates(
         RankedCandidate(
             aggregate=candidates[i],
             overall_score=overall[i],
+            factor_scores=factor_scores[i],
+            costs=cost_breakdown(candidates[i].scorer_inputs),
             feasible=result.decisions[i].feasible,
-            total_cost=result.decisions[i].total_cost,
             exclusion_reason=result.decisions[i].exclusion_reason,
         )
         for i in range(len(candidates))
     ]
-    # Feasible candidates first, then by descending objective score.
+    # Feasible candidates first, then by descending objective score. The top feasible
+    # entry is therefore the chosen plan (the feasible max-objective candidate).
     ranked.sort(key=lambda r: (not r.feasible, -r.overall_score))
     return tuple(ranked)
+
+
+def _effective_penalties(
+    candidates: Sequence[CandidateAggregate],
+    explicit: Sequence[float] | None,
+    quality_weight: float,
+) -> list[float] | None:
+    """Combine caller-supplied penalties with data-quality deductions (per candidate).
+
+    Each candidate's quality penalty grows with its estimated/cached/missing parts
+    (missing worst, cached mildest) and is capped at :data:`_MAX_QUALITY_PENALTY` so
+    provenance nudges the ranking without dominating it. Returns ``None`` (no penalties)
+    only when there are neither explicit penalties nor a positive quality weight.
+    """
+    quality = (
+        [_quality_penalty(c, quality_weight) for c in candidates] if quality_weight > 0 else None
+    )
+    if explicit is None and quality is None:
+        return None
+    base = list(explicit) if explicit is not None else [0.0] * len(candidates)
+    if quality is None:
+        return base
+    return [b + q for b, q in zip(base, quality, strict=True)]
+
+
+def _quality_penalty(aggregate: CandidateAggregate, weight: float) -> float:
+    """A soft deduction reflecting how estimated/incomplete this candidate's data is."""
+    estimated = sum(1 for f in aggregate.quality_flags.values() if f == QualityFlag.ESTIMATED)
+    cached = sum(1 for f in aggregate.quality_flags.values() if f == QualityFlag.CACHED)
+    missing = len(aggregate.degraded)
+    penalty = weight * (missing + estimated + 0.5 * cached)
+    return min(penalty, _MAX_QUALITY_PENALTY)
+
+
+def _realized_cost(
+    transport: TransportOption,
+    accommodation: Accommodation | None,
+    scheduled_activities: Sequence[Activity],
+    nights: int,
+) -> CostBreakdown:
+    """The plan's actual cost: transport + the chosen lodging × nights + scheduled fees.
+
+    Unlike the pre-schedule proxy (median lodging, *all* activities) this counts the one
+    accommodation actually reported and only the activities that made the itinerary, so
+    the number shown to the user matches the plan.
+    """
+    transport_cost = transport.cost
+    lodging = (
+        accommodation.price_per_night * max(1, nights)
+        if accommodation is not None and accommodation.price_per_night is not None
+        else None
+    )
+    activities = sum(a.cost for a in scheduled_activities if a.cost is not None)
+    total = None if transport_cost is None else transport_cost + (lodging or 0.0) + activities
+    return CostBreakdown(
+        transport=transport_cost, accommodation=lodging, activities=activities, total=total
+    )
+
+
+def _degraded_sources(aggregate: CandidateAggregate) -> tuple[str, ...]:
+    """Names of the chosen plan's estimated/missing parts, e.g. ``"transport:estimated"``.
+
+    Feeds the response's ``meta.degraded_sources`` (api.md) so the UI is honest about
+    which figures came through a fallback. Sorted and de-duplicated.
+    """
+    sources = {
+        f"{part}:{flag.value}"
+        for part, flag in aggregate.quality_flags.items()
+        if flag != QualityFlag.REAL
+    }
+    sources.update(f"{part}:missing" for part in aggregate.degraded)
+    return tuple(sorted(sources))
 
 
 def _aligned_conflicts(weather: WeatherProfile | None, days: int) -> list[bool] | None:

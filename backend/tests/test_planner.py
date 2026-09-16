@@ -110,7 +110,8 @@ def test_objective_selects_highest_overall_score():
 def test_overall_score_matches_scoring_model():
     cands = [_candidate("A", culture=0.2), _candidate("B", culture=0.8)]
     prefs = {"culture": 1.0}
-    req = _request(cands, preferences=prefs)
+    # Disable the quality-penalty layer to isolate the pure scoring model here.
+    req = _request(cands, preferences=prefs, quality_penalty_weight=0.0)
     plan = Planner().plan(req)
 
     # Recompute the scoring model independently and compare the chosen score.
@@ -174,6 +175,41 @@ def test_ranked_candidates_feasible_first_by_score():
     assert plan.ranked_candidates[-1].exclusion_reason is ExclusionReason.OVER_BUDGET
 
 
+def test_ranked_candidate_exposes_scores_costs_and_feasible_flag():
+    # One feasible, one over-budget; both appear with full per-factor + cost detail.
+    cheap = _candidate("Cheap", transport_cost=100.0, nightly=50.0, nights=3, culture=0.6)
+    pricey = _candidate("Pricey", transport_cost=9000.0, culture=0.9)
+    plan = Planner().plan(_request([cheap, pricey], budget=1000.0, preferences={"culture": 1.0}))
+
+    by_city = {rc.destination.city: rc for rc in plan.ranked_candidates}
+    cheap_rc = by_city["Cheap"]
+    # Scores present (api.md fields).
+    assert 0.0 <= cheap_rc.overall_score <= 1.0
+    assert cheap_rc.preference_score == pytest.approx(0.6)  # culture-only preference
+    assert 0.0 <= cheap_rc.experience_score <= 1.0
+    assert 0.0 <= cheap_rc.weather_score <= 1.0
+    # Cost breakdown present and consistent: transport 100 + median(50)*3 = 250.
+    assert cheap_rc.transport_cost == pytest.approx(100.0)
+    assert cheap_rc.accommodation_cost == pytest.approx(150.0)
+    assert cheap_rc.total_cost == pytest.approx(250.0)
+    assert cheap_rc.feasible is True
+    # The infeasible one still carries its scores/costs (shown for transparency).
+    assert by_city["Pricey"].feasible is False
+    assert by_city["Pricey"].total_cost == pytest.approx(9150.0)
+
+
+def test_chosen_plan_is_the_top_feasible_ranked_candidate():
+    cands = [
+        _candidate("A", culture=0.3),
+        _candidate("B", culture=0.9),
+        _candidate("C", culture=0.5),
+    ]
+    plan = Planner().plan(_request(cands, preferences={"culture": 1.0}))
+    top_feasible = next(rc for rc in plan.ranked_candidates if rc.feasible)
+    assert plan.destination.city == top_feasible.destination.city
+    assert plan.overall_score == pytest.approx(top_feasible.overall_score)
+
+
 # --- no feasible solution ---------------------------------------------------
 
 
@@ -223,6 +259,144 @@ def test_plan_is_deterministic():
     p2 = Planner().plan(_request(cands, preferences=prefs))
     assert p1.destination.city == p2.destination.city
     assert p1.overall_score == pytest.approx(p2.overall_score)
+
+
+def test_realized_cost_counts_chosen_accommodation_and_scheduled_activities_only():
+    # 3 accommodations (median 60) + 3 costed activities, but only 2 slots (2 days,
+    # one activity/day). Realized cost must use the median lodging * nights and only the
+    # 2 scheduled activities — not the median-plus-all-activities budget proxy.
+    outputs = AgentOutputs(
+        destination=Destination(city="Realio", country="T", latitude=0.0, longitude=0.0),
+        transport=TransportOption(mode=TransportMode.CAR, cost=100.0, duration_minutes=300),
+        accommodations=[
+            Accommodation(price_per_night=40.0),
+            Accommodation(price_per_night=60.0, rating=4.5),
+            Accommodation(price_per_night=200.0),
+        ],
+        activities=[Activity(name=f"A{i}", cost=10.0) for i in range(3)],
+        nights=2,
+    )
+    cand = _COORDINATOR.aggregate(outputs)
+    policy = SchedulingPolicy(available_minutes=120)  # one activity per day
+    plan = Planner().plan(_request([cand], nights=2, duration_days=2, scheduling_policy=policy))
+
+    assert len(plan.itinerary) == 2  # one dropped for lack of time
+    assert plan.accommodation.price_per_night == pytest.approx(60.0)  # median
+    assert plan.cost_breakdown.transport == pytest.approx(100.0)
+    assert plan.cost_breakdown.accommodation == pytest.approx(120.0)  # 60 * 2 nights
+    assert plan.cost_breakdown.activities == pytest.approx(20.0)  # only the 2 scheduled
+    assert plan.total_cost == pytest.approx(240.0)
+
+
+def test_experience_score_is_recomputed_from_the_scheduled_itinerary():
+    outputs = AgentOutputs(
+        destination=Destination(city="Exp", country="T", latitude=0.0, longitude=0.0),
+        transport=TransportOption(mode=TransportMode.CAR, cost=100.0, duration_minutes=300),
+        accommodations=[Accommodation(price_per_night=50.0)],
+        activities=[Activity(name=f"A{i}") for i in range(3)],
+        nights=2,
+    )
+    cand = _COORDINATOR.aggregate(outputs)
+    policy = SchedulingPolicy(available_minutes=120)  # 2 scheduled over 2 days
+    plan = Planner().plan(_request([cand], nights=2, duration_days=2, scheduling_policy=policy))
+    # 2 scheduled, target = nights(2) * 2/day = 4 -> 0.5.
+    assert len(plan.itinerary) == 2
+    assert plan.experience_score == pytest.approx(0.5)
+
+
+def test_degraded_sources_names_estimated_and_missing_parts():
+    # Estimated transport + no weather profile (missing) on the chosen plan.
+    outputs = AgentOutputs(
+        destination=Destination(city="Deg", country="T", latitude=0.0, longitude=0.0),
+        transport=TransportOption(
+            mode=TransportMode.CAR,
+            cost=100.0,
+            duration_minutes=300,
+            quality_flag="estimated",
+        ),
+        accommodations=[Accommodation(price_per_night=50.0)],
+        activities=[Activity(name="A")],
+        nights=1,
+    )
+    cand = _COORDINATOR.aggregate(outputs)
+    plan = Planner().plan(_request([cand], nights=1))
+    assert "transport:estimated" in plan.degraded_sources
+    assert "weather:missing" in plan.degraded_sources
+
+
+def test_quality_penalty_down_ranks_the_estimate_heavy_candidate():
+    # Two otherwise-identical candidates; the one built on an estimated transport is
+    # gently down-ranked, so the firmer (real) candidate is chosen.
+    def _cand(city, quality):
+        return _COORDINATOR.aggregate(
+            AgentOutputs(
+                destination=Destination(
+                    city=city,
+                    country="T",
+                    latitude=0.0,
+                    longitude=0.0,
+                    features=DestinationFeatures(culture_score=0.7),
+                ),
+                transport=TransportOption(
+                    mode=TransportMode.CAR, cost=100.0, duration_minutes=300, quality_flag=quality
+                ),
+                accommodations=[Accommodation(price_per_night=50.0)],
+                activities=[Activity(name=f"{city} sight")],
+                nights=1,
+            )
+        )
+
+    real = _cand("Real", "real")
+    estimated = _cand("Estimated", "estimated")
+    plan = Planner().plan(_request([estimated, real], nights=1, preferences={"culture": 1.0}))
+    assert plan.destination.city == "Real"
+
+
+def test_disabling_quality_penalty_restores_the_tie():
+    # With quality penalties off, the two candidates tie on score and the cheaper/first
+    # feasible wins the tie-break rather than the "real" one being preferred.
+    def _cand(city, quality, cost):
+        return _COORDINATOR.aggregate(
+            AgentOutputs(
+                destination=Destination(city=city, country="T", latitude=0.0, longitude=0.0),
+                transport=TransportOption(
+                    mode=TransportMode.CAR, cost=cost, duration_minutes=300, quality_flag=quality
+                ),
+                accommodations=[Accommodation(price_per_night=50.0)],
+                activities=[Activity(name=f"{city} sight")],
+                nights=1,
+            )
+        )
+
+    estimated_cheap = _cand("EstCheap", "estimated", 100.0)
+    real_pricey = _cand("RealPricey", "real", 300.0)
+    plan = Planner().plan(
+        _request([estimated_cheap, real_pricey], nights=1, quality_penalty_weight=0.0)
+    )
+    # Equal scores, no quality penalty -> cheaper wins the tie-break.
+    assert plan.destination.city == "EstCheap"
+
+
+def test_preferences_steer_which_activities_are_scheduled():
+    # One culture, one nightlife activity; only one slot; a culture preference keeps the
+    # culture activity.
+    outputs = AgentOutputs(
+        destination=Destination(city="Steer", country="T", latitude=0.0, longitude=0.0),
+        transport=TransportOption(mode=TransportMode.CAR, cost=100.0, duration_minutes=300),
+        accommodations=[Accommodation(price_per_night=50.0)],
+        activities=[
+            Activity(name="Museum", category="museum"),
+            Activity(name="Nightclub", category="nightclub"),
+        ],
+        nights=1,
+    )
+    cand = _COORDINATOR.aggregate(outputs)
+    policy = SchedulingPolicy(available_minutes=120)  # room for one activity
+    plan = Planner().plan(
+        _request([cand], nights=1, preferences={"culture": 1.0}, scheduling_policy=policy)
+    )
+    assert len(plan.itinerary) == 1
+    assert plan.itinerary[0].activity.name == "Museum"
 
 
 def test_custom_scheduling_policy_is_used():
