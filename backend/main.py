@@ -5,6 +5,8 @@ routes. All decision logic lives in the AI engine, not here.
 """
 
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from api.admin_destinations import router as admin_destinations_router
 from api.destinations import router as destinations_router
@@ -14,6 +16,7 @@ from config import get_settings
 from errors import register_exception_handlers
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from services.engine_factory import configure_services
 
 logging.basicConfig(level=logging.INFO)
 
@@ -21,10 +24,23 @@ logging.basicConfig(level=logging.INFO)
 # (e.g. DATABASE_URL) is missing, before the app begins serving.
 settings = get_settings()
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """On startup, swap the safe stub defaults for the real DB-backed services when
+    available (BS-081): trip persistence is installed whenever the database is reachable,
+    so generated plans are stored and retrievable; the real engine stays gated behind
+    ``settings.enable_real_engine``. Running this in the lifespan (not at import) keeps the
+    stub defaults in place for the fast unit tests, which do not start the app."""
+    configure_services(app, settings)
+    yield
+
+
 app = FastAPI(
     title="BudgetSwarm API",
     description="Budget-constrained trip planner — thin HTTP layer over the AI engine.",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
