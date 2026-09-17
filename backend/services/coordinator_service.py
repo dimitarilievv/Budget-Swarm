@@ -47,6 +47,8 @@ class EngineInput:
     transport_mode: str
     preferences: Mapping[str, float]
     origin_label: str
+    origin_lat: float | None = None
+    origin_lon: float | None = None
     vehicle_consumption: float | None = None
 
 
@@ -100,6 +102,8 @@ class CoordinatorService:
             transport_mode=request.transport_mode,
             preferences=dict(request.preferences),
             origin_label=request.origin_label,
+            origin_lat=request.origin_lat,
+            origin_lon=request.origin_lon,
             vehicle_consumption=request.vehicle_consumption,
         )
 
