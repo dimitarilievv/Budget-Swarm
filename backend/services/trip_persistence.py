@@ -79,6 +79,9 @@ class DbTripPersister:
         plan = response.chosen_plan
         with self._session_factory() as session:
             destination = _resolve_destination(session, plan.destination)
+            # Backfill the real destination id onto the response (the engine emits 0 for
+            # "not yet stored"), so the returned plan matches the persisted row.
+            plan.destination.id = destination.id
             trip = Trip(
                 user_id=None,  # anonymous (ADR-012)
                 budget=request.budget,

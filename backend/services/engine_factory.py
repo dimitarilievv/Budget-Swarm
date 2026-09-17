@@ -25,12 +25,36 @@ import logging
 
 from api.routes import get_trip_persister, get_trip_store
 from db.session import get_engine, ping
+from errors import NoPlanAvailableError as ApiNoPlanAvailableError
 from fastapi import FastAPI
 from sqlalchemy.orm import sessionmaker
 
 from services.trip_persistence import DbTripPersister, DbTripStore, SessionFactory
 
 logger = logging.getLogger(__name__)
+
+
+class TranslatingTripEngine:
+    """Wrap the real engine so its no-plan signal becomes the API's 503 error (BS-081).
+
+    The AI engine raises its own ``ai_engine.core.planner.NoPlanAvailableError`` when no
+    candidate is feasible; the backend's exception handler only knows the backend's
+    :class:`errors.NoPlanAvailableError` (→ ``503 NO_PLAN_AVAILABLE``). Without this
+    boundary translation the real engine's no-plan would surface as a 500. The
+    ``ai_engine`` symbol is imported lazily so this module (and ``main``) stay importable
+    where the engine is not installed (the stub-only deployment).
+    """
+
+    def __init__(self, engine: object) -> None:
+        self._engine = engine
+
+    def generate_trip(self, request: object) -> object:
+        from ai_engine.core.planner import NoPlanAvailableError as EngineNoPlanAvailableError
+
+        try:
+            return self._engine.generate_trip(request)
+        except EngineNoPlanAvailableError as exc:
+            raise ApiNoPlanAvailableError(str(exc)) from exc
 
 
 def build_session_factory() -> SessionFactory:
