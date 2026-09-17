@@ -69,6 +69,20 @@ def _runner_up(plan: OptimalPlan) -> tuple[str | None, str | None]:
     return rc.destination.city, note or "was not feasible under your constraints"
 
 
+def _weather_adjustments(plan: OptimalPlan) -> list[str]:
+    """Per-item weather adjustments the scheduler made, as readable facts.
+
+    Lists each itinerary item the weather logic placed as a reschedule
+    (``was_rescheduled``), e.g. ``"Buda Castle was scheduled on day 4 to work around the
+    forecast"``. Days are 1-based for the reader. Empty when nothing was adjusted.
+    """
+    return [
+        f"{item.activity.name} was scheduled on day {item.day + 1} to work around the forecast"
+        for item in plan.itinerary
+        if item.was_rescheduled
+    ]
+
+
 def _weather_note(plan: OptimalPlan) -> str | None:
     """A factual note about how the forecast was handled, or ``None`` when unremarkable.
 
@@ -89,11 +103,14 @@ def explanation_input_from_plan(
 ) -> TripExplanationInput:
     """Map a chosen :class:`OptimalPlan` (+ its request) to the explanation's facts DTO.
 
-    Restates only already-computed facts — destination, budget vs. realized total,
-    trip length, matched preferences, the notable runner-up and a weather note. Pure and
-    deterministic; computes no new numbers.
+    Restates only already-computed facts — destination, the realized cost breakdown, the
+    overall match score, trip length, matched preferences, the notable runner-up, and the
+    weather note plus the specific weather adjustments. Pure and deterministic; computes
+    no new numbers and makes **no decision** — it never re-picks or re-ranks anything, it
+    only reads the chosen plan.
     """
     runner_up, runner_up_note = _runner_up(plan)
+    costs = plan.cost_breakdown
     return TripExplanationInput(
         destination=plan.destination.city,
         country=plan.destination.country,
@@ -106,6 +123,11 @@ def explanation_input_from_plan(
         runner_up=runner_up,
         runner_up_note=runner_up_note,
         weather_note=_weather_note(plan),
+        overall_score=plan.overall_score,
+        transport_cost=costs.transport,
+        accommodation_cost=costs.accommodation,
+        activities_cost=costs.activities,
+        weather_adjustments=_weather_adjustments(plan),
     )
 
 
