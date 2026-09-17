@@ -49,6 +49,18 @@ class TripRequest(BaseModel):
         description="Preference->weight map, e.g. {'culture': 0.9, 'food': 0.8}."
     )
     origin_label: str = Field(min_length=1, description="Origin city, e.g. 'Skopje'.")
+    origin_lat: float | None = Field(
+        default=None,
+        ge=-90,
+        le=90,
+        description="Origin latitude (e.g. from the browser's geolocation).",
+    )
+    origin_lon: float | None = Field(
+        default=None,
+        ge=-180,
+        le=180,
+        description="Origin longitude (paired with origin_lat).",
+    )
     vehicle_consumption: float | None = Field(
         default=None,
         gt=0,
@@ -57,6 +69,11 @@ class TripRequest(BaseModel):
 
     @model_validator(mode="after")
     def _validate_preferences_and_car(self) -> TripRequest:
+        # Origin coordinates are optional (the browser supplies them when the user allows
+        # geolocation; otherwise origin_label alone is geocoded server-side), but they must
+        # be supplied together — a lone latitude or longitude is meaningless.
+        if (self.origin_lat is None) != (self.origin_lon is None):
+            raise ValueError("origin_lat and origin_lon must be provided together")
         # Preferences must be a non-empty map of normalized weights in [0, 1].
         if not self.preferences:
             raise ValueError("preferences must contain at least one preference->weight entry")

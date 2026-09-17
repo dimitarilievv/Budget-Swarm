@@ -87,6 +87,44 @@ def test_invalid_requests_raise_validation_error(mutation):
         TripRequest(**payload)
 
 
+def test_origin_coordinates_are_optional():
+    # Backwards compatible: a request with only origin_label still parses.
+    req = TripRequest.model_validate(VALID_CAR_REQUEST)
+    assert req.origin_lat is None and req.origin_lon is None
+
+
+def test_origin_coordinates_accepted_together():
+    req = TripRequest.model_validate(
+        {**VALID_CAR_REQUEST, "origin_lat": 41.9973, "origin_lon": 21.4280}
+    )
+    assert req.origin_lat == pytest.approx(41.9973)
+    assert req.origin_lon == pytest.approx(21.4280)
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"origin_lat": 41.9973},  # lon missing
+        {"origin_lon": 21.4280},  # lat missing
+    ],
+)
+def test_lone_origin_coordinate_rejected(extra):
+    with pytest.raises(ValidationError, match="together"):
+        TripRequest.model_validate({**VALID_CAR_REQUEST, **extra})
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"origin_lat": 200.0, "origin_lon": 21.0},  # lat out of range
+        {"origin_lat": 41.0, "origin_lon": 400.0},  # lon out of range
+    ],
+)
+def test_out_of_range_origin_coordinate_rejected(extra):
+    with pytest.raises(ValidationError):
+        TripRequest.model_validate({**VALID_CAR_REQUEST, **extra})
+
+
 def test_car_requires_vehicle_consumption():
     payload = {**VALID_CAR_REQUEST}
     payload.pop("vehicle_consumption")

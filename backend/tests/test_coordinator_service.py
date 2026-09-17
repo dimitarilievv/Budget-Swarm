@@ -78,7 +78,15 @@ def test_to_engine_input_maps_all_fields():
     assert dto.transport_mode == "car"
     assert dto.preferences == {"culture": 0.9, "food": 0.8}
     assert dto.origin_label == "Skopje"
+    assert dto.origin_lat is None and dto.origin_lon is None  # absent by default
     assert dto.vehicle_consumption == 6.5
+
+
+def test_to_engine_input_maps_origin_coordinates():
+    req = TripRequest(**{**VALID_REQUEST, "origin_lat": 41.9973, "origin_lon": 21.4280})
+    dto = CoordinatorService.to_engine_input(req)
+    assert dto.origin_lat == 41.9973
+    assert dto.origin_lon == 21.4280
 
 
 def test_generate_trip_calls_engine_with_dto_and_maps_result():
