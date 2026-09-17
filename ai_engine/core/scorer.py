@@ -326,6 +326,17 @@ class CostBreakdown:
     activities: float
     total: float | None
 
+    @property
+    def transport_share(self) -> float | None:
+        """Transport as a fraction of the total trip cost (``None`` when uncostable).
+
+        The intuitive "how much of the trip is the journey" figure (e.g. ``0.62`` = 62%
+        of spend went to transport). ``None`` when the total is unknown or zero.
+        """
+        if self.transport is None or self.total is None or self.total <= 0:
+            return None
+        return self.transport / self.total
+
 
 def cost_breakdown(candidate: CandidateInputs) -> CostBreakdown:
     """Break a candidate's trip cost into transport / accommodation / activities.

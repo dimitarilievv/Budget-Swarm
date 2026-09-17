@@ -78,6 +78,14 @@ from ai_engine.domain import (
 _DEFAULT_QUALITY_PENALTY_WEIGHT = 0.03
 _MAX_QUALITY_PENALTY = 0.30
 
+# Optional soft transport-share guard (off unless PlanRequest.transport_share_soft_cap
+# is set). When a candidate's transport cost exceeds the given fraction of the budget,
+# a soft, capped deduction gently down-ranks it — a trip should not be mostly a plane
+# ticket — without ever making it infeasible (a total ≤ budget is still the only hard
+# rule). The slope and ceiling are module constants; the cap is the per-request knob.
+_DEFAULT_TRANSPORT_SHARE_PENALTY_WEIGHT = 1.0
+_MAX_TRANSPORT_SHARE_PENALTY = 0.30
+
 if TYPE_CHECKING:  # pragma: no cover - typing only, avoids a core -> agents runtime dep
     from ai_engine.agents.coordinator_agent import CandidateAggregate
 
@@ -104,6 +112,13 @@ class PlanRequest:
     ``penalties`` (optional, per candidate) are soft deductions folded into the
     objective. ``duration_days`` is the number of itinerary days for scheduling
     (defaults to ``nights``); ``scheduling_policy`` tunes the day model (BS-073).
+
+    ``transport_share_soft_cap`` (optional, a fraction in ``(0, 1]``) turns on the soft
+    transport-share guard: a candidate whose transport cost exceeds that fraction of the
+    ``budget`` is gently down-ranked so a trip is not mostly a plane ticket. It is a
+    *soft* deduction on the objective, never a hard constraint — an over-share candidate
+    stays feasible and is still chosen if it is the best (or only) option. ``None``
+    (the default) leaves scoring exactly as it was.
     """
 
     candidates: Sequence[CandidateAggregate]
@@ -115,6 +130,7 @@ class PlanRequest:
     factor_weights: FactorWeights = DEFAULT_WEIGHTS
     penalties: Sequence[float] | None = None
     quality_penalty_weight: float = _DEFAULT_QUALITY_PENALTY_WEIGHT
+    transport_share_soft_cap: float | None = None
     scheduling_policy: SchedulingPolicy | None = None
 
     def __post_init__(self) -> None:
@@ -125,6 +141,13 @@ class PlanRequest:
         if self.quality_penalty_weight < 0:
             raise ValueError(
                 f"quality_penalty_weight must be non-negative, got {self.quality_penalty_weight!r}"
+            )
+        if self.transport_share_soft_cap is not None and not (
+            0 < self.transport_share_soft_cap <= 1
+        ):
+            raise ValueError(
+                "transport_share_soft_cap must be a fraction in (0, 1], got "
+                f"{self.transport_share_soft_cap!r}"
             )
         object.__setattr__(
             self,
@@ -182,6 +205,11 @@ class RankedCandidate:
     @property
     def accommodation_cost(self) -> float | None:
         return self.costs.accommodation
+
+    @property
+    def transport_share(self) -> float | None:
+        """Transport as a fraction of this candidate's total trip cost."""
+        return self.costs.transport_share
 
     @property
     def preference_score(self) -> float:
@@ -242,6 +270,11 @@ class OptimalPlan:
     ranked_candidates: tuple[RankedCandidate, ...]
     status: SolveStatus
 
+    @property
+    def transport_share(self) -> float | None:
+        """Transport as a fraction of the plan's realized total cost (``None`` if uncostable)."""
+        return self.cost_breakdown.transport_share
+
 
 class Planner:
     """Composes scoring, destination selection, and scheduling into one optimal plan.
@@ -277,7 +310,11 @@ class Planner:
             [c.scorer_inputs for c in candidates], weights=request.preferences
         )
         penalties = _effective_penalties(
-            candidates, request.penalties, request.quality_penalty_weight
+            candidates,
+            request.penalties,
+            request.quality_penalty_weight,
+            budget=request.budget,
+            transport_share_cap=request.transport_share_soft_cap,
         )
         overall = score_candidates(
             factor_scores,
@@ -388,23 +425,39 @@ def _effective_penalties(
     candidates: Sequence[CandidateAggregate],
     explicit: Sequence[float] | None,
     quality_weight: float,
+    *,
+    budget: float,
+    transport_share_cap: float | None,
 ) -> list[float] | None:
-    """Combine caller-supplied penalties with data-quality deductions (per candidate).
+    """Combine caller-supplied penalties with the soft deductions (per candidate).
 
-    Each candidate's quality penalty grows with its estimated/cached/missing parts
-    (missing worst, cached mildest) and is capped at :data:`_MAX_QUALITY_PENALTY` so
-    provenance nudges the ranking without dominating it. Returns ``None`` (no penalties)
-    only when there are neither explicit penalties nor a positive quality weight.
+    Sums, per candidate: any ``explicit`` penalty, the data-quality deduction (grows
+    with estimated/cached/missing parts, capped at :data:`_MAX_QUALITY_PENALTY` so
+    provenance nudges the ranking without dominating), and — when
+    ``transport_share_cap`` is set — the transport-share deduction (:func:`
+    _transport_share_penalty`). Returns ``None`` (scoring unchanged) only when none of
+    the three sources applies.
     """
     quality = (
         [_quality_penalty(c, quality_weight) for c in candidates] if quality_weight > 0 else None
     )
-    if explicit is None and quality is None:
+    transport = (
+        [
+            _transport_share_penalty(
+                cost_breakdown(c.scorer_inputs).transport, budget, transport_share_cap
+            )
+            for c in candidates
+        ]
+        if transport_share_cap is not None
+        else None
+    )
+    if explicit is None and quality is None and transport is None:
         return None
-    base = list(explicit) if explicit is not None else [0.0] * len(candidates)
-    if quality is None:
-        return base
-    return [b + q for b, q in zip(base, quality, strict=True)]
+    combined = list(explicit) if explicit is not None else [0.0] * len(candidates)
+    for extra in (quality, transport):
+        if extra is not None:
+            combined = [b + e for b, e in zip(combined, extra, strict=True)]
+    return combined
 
 
 def _quality_penalty(aggregate: CandidateAggregate, weight: float) -> float:
@@ -414,6 +467,28 @@ def _quality_penalty(aggregate: CandidateAggregate, weight: float) -> float:
     missing = len(aggregate.degraded)
     penalty = weight * (missing + estimated + 0.5 * cached)
     return min(penalty, _MAX_QUALITY_PENALTY)
+
+
+def _transport_share_penalty(
+    transport_cost: float | None,
+    budget: float,
+    cap: float,
+    *,
+    weight: float = _DEFAULT_TRANSPORT_SHARE_PENALTY_WEIGHT,
+) -> float:
+    """A soft deduction when transport eats too much of the budget (the §10 guard).
+
+    ``penalty = min(weight · max(0, transport/budget − cap), _MAX_TRANSPORT_SHARE_PENALTY)``.
+    A candidate at or below the cap incurs nothing; one well over is nudged down without
+    ever becoming infeasible. Returns ``0`` when the share cannot be computed (unknown
+    transport cost, or a non-positive budget). Deterministic.
+    """
+    if transport_cost is None or budget <= 0:
+        return 0.0
+    overage = transport_cost / budget - cap
+    if overage <= 0:
+        return 0.0
+    return min(weight * overage, _MAX_TRANSPORT_SHARE_PENALTY)
 
 
 def _realized_cost(

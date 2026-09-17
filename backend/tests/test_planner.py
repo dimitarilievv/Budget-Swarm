@@ -399,6 +399,79 @@ def test_preferences_steer_which_activities_are_scheduled():
     assert plan.itinerary[0].activity.name == "Museum"
 
 
+# Two candidates with the SAME total cost (790) so the cost factor cannot separate
+# them, but very different transport share: Flighty spends 700 on transport (70% of the
+# 1000 budget), Balanced spends 400 (40%). Flighty's slightly higher culture score makes
+# it win with no cap; the transport-share guard flips the choice.
+def _flighty():
+    return _candidate("Flighty", transport_cost=700.0, nightly=30.0, culture=0.8)
+
+
+def _balanced():
+    return _candidate("Balanced", transport_cost=400.0, nightly=130.0, culture=0.6)
+
+
+def test_transport_share_cap_down_ranks_the_transport_heavy_candidate():
+    plan = Planner().plan(
+        _request(
+            [_flighty(), _balanced()],
+            budget=1000.0,
+            preferences={"culture": 1.0},
+            transport_share_soft_cap=0.5,
+        )
+    )
+    assert plan.destination.city == "Balanced"
+
+
+def test_transport_share_cap_does_not_exclude_a_lone_over_share_candidate():
+    # The guard is soft: an over-share candidate is still chosen when it is the only
+    # feasible option (it is never made infeasible).
+    flighty = _candidate("OnlyFlighty", transport_cost=700.0, nightly=30.0)
+    plan = Planner().plan(_request([flighty], budget=1000.0, transport_share_soft_cap=0.5))
+    assert plan.destination.city == "OnlyFlighty"
+    assert plan.status is SolveStatus.OPTIMAL
+
+
+def test_transport_share_cap_off_by_default_changes_nothing():
+    # Same pair, no cap: the transport-heavy but higher-preference candidate still wins,
+    # proving the guard is inert unless the cap is set.
+    plan = Planner().plan(
+        _request([_flighty(), _balanced()], budget=1000.0, preferences={"culture": 1.0})
+    )
+    assert plan.destination.city == "Flighty"
+
+
+def test_transport_share_is_surfaced_on_the_plan():
+    # transport 100 + median(50)*3 nights = 250 -> transport share 100/250 = 0.4.
+    plan = Planner().plan(_request([_candidate("Share")]))
+    assert plan.transport_share == pytest.approx(0.4)
+    assert plan.cost_breakdown.transport_share == pytest.approx(0.4)
+
+
+def test_transport_share_surfaced_on_ranked_candidates():
+    plan = Planner().plan(_request([_candidate("R", transport_cost=100.0, nightly=50.0, nights=3)]))
+    rc = plan.ranked_candidates[0]
+    assert rc.transport_share == pytest.approx(0.4)
+
+
+def test_transport_share_soft_cap_must_be_a_fraction():
+    with pytest.raises(ValueError, match="transport_share_soft_cap"):
+        _request([_candidate("A")], transport_share_soft_cap=1.5)
+    with pytest.raises(ValueError, match="transport_share_soft_cap"):
+        _request([_candidate("A")], transport_share_soft_cap=0.0)
+
+
+def test_transport_share_guard_is_deterministic():
+    cands = [
+        _candidate("A", transport_cost=700.0, culture=0.6),
+        _candidate("B", transport_cost=200.0, culture=0.6),
+    ]
+    kw = dict(budget=1000.0, preferences={"culture": 1.0}, transport_share_soft_cap=0.5)
+    p1 = Planner().plan(_request(cands, **kw))
+    p2 = Planner().plan(_request(cands, **kw))
+    assert p1.destination.city == p2.destination.city
+
+
 def test_custom_scheduling_policy_is_used():
     acts = [Activity(name="A"), Activity(name="B"), Activity(name="C")]
     policy = SchedulingPolicy(available_minutes=120)  # one slot -> only one fits

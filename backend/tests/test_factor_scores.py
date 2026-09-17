@@ -164,6 +164,17 @@ def test_cost_breakdown_total_none_without_transport_cost():
     assert breakdown.total is None
     # Accommodation is still reported even though the trip cannot be totalled.
     assert breakdown.accommodation == pytest.approx(50.0)
+    assert breakdown.transport_share is None  # no total -> no share
+
+
+def test_cost_breakdown_transport_share():
+    c = CandidateInputs(
+        transport=TransportOption(mode=TransportMode.CAR, cost=100.0),
+        accommodations=[Accommodation(price_per_night=50.0)],
+        nights=3,
+    )
+    # 100 transport + 50*3 = 250 total -> share 0.4.
+    assert cost_breakdown(c).transport_share == pytest.approx(0.4)
 
 
 # --- activity valuation + representative accommodation ----------------------
