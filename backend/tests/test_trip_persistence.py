@@ -128,6 +128,8 @@ def test_generate_persists_and_returns_trip_id(client):
 def test_generate_then_fetch_by_id_round_trips(client):
     created = client.post("/api/generate-trip", json=_REQUEST).json()
     trip_id = created["meta"]["trip_id"]
+    # The persisted destination's real id is backfilled onto the response (not left 0).
+    assert created["chosen_plan"]["destination"]["id"] > 0
 
     fetched = client.get(f"/api/trips/{trip_id}")
     assert fetched.status_code == 200
@@ -135,6 +137,7 @@ def test_generate_then_fetch_by_id_round_trips(client):
 
     # The stored plan carries the same destination, totals and ordered itinerary.
     assert plan["destination"]["city"] == created["chosen_plan"]["destination"]["city"]
+    assert plan["destination"]["id"] == created["chosen_plan"]["destination"]["id"]
     assert plan["total_cost"] == pytest.approx(created["chosen_plan"]["total_cost"])
     original_activities = [
         a["name"] for day in created["chosen_plan"]["itinerary"] for a in day["activities"]

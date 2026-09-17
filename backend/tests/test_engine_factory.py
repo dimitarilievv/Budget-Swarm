@@ -14,8 +14,13 @@ from types import SimpleNamespace
 import pytest
 import services.engine_factory as engine_factory
 from api.routes import get_trip_engine, get_trip_persister, get_trip_store
+from errors import NoPlanAvailableError as ApiNoPlanAvailableError
 from fastapi import FastAPI
-from services.engine_factory import configure_services, install_persistence
+from services.engine_factory import (
+    TranslatingTripEngine,
+    configure_services,
+    install_persistence,
+)
 from services.trip_persistence import DbTripPersister, DbTripStore
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -56,6 +61,36 @@ def test_real_engine_flag_does_not_swap_the_engine_yet(monkeypatch):
     installed = configure_services(app, SimpleNamespace(enable_real_engine=True))
     assert "real-engine" not in installed
     assert get_trip_engine not in app.dependency_overrides
+
+
+# --- the no-plan translation boundary (BS-081 hardening) --------------------
+
+
+def test_translating_engine_converts_engine_no_plan_to_api_error():
+    from ai_engine.core.planner import NoPlanAvailableError as EngineNoPlanAvailableError
+
+    class _RaisingEngine:
+        def generate_trip(self, request):
+            raise EngineNoPlanAvailableError("no feasible plan")
+
+    # The engine's no-plan becomes the API's 503 error, not an uncaught 500.
+    with pytest.raises(ApiNoPlanAvailableError):
+        TranslatingTripEngine(_RaisingEngine()).generate_trip(object())
+
+
+def test_translating_engine_passes_through_results_and_other_errors():
+    class _OkEngine:
+        def generate_trip(self, request):
+            return {"chosen_plan": {}}
+
+    assert TranslatingTripEngine(_OkEngine()).generate_trip(object()) == {"chosen_plan": {}}
+
+    class _OtherError:
+        def generate_trip(self, request):
+            raise ValueError("something else")
+
+    with pytest.raises(ValueError):
+        TranslatingTripEngine(_OtherError()).generate_trip(object())
 
 
 # --- integration: wired app persists + serves history -----------------------

@@ -131,6 +131,13 @@ def test_output_validates_against_the_wire_schema():
     assert response.chosen_plan.weather  # forecast present
 
 
+def test_accommodation_is_costed_on_nights_not_days():
+    # duration_days=4 -> 3 billed nights; accommodation = nightly(60) * 3 = 180
+    # (not * 4 days = 240), proving nights and duration_days are distinct (ADR-014).
+    result = TripPlanEngine(_agents()).generate_trip(_engine_input(duration_days=4))
+    assert result["chosen_plan"]["cost_breakdown"]["accommodation"] == pytest.approx(180.0)
+
+
 def test_meta_has_degraded_sources_and_timing():
     result = TripPlanEngine(_agents()).generate_trip(_engine_input())
     meta = result["meta"]

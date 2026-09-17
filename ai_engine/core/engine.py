@@ -90,9 +90,12 @@ class TripPlanEngine:
         from ai_engine.agents.coordinator_agent import CoordinatorAgent
 
         coordinator = self._coordinator or CoordinatorAgent()
-        # The stay length: nights bill accommodation and bound the itinerary days. The
-        # request expresses duration in days; the engine treats them as one figure here.
-        nights = engine_input.duration_days
+        # A trip of D on-the-ground days is D-1 billed lodging nights (arrive day 1,
+        # depart day D). ``nights`` costs accommodation and drives the optimizer's duration
+        # constraint; the itinerary is scheduled across all ``duration_days`` days
+        # (ADR-014: the two are distinct quantities, not interchangeable).
+        days = engine_input.duration_days
+        nights = max(1, days - 1)
         started = time.perf_counter()
 
         outputs = await gather_agent_outputs(
@@ -104,7 +107,7 @@ class TripPlanEngine:
             budget=engine_input.budget,
             transport_mode=engine_input.transport_mode,
             nights=nights,
-            duration_days=engine_input.duration_days,
+            duration_days=days,
             preferences=engine_input.preferences,
         )
         plan = self._planner.plan(plan_request)  # raises NoPlanAvailableError
