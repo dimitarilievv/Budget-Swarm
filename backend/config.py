@@ -42,6 +42,14 @@ class Settings(BaseSettings):
     llm_provider: str = "ollama"
     llm_api_key: str | None = None
 
+    # --- Engine wiring (BS-081) ------------------------------------------
+    # Off by default: the app serves the stub engine until the real pipeline is
+    # switched on here. The real engine additionally requires a *seeded* reference
+    # database (curated destinations/features/attractions/accommodations); with an
+    # empty DB it has no candidates to rank. Trip persistence is wired independently
+    # whenever the database is reachable, regardless of this flag.
+    enable_real_engine: bool = False
+
     @property
     def cors_origins_list(self) -> list[str]:
         """CORS origins as a clean list for the FastAPI middleware."""
