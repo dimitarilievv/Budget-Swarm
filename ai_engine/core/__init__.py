@@ -7,6 +7,7 @@ can ``from ai_engine.core import run, EngineInput, TripPlan, Optimizer, ...``.
 
 from __future__ import annotations
 
+from .explanation import explain_plan, explanation_input_from_plan
 from .optimizer import (
     ExclusionReason,
     OptimizationInput,
@@ -51,4 +52,6 @@ __all__ = [
     "OptimalPlan",
     "RankedCandidate",
     "NoPlanAvailableError",
+    "explain_plan",
+    "explanation_input_from_plan",
 ]
