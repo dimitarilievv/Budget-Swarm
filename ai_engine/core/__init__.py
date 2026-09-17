@@ -1,12 +1,14 @@
-"""Engine reasoning core: pipeline orchestration, scoring, and optimization.
+"""Engine reasoning core: pipeline orchestration, scoring, optimization, explanation.
 
-The pipeline entry point (a stub, BS-044) and the CP-SAT optimizer (BS-072) are
-implemented; the scorer lives alongside in ``scorer``. Re-exported here so callers
-can ``from ai_engine.core import run, EngineInput, TripPlan, Optimizer, ...``.
+The full engine is wired: :class:`TripPlanEngine` runs Scout → parallel agents →
+coordinator → scorer → optimizer → explanation and returns the final structured plan.
+Re-exported here so callers can ``from ai_engine.core import TripPlanEngine, EngineInput,
+Planner, ...``.
 """
 
 from __future__ import annotations
 
+from .engine import TripPlanEngine
 from .explanation import explain_plan, explanation_input_from_plan
 from .optimizer import (
     ExclusionReason,
@@ -19,9 +21,7 @@ from .pipeline import (
     DEFAULT_AGENT_CONCURRENCY,
     AgentSet,
     EngineInput,
-    TripPlan,
     gather_agent_outputs,
-    run,
 )
 from .planner import (
     NoPlanAvailableError,
@@ -40,9 +40,8 @@ from .scheduler import (
 )
 
 __all__ = [
-    "run",
+    "TripPlanEngine",
     "EngineInput",
-    "TripPlan",
     "Optimizer",
     "OptimizationInput",
     "OptimizationResult",
