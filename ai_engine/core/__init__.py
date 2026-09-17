@@ -15,7 +15,14 @@ from .optimizer import (
     Optimizer,
     SolveStatus,
 )
-from .pipeline import EngineInput, TripPlan, run
+from .pipeline import (
+    DEFAULT_AGENT_CONCURRENCY,
+    AgentSet,
+    EngineInput,
+    TripPlan,
+    gather_agent_outputs,
+    run,
+)
 from .planner import (
     NoPlanAvailableError,
     OptimalPlan,
@@ -54,4 +61,7 @@ __all__ = [
     "NoPlanAvailableError",
     "explain_plan",
     "explanation_input_from_plan",
+    "AgentSet",
+    "gather_agent_outputs",
+    "DEFAULT_AGENT_CONCURRENCY",
 ]
