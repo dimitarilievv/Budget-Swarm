@@ -82,7 +82,6 @@ export default function TripInputForm({
   const [errors, setErrors] = useState<Errors>({});
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<ApiError | null>(null);
-  const [result, setResult] = useState<TripResponse | null>(null);
   const lastPayload = useRef<TripRequestPayload | null>(null);
 
   const isCar = transportMode === "car";
@@ -132,10 +131,8 @@ export default function TripInputForm({
     lastPayload.current = payload;
     setSubmitting(true);
     setSubmitError(null);
-    setResult(null);
     try {
       const response = await submit(payload);
-      setResult(response);
       onResult?.(response);
     } catch (err) {
       setSubmitError(
@@ -396,21 +393,6 @@ export default function TripInputForm({
           Let AI discover the perfect destination for you
         </span>
       </button>
-
-      <div aria-live="polite">
-        {result && (
-          <div className="rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-            <p className="font-semibold">
-              {result.chosen_plan.destination.city},{" "}
-              {result.chosen_plan.destination.country} — €
-              {Math.round(result.chosen_plan.total_cost)}
-            </p>
-            {result.explanation && (
-              <p className="mt-1 text-emerald-700">{result.explanation}</p>
-            )}
-          </div>
-        )}
-      </div>
     </form>
   );
 }

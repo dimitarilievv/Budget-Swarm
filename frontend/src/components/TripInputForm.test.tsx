@@ -142,8 +142,11 @@ describe("TripInputForm", () => {
     });
     expect(payload.preferences).not.toHaveProperty("nightlife");
 
-    expect(await screen.findByText(/Budapest, Hungary/i)).toBeInTheDocument();
-    expect(onResult).toHaveBeenCalledTimes(1);
+    // The plan is handed up to the parent (App renders the Results page from it).
+    await waitFor(() => expect(onResult).toHaveBeenCalledTimes(1));
+    expect(onResult.mock.calls[0][0].chosen_plan.destination.city).toBe(
+      "Budapest",
+    );
   });
 
   it("shows the loading screen while the request is in flight", async () => {

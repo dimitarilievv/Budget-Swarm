@@ -1,9 +1,13 @@
 /**
- * Home / Input page (BS-084 redesign).
- * Hero background, brand header, headline, and the trip Input card. Results and
- * Comparison pages arrive in later tickets.
+ * App shell — routes between the Input/Home page (BS-084) and the Results page (BS-085).
+ * A generated trip is held here so a successful submit swaps the hero + form for the
+ * chosen plan; "Back to planning" clears it. Comparison arrives in a later ticket.
  */
+import { useState } from "react";
+
+import ResultsPage from "./components/ResultsPage";
 import TripInputForm from "./components/TripInputForm";
+import type { TripResponse } from "./api/types";
 
 const TRUST = [
   {
@@ -24,6 +28,16 @@ const TRUST = [
 ];
 
 export default function App() {
+  const [result, setResult] = useState<TripResponse | null>(null);
+
+  if (result) {
+    return (
+      <div className="min-h-screen bg-slate-100 px-6 py-10 text-slate-900">
+        <ResultsPage response={result} onBack={() => setResult(null)} />
+      </div>
+    );
+  }
+
   return (
     <div className="relative min-h-screen bg-slate-100 text-slate-900">
       {/* Cappadocia hero photo (public/hero.jpg) with a light wash so the headline and
@@ -71,7 +85,7 @@ export default function App() {
           </p>
 
           <div className="mt-8 rounded-3xl bg-white/95 p-6 shadow-xl ring-1 ring-slate-200 backdrop-blur sm:p-8">
-            <TripInputForm />
+            <TripInputForm onResult={setResult} />
           </div>
 
           {/* Trust row */}
