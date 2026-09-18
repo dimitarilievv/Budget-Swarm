@@ -1,10 +1,15 @@
 /**
- * Wire types for the trip API (mirrors backend/schemas/trip_schema.py).
- * Kept minimal — the input form (a later ticket) fills these in.
+ * Wire types for the trip API — a hand-written mirror of docs/api.md
+ * (and backend/schemas/trip_schema.py). These are the single source of type-truth the
+ * UI builds against, so a response that drifts from the contract is a compile error.
  */
 import type { BrowserOrigin } from "./geolocation";
 
 export type TransportMode = "airplane" | "car" | "bus" | "train";
+export type QualityFlag = "real" | "cached" | "estimated";
+export type IndoorOutdoor = "indoor" | "outdoor" | "mixed";
+
+// --- Request ----------------------------------------------------------------
 
 export interface TripRequestPayload {
   budget: number;
@@ -32,4 +37,106 @@ export function originFields(
     origin_lat: origin.originLat,
     origin_lon: origin.originLon,
   };
+}
+
+// --- Response: chosen_plan sub-objects --------------------------------------
+
+export interface PlanDestination {
+  id: number;
+  city: string;
+  country: string;
+  latitude: number;
+  longitude: number;
+}
+
+export interface CostBreakdown {
+  transport: number;
+  accommodation: number;
+  activities: number;
+}
+
+export interface PlanTransport {
+  mode: TransportMode;
+  cost?: number | null;
+  duration_min?: number | null;
+  distance_km?: number | null;
+  quality_flag: QualityFlag;
+}
+
+export interface PlanAccommodation {
+  name?: string | null;
+  accom_type?: string | null;
+  price_per_night: number;
+  rating?: number | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  quality_flag: QualityFlag;
+}
+
+export interface ItineraryActivity {
+  name: string;
+  category?: string | null;
+  indoor_outdoor: IndoorOutdoor;
+  start_time?: string | null;
+  end_time?: string | null;
+  was_rescheduled: boolean;
+}
+
+export interface ItineraryDay {
+  day_number: number;
+  activities: ItineraryActivity[];
+}
+
+export interface PlanWeatherDay {
+  forecast_date: string;
+  temp_min?: number | null;
+  temp_max?: number | null;
+  precip_prob?: number | null;
+  conditions?: string | null;
+  weather_conflict: boolean;
+}
+
+export interface ChosenPlan {
+  destination: PlanDestination;
+  overall_score: number;
+  total_cost: number;
+  cost_breakdown: CostBreakdown;
+  transport?: PlanTransport | null;
+  accommodation?: PlanAccommodation | null;
+  itinerary: ItineraryDay[];
+  weather: PlanWeatherDay[];
+}
+
+// --- Response: ranked_candidates + meta -------------------------------------
+
+export interface CandidateDestination {
+  city: string;
+  country: string;
+}
+
+export interface RankedCandidate {
+  destination: CandidateDestination;
+  total_cost?: number | null;
+  overall_score?: number | null;
+  transport_cost?: number | null;
+  accommodation_cost?: number | null;
+  experience_score?: number | null;
+  weather_score?: number | null;
+  preference_score?: number | null;
+  feasible: boolean;
+}
+
+export interface TripMeta {
+  trip_id?: number | null;
+  generated_at: string;
+  degraded_sources: string[];
+  elapsed_ms?: number | null;
+}
+
+export interface TripResponse {
+  chosen_plan: ChosenPlan;
+  ranked_candidates: RankedCandidate[];
+  /** LLM-generated; may be null when the explanation provider is disabled. */
+  explanation?: string | null;
+  meta: TripMeta;
 }
