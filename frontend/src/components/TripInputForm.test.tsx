@@ -146,7 +146,17 @@ describe("TripInputForm", () => {
     expect(onResult).toHaveBeenCalledTimes(1);
   });
 
-  it("surfaces an API error envelope to the user", async () => {
+  it("shows the loading screen while the request is in flight", async () => {
+    // A request that never resolves keeps the form in the loading state.
+    const submit = vi.fn(() => new Promise<TripResponse>(() => {}));
+    render(<TripInputForm submit={submit} />);
+    setOrigin("Skopje");
+    fireEvent.click(plan());
+
+    expect(await screen.findByText(/agents are on it/i)).toBeInTheDocument();
+  });
+
+  it("surfaces an API error with a friendly message and a retry", async () => {
     const submit = vi.fn(async () => {
       throw new ApiError(
         "NO_PLAN_AVAILABLE",
@@ -157,8 +167,30 @@ describe("TripInputForm", () => {
     setOrigin("Skopje");
     fireEvent.click(plan());
 
+    // Friendly title + the server's own message.
+    expect(await screen.findByText(/no trip fits/i)).toBeInTheDocument();
     expect(
-      await screen.findByText(/no feasible plan within your budget/i),
+      screen.getByText(/no feasible plan within your budget/i),
+    ).toBeInTheDocument();
+
+    // Retry re-submits the same request.
+    fireEvent.click(screen.getByRole("button", { name: /try again/i }));
+    await waitFor(() => expect(submit).toHaveBeenCalledTimes(2));
+  });
+
+  it("edit details returns to the form", async () => {
+    const submit = vi.fn(async () => {
+      throw new ApiError("INTERNAL_ERROR", "boom");
+    });
+    render(<TripInputForm submit={submit} />);
+    setOrigin("Skopje");
+    fireEvent.click(plan());
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /edit details/i }),
+    );
+    expect(
+      screen.getByRole("button", { name: /plan my trip/i }),
     ).toBeInTheDocument();
   });
 });

@@ -6,7 +6,7 @@
  * client-side (mirroring the server, which stays authoritative), and submits a typed
  * TripRequestPayload to POST /api/generate-trip. `submit` is injectable for tests.
  */
-import { useId, useState, type FormEvent } from "react";
+import { useId, useRef, useState, type FormEvent } from "react";
 
 import { ApiError } from "../api/errors";
 import { generateTrip } from "../api/trips";
@@ -15,6 +15,8 @@ import type {
   TripRequestPayload,
   TripResponse,
 } from "../api/types";
+import ErrorState from "./ErrorState";
+import LoadingState from "./LoadingState";
 import OriginInput, { type OriginValue } from "./OriginInput";
 
 const TRANSPORT_MODES: { value: TransportMode; label: string; icon: string }[] =
@@ -79,8 +81,9 @@ export default function TripInputForm({
 
   const [errors, setErrors] = useState<Errors>({});
   const [submitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<ApiError | null>(null);
   const [result, setResult] = useState<TripResponse | null>(null);
+  const lastPayload = useRef<TripRequestPayload | null>(null);
 
   const isCar = transportMode === "car";
 
@@ -125,32 +128,55 @@ export default function TripInputForm({
     };
   }
 
-  async function handleSubmit(event: FormEvent) {
-    event.preventDefault();
-    const found = validate();
-    setErrors(found);
-    if (Object.keys(found).length > 0) return;
-
+  async function runSubmit(payload: TripRequestPayload) {
+    lastPayload.current = payload;
     setSubmitting(true);
     setSubmitError(null);
     setResult(null);
     try {
-      const response = await submit(buildPayload());
+      const response = await submit(payload);
       setResult(response);
       onResult?.(response);
     } catch (err) {
       setSubmitError(
         err instanceof ApiError
-          ? err.message
-          : "Something went wrong. Please try again.",
+          ? err
+          : new ApiError(
+              "INTERNAL_ERROR",
+              "Something went wrong. Please try again.",
+            ),
       );
     } finally {
       setSubmitting(false);
     }
   }
 
+  async function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    const found = validate();
+    setErrors(found);
+    if (Object.keys(found).length > 0) return;
+    await runSubmit(buildPayload());
+  }
+
+  function retry() {
+    if (lastPayload.current) void runSubmit(lastPayload.current);
+  }
+
   const numberField =
     "mt-1 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-lg font-semibold text-slate-900 shadow-sm focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/30";
+
+  // While a request is in flight, show the agent-progress screen; on failure, the error
+  // state with a retry affordance. Form state persists behind both (same component).
+  if (submitting) return <LoadingState />;
+  if (submitError)
+    return (
+      <ErrorState
+        error={submitError}
+        onRetry={retry}
+        onEdit={() => setSubmitError(null)}
+      />
+    );
 
   return (
     <form onSubmit={handleSubmit} noValidate className="space-y-6 text-left">
@@ -363,27 +389,15 @@ export default function TripInputForm({
       {/* CTA */}
       <button
         type="submit"
-        disabled={submitting}
-        className="w-full rounded-xl bg-teal-600 px-4 py-4 text-center font-semibold text-white shadow-md transition hover:bg-teal-700 disabled:opacity-60"
+        className="w-full rounded-xl bg-teal-600 px-4 py-4 text-center font-semibold text-white shadow-md transition hover:bg-teal-700"
       >
-        {submitting ? (
-          "Planning your trip…"
-        ) : (
-          <>
-            <span className="block text-lg">✨ Plan my trip</span>
-            <span className="block text-sm font-normal text-teal-100">
-              Let AI discover the perfect destination for you
-            </span>
-          </>
-        )}
+        <span className="block text-lg">✨ Plan my trip</span>
+        <span className="block text-sm font-normal text-teal-100">
+          Let AI discover the perfect destination for you
+        </span>
       </button>
 
       <div aria-live="polite">
-        {submitError && (
-          <p className="rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-700">
-            {submitError}
-          </p>
-        )}
         {result && (
           <div className="rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
             <p className="font-semibold">
