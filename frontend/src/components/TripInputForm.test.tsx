@@ -36,33 +36,41 @@ function setOrigin(label = "Skopje") {
   });
 }
 
+const plan = () => screen.getByRole("button", { name: /plan my trip/i });
+
 describe("TripInputForm", () => {
   it("renders all documented fields", () => {
     render(<TripInputForm />);
     expect(screen.getByLabelText(/starting from/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/budget/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/trip length/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/travelers/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/transport/i)).toBeInTheDocument();
-    // Weighted preference controls.
-    expect(screen.getByLabelText(/culture/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/food/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/trip duration/i)).toBeInTheDocument();
+    expect(screen.getByLabelText("Travelers")).toBeInTheDocument();
+    // Transport as segmented buttons.
+    expect(
+      screen.getByRole("button", { name: /airplane/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /car/i })).toBeInTheDocument();
+    // Interests as chips.
+    expect(
+      screen.getByRole("button", { name: /culture/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /sightseeing/i }),
+    ).toBeInTheDocument();
   });
 
   it("shows vehicle_consumption only for car", () => {
     render(<TripInputForm />);
-    // Default is car -> fuel field present.
-    expect(screen.getByLabelText(/fuel use/i)).toBeInTheDocument();
-    // Switch to train -> fuel field gone.
-    fireEvent.change(screen.getByLabelText(/transport/i), {
-      target: { value: "train" },
-    });
-    expect(screen.queryByLabelText(/fuel use/i)).not.toBeInTheDocument();
-    // Back to car -> it returns.
-    fireEvent.change(screen.getByLabelText(/transport/i), {
-      target: { value: "car" },
-    });
-    expect(screen.getByLabelText(/fuel use/i)).toBeInTheDocument();
+    // Default is car -> field present.
+    expect(screen.getByLabelText(/vehicle consumption/i)).toBeInTheDocument();
+    // Switch to train -> gone.
+    fireEvent.click(screen.getByRole("button", { name: /train/i }));
+    expect(
+      screen.queryByLabelText(/vehicle consumption/i),
+    ).not.toBeInTheDocument();
+    // Back to car -> returns.
+    fireEvent.click(screen.getByRole("button", { name: /car/i }));
+    expect(screen.getByLabelText(/vehicle consumption/i)).toBeInTheDocument();
   });
 
   it("blocks an invalid submit client-side (does not call the API)", async () => {
@@ -72,7 +80,7 @@ describe("TripInputForm", () => {
     fireEvent.change(screen.getByLabelText(/budget/i), {
       target: { value: "0" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /plan my trip/i }));
+    fireEvent.click(plan());
 
     expect(
       await screen.findByText(/budget must be greater than 0/i),
@@ -80,34 +88,33 @@ describe("TripInputForm", () => {
     expect(submit).not.toHaveBeenCalled();
   });
 
-  it("requires fuel use for car and blocks submit when missing", async () => {
+  it("requires vehicle consumption for car and blocks submit when missing", async () => {
     const submit = vi.fn();
     render(<TripInputForm submit={submit} />);
     setOrigin();
-    fireEvent.change(screen.getByLabelText(/fuel use/i), {
+    fireEvent.change(screen.getByLabelText(/vehicle consumption/i), {
       target: { value: "" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /plan my trip/i }));
+    fireEvent.click(plan());
 
-    expect(
-      await screen.findByText(/fuel use .* is required/i),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/required for car/i)).toBeInTheDocument();
     expect(submit).not.toHaveBeenCalled();
   });
 
-  it("blocks submit when no preference is selected", async () => {
+  it("blocks submit when no interest is selected", async () => {
     const submit = vi.fn();
     render(<TripInputForm submit={submit} />);
     setOrigin();
-    for (const theme of ["culture", "food"]) {
-      fireEvent.change(screen.getByLabelText(new RegExp(theme, "i")), {
-        target: { value: "0" },
-      });
+    // Deselect the three default-active chips.
+    for (const name of ["culture", "food", "sightseeing"]) {
+      fireEvent.click(
+        screen.getByRole("button", { name: new RegExp(name, "i") }),
+      );
     }
-    fireEvent.click(screen.getByRole("button", { name: /plan my trip/i }));
+    fireEvent.click(plan());
 
     expect(
-      await screen.findByText(/pick at least one preference/i),
+      await screen.findByText(/pick at least one interest/i),
     ).toBeInTheDocument();
     expect(submit).not.toHaveBeenCalled();
   });
@@ -119,7 +126,7 @@ describe("TripInputForm", () => {
     const onResult = vi.fn();
     render(<TripInputForm submit={submit} onResult={onResult} />);
     setOrigin("Skopje");
-    fireEvent.click(screen.getByRole("button", { name: /plan my trip/i }));
+    fireEvent.click(plan());
 
     await waitFor(() => expect(submit).toHaveBeenCalledTimes(1));
     const payload = submit.mock.calls[0][0];
@@ -127,8 +134,13 @@ describe("TripInputForm", () => {
     expect(payload.transport_mode).toBe("car");
     expect(payload.vehicle_consumption).toBe(6.5);
     expect(payload.origin_label).toBe("Skopje");
-    expect(payload.preferences).toMatchObject({ culture: 0.8, food: 0.6 });
-    expect(payload.preferences).not.toHaveProperty("nightlife"); // zero-weight dropped
+    // Default interests -> equal weights; unselected themes are absent.
+    expect(payload.preferences).toMatchObject({
+      culture: 1,
+      food: 1,
+      tourism: 1,
+    });
+    expect(payload.preferences).not.toHaveProperty("nightlife");
 
     expect(await screen.findByText(/Budapest, Hungary/i)).toBeInTheDocument();
     expect(onResult).toHaveBeenCalledTimes(1);
@@ -143,7 +155,7 @@ describe("TripInputForm", () => {
     });
     render(<TripInputForm submit={submit} />);
     setOrigin("Skopje");
-    fireEvent.click(screen.getByRole("button", { name: /plan my trip/i }));
+    fireEvent.click(plan());
 
     expect(
       await screen.findByText(/no feasible plan within your budget/i),

@@ -1,11 +1,10 @@
 /**
- * TripInputForm — the trip Input page (BS-084).
+ * TripInputForm — the trip Input page card (BS-084 / redesign).
  *
  * Collects every documented constraint (budget, duration, travelers, transport, weighted
- * preferences, and — only for car — vehicle_consumption) plus the origin, validates it
+ * interests, and — only for car — vehicle_consumption) plus the origin, validates it
  * client-side (mirroring the server, which stays authoritative), and submits a typed
- * TripRequestPayload to POST /api/generate-trip. On success it shows a short plan summary;
- * an ApiError is surfaced with its message. `submit` is injectable for tests.
+ * TripRequestPayload to POST /api/generate-trip. `submit` is injectable for tests.
  */
 import { useId, useState, type FormEvent } from "react";
 
@@ -18,20 +17,23 @@ import type {
 } from "../api/types";
 import OriginInput, { type OriginValue } from "./OriginInput";
 
-const TRANSPORT_MODES: { value: TransportMode; label: string }[] = [
-  { value: "car", label: "Car" },
-  { value: "airplane", label: "Airplane" },
-  { value: "bus", label: "Bus" },
-  { value: "train", label: "Train" },
-];
+const TRANSPORT_MODES: { value: TransportMode; label: string; icon: string }[] =
+  [
+    { value: "airplane", label: "Airplane", icon: "✈️" },
+    { value: "car", label: "Car", icon: "🚗" },
+    { value: "bus", label: "Bus", icon: "🚌" },
+    { value: "train", label: "Train", icon: "🚆" },
+  ];
 
-const PREFERENCE_THEMES = [
-  "culture",
-  "nature",
-  "nightlife",
-  "food",
-  "tourism",
-] as const;
+// Interests map to the engine's preference themes (culture/nature/nightlife/food/tourism).
+const INTERESTS: { key: string; label: string; icon: string }[] = [
+  { key: "culture", label: "Culture", icon: "🏛️" },
+  { key: "nature", label: "Nature", icon: "⛰️" },
+  { key: "food", label: "Food", icon: "🍽️" },
+  { key: "nightlife", label: "Nightlife", icon: "🍸" },
+  { key: "tourism", label: "Sightseeing", icon: "📸" },
+];
+const DEFAULT_INTERESTS = ["culture", "food", "tourism"];
 
 interface TripInputFormProps {
   onResult?: (response: TripResponse) => void;
@@ -58,22 +60,17 @@ export default function TripInputForm({
     budget: useId(),
     duration: useId(),
     travelers: useId(),
-    transport: useId(),
     fuel: useId(),
   };
 
   const [budget, setBudget] = useState("1000");
   const [durationDays, setDurationDays] = useState("5");
-  const [travelers, setTravelers] = useState("2");
+  const [travelers, setTravelers] = useState(2);
   const [transportMode, setTransportMode] = useState<TransportMode>("car");
   const [vehicleConsumption, setVehicleConsumption] = useState("6.5");
-  const [preferences, setPreferences] = useState<Record<string, number>>({
-    culture: 0.8,
-    food: 0.6,
-    nature: 0,
-    nightlife: 0,
-    tourism: 0,
-  });
+  const [interests, setInterests] = useState<Set<string>>(
+    new Set(DEFAULT_INTERESTS),
+  );
   const [origin, setOrigin] = useState<OriginValue>({
     originLabel: "",
     originLat: null,
@@ -87,31 +84,40 @@ export default function TripInputForm({
 
   const isCar = transportMode === "car";
 
+  function toggleInterest(key: string) {
+    setInterests((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
   function validate(): Errors {
     const e: Errors = {};
     if (!(parseFloat(budget) > 0)) e.budget = "Budget must be greater than 0.";
     const d = Number(durationDays);
     if (!Number.isInteger(d) || d < 1) e.duration_days = "At least 1 day.";
-    const t = Number(travelers);
-    if (!Number.isInteger(t) || t < 1) e.travelers = "At least 1 traveler.";
+    if (!Number.isInteger(travelers) || travelers < 1)
+      e.travelers = "At least 1 traveler.";
     if (!origin.originLabel.trim())
       e.origin = "Enter where you're starting from.";
-    if (Object.values(preferences).every((w) => w <= 0))
-      e.preferences = "Pick at least one preference.";
+    if (interests.size === 0) e.preferences = "Pick at least one interest.";
     if (isCar && !(parseFloat(vehicleConsumption) > 0))
-      e.vehicle_consumption = "Fuel use (L/100 km) is required for car trips.";
+      e.vehicle_consumption =
+        "Vehicle consumption (L/100 km) is required for car trips.";
     return e;
   }
 
   function buildPayload(): TripRequestPayload {
-    const prefs: Record<string, number> = {};
-    for (const [k, w] of Object.entries(preferences)) if (w > 0) prefs[k] = w;
+    const preferences: Record<string, number> = {};
+    for (const key of interests) preferences[key] = 1.0;
     return {
       budget: parseFloat(budget),
       duration_days: Number(durationDays),
-      travelers: Number(travelers),
+      travelers,
       transport_mode: transportMode,
-      preferences: prefs,
+      preferences,
       origin_label: origin.originLabel.trim(),
       origin_lat: origin.originLat,
       origin_lon: origin.originLon,
@@ -143,38 +149,40 @@ export default function TripInputForm({
     }
   }
 
-  const fieldClass = (invalid: boolean) =>
-    `mt-1 w-full rounded-lg border px-3 py-2 text-slate-900 focus:outline-none focus:ring-1 ${
-      invalid
-        ? "border-amber-400 focus:border-amber-500 focus:ring-amber-500"
-        : "border-slate-300 focus:border-indigo-500 focus:ring-indigo-500"
-    }`;
+  const numberField =
+    "mt-1 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-lg font-semibold text-slate-900 shadow-sm focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/30";
 
   return (
-    <form onSubmit={handleSubmit} noValidate className="space-y-5 text-left">
+    <form onSubmit={handleSubmit} noValidate className="space-y-6 text-left">
       <OriginInput value={origin} onChange={setOrigin} />
       {errors.origin && (
         <p className="text-xs text-amber-600">{errors.origin}</p>
       )}
 
-      <div className="grid grid-cols-2 gap-4">
+      {/* Budget · Duration · Travelers */}
+      <div className="grid gap-4 sm:grid-cols-3">
         <div>
           <label
             htmlFor={ids.budget}
-            className="text-sm font-medium text-slate-700"
+            className="text-sm font-semibold text-slate-800"
           >
-            Budget (EUR)
+            Budget (total)
           </label>
-          <input
-            id={ids.budget}
-            type="number"
-            min="1"
-            step="1"
-            value={budget}
-            aria-invalid={Boolean(errors.budget)}
-            onChange={(e) => setBudget(e.target.value)}
-            className={fieldClass(Boolean(errors.budget))}
-          />
+          <div className="relative">
+            <input
+              id={ids.budget}
+              type="number"
+              inputMode="decimal"
+              min="1"
+              value={budget}
+              aria-invalid={Boolean(errors.budget)}
+              onChange={(e) => setBudget(e.target.value)}
+              className={`${numberField} pr-9`}
+            />
+            <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-slate-400">
+              €
+            </span>
+          </div>
           {errors.budget && (
             <p className="mt-1 text-xs text-amber-600">{errors.budget}</p>
           )}
@@ -183,20 +191,24 @@ export default function TripInputForm({
         <div>
           <label
             htmlFor={ids.duration}
-            className="text-sm font-medium text-slate-700"
+            className="text-sm font-semibold text-slate-800"
           >
-            Trip length (days)
+            Trip duration
           </label>
-          <input
-            id={ids.duration}
-            type="number"
-            min="1"
-            step="1"
-            value={durationDays}
-            aria-invalid={Boolean(errors.duration_days)}
-            onChange={(e) => setDurationDays(e.target.value)}
-            className={fieldClass(Boolean(errors.duration_days))}
-          />
+          <div className="relative">
+            <input
+              id={ids.duration}
+              type="number"
+              min="1"
+              value={durationDays}
+              aria-invalid={Boolean(errors.duration_days)}
+              onChange={(e) => setDurationDays(e.target.value)}
+              className={`${numberField} pr-14`}
+            />
+            <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-sm text-slate-400">
+              days
+            </span>
+          </div>
           {errors.duration_days && (
             <p className="mt-1 text-xs text-amber-600">
               {errors.duration_days}
@@ -207,54 +219,83 @@ export default function TripInputForm({
         <div>
           <label
             htmlFor={ids.travelers}
-            className="text-sm font-medium text-slate-700"
+            className="text-sm font-semibold text-slate-800"
           >
             Travelers
           </label>
-          <input
-            id={ids.travelers}
-            type="number"
-            min="1"
-            step="1"
-            value={travelers}
-            aria-invalid={Boolean(errors.travelers)}
-            onChange={(e) => setTravelers(e.target.value)}
-            className={fieldClass(Boolean(errors.travelers))}
-          />
+          <div className="mt-1 flex items-center rounded-xl border border-slate-200 bg-white shadow-sm">
+            <button
+              type="button"
+              aria-label="Fewer travelers"
+              onClick={() => setTravelers((n) => Math.max(1, n - 1))}
+              className="px-4 py-3 text-lg text-slate-500 hover:text-teal-600"
+            >
+              −
+            </button>
+            <input
+              id={ids.travelers}
+              type="number"
+              min="1"
+              value={travelers}
+              aria-invalid={Boolean(errors.travelers)}
+              onChange={(e) => setTravelers(Number(e.target.value))}
+              className="w-full border-x border-slate-100 py-3 text-center text-lg font-semibold text-slate-900 focus:outline-none"
+            />
+            <button
+              type="button"
+              aria-label="More travelers"
+              onClick={() => setTravelers((n) => n + 1)}
+              className="px-4 py-3 text-lg text-slate-500 hover:text-teal-600"
+            >
+              +
+            </button>
+          </div>
           {errors.travelers && (
             <p className="mt-1 text-xs text-amber-600">{errors.travelers}</p>
           )}
         </div>
+      </div>
 
-        <div>
-          <label
-            htmlFor={ids.transport}
-            className="text-sm font-medium text-slate-700"
-          >
-            Transport
-          </label>
-          <select
-            id={ids.transport}
-            value={transportMode}
-            onChange={(e) => setTransportMode(e.target.value as TransportMode)}
-            className={fieldClass(false)}
-          >
-            {TRANSPORT_MODES.map((m) => (
-              <option key={m.value} value={m.value}>
+      {/* Transport mode — segmented cards */}
+      <div>
+        <span className="text-sm font-semibold text-slate-800">
+          Transport mode{" "}
+          <span className="font-normal text-slate-400">
+            (from your location)
+          </span>
+        </span>
+        <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {TRANSPORT_MODES.map((m) => {
+            const active = transportMode === m.value;
+            return (
+              <button
+                key={m.value}
+                type="button"
+                aria-pressed={active}
+                onClick={() => setTransportMode(m.value)}
+                className={`flex flex-col items-center gap-1 rounded-xl border px-3 py-3 text-sm font-medium transition ${
+                  active
+                    ? "border-teal-500 bg-teal-50 text-teal-700 ring-1 ring-teal-500/40"
+                    : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
+                }`}
+              >
+                <span className="text-xl">{m.icon}</span>
                 {m.label}
-              </option>
-            ))}
-          </select>
+              </button>
+            );
+          })}
         </div>
       </div>
 
+      {/* Conditional: vehicle consumption for car */}
       {isCar && (
         <div>
           <label
             htmlFor={ids.fuel}
-            className="text-sm font-medium text-slate-700"
+            className="text-sm font-semibold text-slate-800"
           >
-            Fuel use (L/100 km)
+            Vehicle consumption{" "}
+            <span className="font-normal text-slate-400">(L/100 km)</span>
           </label>
           <input
             id={ids.fuel}
@@ -264,7 +305,7 @@ export default function TripInputForm({
             value={vehicleConsumption}
             aria-invalid={Boolean(errors.vehicle_consumption)}
             onChange={(e) => setVehicleConsumption(e.target.value)}
-            className={fieldClass(Boolean(errors.vehicle_consumption))}
+            className={numberField}
           />
           {errors.vehicle_consumption && (
             <p className="mt-1 text-xs text-amber-600">
@@ -274,63 +315,78 @@ export default function TripInputForm({
         </div>
       )}
 
-      <fieldset>
-        <legend className="text-sm font-medium text-slate-700">
-          What matters most?{" "}
-          <span className="font-normal text-slate-400">(weight each)</span>
-        </legend>
-        <div className="mt-2 space-y-2">
-          {PREFERENCE_THEMES.map((theme) => (
-            <div key={theme} className="flex items-center gap-3">
-              <label
-                htmlFor={`pref-${theme}`}
-                className="w-24 text-sm capitalize text-slate-600"
+      {/* Interests — chips */}
+      <div>
+        <span className="text-sm font-semibold text-slate-800">
+          Interests{" "}
+          <span className="font-normal text-slate-400">
+            (pick your favorites)
+          </span>
+        </span>
+        <div className="mt-2 flex flex-wrap gap-2">
+          {INTERESTS.map((it) => {
+            const active = interests.has(it.key);
+            return (
+              <button
+                key={it.key}
+                type="button"
+                aria-pressed={active}
+                onClick={() => toggleInterest(it.key)}
+                className={`flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium transition ${
+                  active
+                    ? "border-teal-500 bg-teal-50 text-teal-700"
+                    : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
+                }`}
               >
-                {theme}
-              </label>
-              <input
-                id={`pref-${theme}`}
-                type="range"
-                min="0"
-                max="1"
-                step="0.1"
-                value={preferences[theme]}
-                onChange={(e) =>
-                  setPreferences((p) => ({
-                    ...p,
-                    [theme]: Number(e.target.value),
-                  }))
-                }
-                className="flex-1 accent-indigo-600"
-              />
-              <span className="w-8 text-right text-xs tabular-nums text-slate-500">
-                {preferences[theme].toFixed(1)}
-              </span>
-            </div>
-          ))}
+                <span>{it.icon}</span>
+                {it.label}
+              </button>
+            );
+          })}
         </div>
         {errors.preferences && (
           <p className="mt-1 text-xs text-amber-600">{errors.preferences}</p>
         )}
-      </fieldset>
+      </div>
 
+      {/* Helper note */}
+      <div className="flex items-start gap-2 rounded-xl bg-teal-50/70 px-4 py-3 text-sm text-slate-600">
+        <span aria-hidden>✨</span>
+        <p>
+          <span className="font-semibold text-slate-800">How it works:</span>{" "}
+          all planning happens on our servers — our AI agents pick the single
+          best trip within budget and build your day-by-day itinerary. Results
+          take a few seconds.
+        </p>
+      </div>
+
+      {/* CTA */}
       <button
         type="submit"
         disabled={submitting}
-        className="w-full rounded-lg bg-indigo-600 px-4 py-2.5 font-medium text-white hover:bg-indigo-700 disabled:opacity-60"
+        className="w-full rounded-xl bg-teal-600 px-4 py-4 text-center font-semibold text-white shadow-md transition hover:bg-teal-700 disabled:opacity-60"
       >
-        {submitting ? "Planning your trip…" : "Plan my trip"}
+        {submitting ? (
+          "Planning your trip…"
+        ) : (
+          <>
+            <span className="block text-lg">✨ Plan my trip</span>
+            <span className="block text-sm font-normal text-teal-100">
+              Let AI discover the perfect destination for you
+            </span>
+          </>
+        )}
       </button>
 
       <div aria-live="polite">
         {submitError && (
-          <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700">
+          <p className="rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-700">
             {submitError}
           </p>
         )}
         {result && (
-          <div className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-            <p className="font-medium">
+          <div className="rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+            <p className="font-semibold">
               {result.chosen_plan.destination.city},{" "}
               {result.chosen_plan.destination.country} — €
               {Math.round(result.chosen_plan.total_cost)}
