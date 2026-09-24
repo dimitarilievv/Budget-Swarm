@@ -1039,6 +1039,19 @@ Caching (in PostgreSQL and/or an in-memory layer) reduces external calls, protec
 
 **Do not over-engineer.** A single cache table keyed by `(provider, query_signature)` with a `fetched_at` timestamp and per-data-type TTL is enough. No distributed cache, no elaborate invalidation graph — the access patterns are simple and read-heavy.
 
+**Implementation.** The read-through lives in `backend/db/retrieval.py` (`ApiCacheStore` over the `api_cache` table + `read_through`), and the per-data-type TTL policy in `backend/db/cache_ttl.py`. `make_signature` canonicalises request params (sorted-key JSON, SHA-256 when longer than the column) into `query_signature`. A fresh entry is served `cached` without a fetch; a missing or expired entry falls through to the live fetch, is stored with its TTL, and served `real` (an expired entry is thus refetched). `db.cache_ttl.CacheType` → default TTL:
+
+| Type | Default TTL | Env override |
+|------|-------------|--------------|
+| `weather` | 6 hours | `CACHE_TTL_WEATHER_HOURS` |
+| `price` (flights / transit) | 12 hours | `CACHE_TTL_PRICE_HOURS` |
+| `route` | 7 days | `CACHE_TTL_ROUTE_HOURS` |
+| `poi` | 30 days | `CACHE_TTL_POI_HOURS` |
+| `reference` | long-lived (no expiry) | `CACHE_TTL_REFERENCE_HOURS` |
+| `accommodation` | long-lived (refreshed by re-ingest) | `CACHE_TTL_ACCOMMODATION_HOURS` |
+
+Each provider family carries a `cache_type`, so `BaseProvider` applies the right TTL automatically; an explicit `ttl=` at construction overrides it, and an override of `0` hours means long-lived. `CACHE_TTL_*` are plain tuning knobs (no secrets).
+
 ---
 
 # 24. Security

@@ -114,6 +114,7 @@ class PublicTransportProvider(BaseProvider[PublicTransportRequest, TransportOpti
     """Interface for a source of bus/train trip options."""
 
     name = "public-transport"
+    cache_type = "price"  # short-to-medium TTL — indicative prices, cache hard (§23)
 
     def cache_key(self, request: PublicTransportRequest) -> dict[str, Any]:
         """Cache per city-pair (+ currency/date) — indicative prices, cache hard."""

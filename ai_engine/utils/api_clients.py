@@ -55,6 +55,10 @@ QUALITY_ESTIMATED = "estimated"
 Req = TypeVar("Req")
 Data = TypeVar("Data")
 
+# Sentinel: distinguishes "ttl not given" (use the per-type policy) from an explicit
+# ttl=None (force long-lived). See BaseProvider.cache_type / _resolve_ttl.
+_TTL_UNSET: object = object()
+
 
 # --- errors -----------------------------------------------------------------
 
@@ -233,21 +237,38 @@ class BaseProvider(ABC, Generic[Req, Data]):
     #: short, stable identifier — also the cache ``provider`` key.
     name: str = "provider"
 
+    #: data-type tag driving the per-type cache TTL (db.cache_ttl.CacheType value,
+    #: e.g. "weather"). Set on each provider family; None means long-lived caching.
+    #: An explicit ``ttl=`` at construction always overrides this.
+    cache_type: str | None = None
+
     def __init__(
         self,
         *,
         name: str | None = None,
         cache: CacheHook | None = None,
-        ttl: timedelta | None = None,
+        ttl: timedelta | None = _TTL_UNSET,  # type: ignore[assignment]
         timeout: float | None = 10.0,
         retry: RetryPolicy | None = None,
     ) -> None:
         if name is not None:
             self.name = name
         self.cache = cache
-        self.ttl = ttl
+        # No explicit ttl → derive it from the provider's data type (§23 policy).
+        self.ttl = self._resolve_ttl() if ttl is _TTL_UNSET else ttl
         self.timeout = timeout
         self.retry = retry or RetryPolicy()
+
+    def _resolve_ttl(self) -> timedelta | None:
+        """Look up this provider's per-type TTL from db.cache_ttl (lazily, so ai_engine
+        stays importable without the backend). Unknown/missing type → long-lived."""
+        if self.cache_type is None:
+            return None
+        try:
+            from db.cache_ttl import ttl_for
+        except Exception:  # noqa: BLE001 - backend not on path: degrade to long-lived
+            return None
+        return ttl_for(self.cache_type)
 
     @abstractmethod
     def _fetch(self, request: Req) -> Data:
