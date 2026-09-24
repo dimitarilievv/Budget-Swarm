@@ -122,6 +122,7 @@ class WeatherProvider(BaseProvider[WeatherRequest, list[WeatherProfile]], ABC):
     """Interface for a source of normalized daily forecasts."""
 
     name = "weather"
+    cache_type = "weather"  # short TTL — forecasts move within hours (§23)
 
     def cache_key(self, request: WeatherRequest) -> dict[str, Any]:
         """Cache per destination + date window (short TTL set by the caller)."""

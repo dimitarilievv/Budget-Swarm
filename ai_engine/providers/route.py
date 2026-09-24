@@ -86,6 +86,8 @@ class RouteProvider(BaseProvider[RouteRequest, Route], ABC):
     the base. Concrete providers implement :meth:`_fetch`.
     """
 
+    cache_type = "route"  # medium TTL — origin→destination distances are stable (§23)
+
     name = "route"
 
     def cache_key(self, request: RouteRequest) -> dict[str, Any]:
@@ -107,9 +109,8 @@ class OpenRouteServiceProvider(RouteProvider):
     name = "openrouteservice"
 
     def __init__(self, transport: RouteTransport, **kwargs: Any) -> None:
-        # ORS routes are stable, so a long cache TTL is appropriate; callers may
-        # override via ttl=. Default left to the base (None = long-lived) unless
-        # a cache hook with its own TTL policy is supplied.
+        # ORS routes are stable: the base applies the "route" medium TTL by default
+        # (db.cache_ttl §23); callers may still override via ttl=.
         super().__init__(**kwargs)
         self._transport = transport
 

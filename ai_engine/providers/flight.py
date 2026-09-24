@@ -99,6 +99,7 @@ class FlightProvider(BaseProvider[FlightRequest, Flight], ABC):
     """Interface for a source of indicative flight price + duration."""
 
     name = "flight"
+    cache_type = "price"  # short-to-medium TTL — indicative prices, protect free tier (§23)
 
     def cache_key(self, request: FlightRequest) -> dict[str, Any]:
         """Cache per city-pair (+ currency/date) to protect the free tier."""
