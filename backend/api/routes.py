@@ -25,6 +25,7 @@ from fastapi import APIRouter, Depends
 from schemas.trip_schema import ChosenPlan, TripRequest, TripResponse
 from services.coordinator_service import CoordinatorService, TripEngine
 from services.engine_stub import StubTripEngine
+from services.trip_persistence import NullTripPersister, TripPersister
 from services.trip_store import StubTripStore, TripStore
 
 logger = logging.getLogger(__name__)
@@ -48,17 +49,35 @@ def get_coordinator_service(
     return CoordinatorService(engine)
 
 
+def get_trip_persister() -> TripPersister:
+    """Provide the trip-history writer.
+
+    Defaults to the no-op :class:`NullTripPersister` so the endpoint runs without a
+    database (``trip_id`` stays null). Wherever a database is available, the DB-backed
+    :class:`~services.trip_persistence.DbTripPersister` is injected via this dependency,
+    and the persisted ``trip_id`` is returned in ``meta`` (BS-082).
+    """
+    return NullTripPersister()
+
+
 @router.post("/generate-trip", response_model=TripResponse, tags=["trips"])
 def generate_trip(
     request: TripRequest,
     service: CoordinatorService = Depends(get_coordinator_service),
+    persister: TripPersister = Depends(get_trip_persister),
 ) -> TripResponse:
     """Run the agent→optimize→explain pipeline for the given constraints.
 
-    A :class:`NoPlanAvailableError` from the engine propagates to the global
-    handler, which renders the 503 NO_PLAN_AVAILABLE envelope (api.md).
+    The generated plan is persisted (when a store is wired) and its ``trip_id`` is put
+    in ``meta`` so it can be fetched later via ``GET /api/trips/{trip_id}``. A
+    :class:`NoPlanAvailableError` from the engine propagates to the global handler, which
+    renders the 503 NO_PLAN_AVAILABLE envelope (api.md).
     """
-    return service.generate_trip(request)
+    response = service.generate_trip(request)
+    trip_id = persister.persist(request, response)
+    if trip_id is not None:
+        response.meta.trip_id = trip_id
+    return response
 
 
 def get_trip_store() -> TripStore:

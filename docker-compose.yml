@@ -25,10 +25,26 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: ${DATABASE_URL}
+      # /app is the working dir; ai_engine is mounted under it so `import ai_engine`
+      # resolves in the backend container (BS-081).
+      PYTHONPATH: /app
+      # Turn on the real decision engine (needs a seeded reference DB + the keys below).
+      ENABLE_REAL_ENGINE: ${ENABLE_REAL_ENGINE:-false}
+      # Optional provider keys — each provider has a keyless fallback, so these only
+      # upgrade estimated data to live data (BS-081).
+      ORS_API_KEY: ${ORS_API_KEY:-}
+      TRAVELPAYOUTS_TOKEN: ${TRAVELPAYOUTS_TOKEN:-}
+      OPENTRIPMAP_API_KEY: ${OPENTRIPMAP_API_KEY:-}
+      APIFY_TOKEN: ${APIFY_TOKEN:-}
+      PUBLIC_TRANSPORT_API_KEY: ${PUBLIC_TRANSPORT_API_KEY:-}
     ports:
       - "8000:8000"
     volumes:
       - ./backend:/app
+      # Mount the engine + its reference data into the backend container so the real
+      # pipeline is importable and can read the ingested datasets (BS-081).
+      - ./ai_engine:/app/ai_engine
+      - ./data:/app/data
     depends_on:
       db:
         condition: service_healthy

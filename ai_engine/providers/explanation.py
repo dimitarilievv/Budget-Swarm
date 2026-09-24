@@ -56,6 +56,14 @@ class TripExplanationInput:
     runner_up: str | None = None
     runner_up_note: str | None = None
     weather_note: str | None = None
+    # Extra facts the context builder (BS-077) supplies for the LLM to narrate. All
+    # optional: they drop out of the prompt when absent, so a minimal input still works.
+    overall_score: float | None = None
+    transport_cost: float | None = None
+    accommodation_cost: float | None = None
+    activities_cost: float | None = None
+    # Human-readable weather adjustments, e.g. "Buda Castle was moved to day 4".
+    weather_adjustments: list[str] = field(default_factory=list)
 
     @property
     def under_budget(self) -> float:
@@ -164,10 +172,34 @@ def build_prompt(plan: TripExplanationInput) -> str:
     ]
     if plan.duration_days:
         facts.append(f"- Duration: {plan.duration_days} nights")
+    components = [
+        (
+            f"transport {_fmt_money(plan.transport_cost, plan.currency)}"
+            if plan.transport_cost is not None
+            else None
+        ),
+        (
+            f"accommodation {_fmt_money(plan.accommodation_cost, plan.currency)}"
+            if plan.accommodation_cost is not None
+            else None
+        ),
+        (
+            f"activities {_fmt_money(plan.activities_cost, plan.currency)}"
+            if plan.activities_cost is not None
+            else None
+        ),
+    ]
+    components = [c for c in components if c]
+    if components:
+        facts.append(f"- Cost breakdown: {', '.join(components)}")
+    if plan.overall_score is not None:
+        facts.append(f"- Overall match score: {plan.overall_score:.2f} out of 1.00")
     if plan.preferences:
         facts.append(f"- Matched preferences: {_join_prefs(plan.preferences)}")
     if plan.weather_note:
         facts.append(f"- Weather: {plan.weather_note}")
+    if plan.weather_adjustments:
+        facts.append(f"- Weather adjustments: {'; '.join(plan.weather_adjustments)}")
     if plan.runner_up and plan.runner_up_note:
         facts.append(f"- Runner-up: {plan.runner_up} {plan.runner_up_note}")
     facts_block = "\n".join(facts)

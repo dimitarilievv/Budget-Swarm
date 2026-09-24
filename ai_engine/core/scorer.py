@@ -38,7 +38,7 @@ from __future__ import annotations
 import logging
 import statistics
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from ai_engine.domain import (
     Accommodation,
@@ -212,6 +212,10 @@ class CandidateInputs:
     weather: WeatherProfile | None = None
     nights: int = 1
 
+    def __post_init__(self) -> None:
+        if self.nights < 1:
+            raise ValueError(f"nights must be >= 1, got {self.nights!r}")
+
 
 @dataclass(frozen=True)
 class FactorScores:
@@ -305,24 +309,68 @@ def accommodation_score(accommodations: Sequence[Accommodation]) -> float:
 # --- magnitude factors (normalized across the candidate set) ----------------
 
 
+@dataclass(frozen=True)
+class CostBreakdown:
+    """The components of a candidate's total EUR trip cost (for the response/comparison).
+
+    ``transport`` is the reach cost; ``accommodation`` is the **median** nightly price of
+    the representative options times the nights (a typical stay); ``activities`` is the
+    sum of the known activity entrance fees. ``total`` mirrors :func:`trip_cost` — it is
+    ``None`` exactly when transport cost is unknown (the trip cannot be costed), and
+    otherwise equals ``transport + accommodation + activities``. A component is ``None``
+    when its data is absent (no accommodation options, no transport).
+    """
+
+    transport: float | None
+    accommodation: float | None
+    activities: float
+    total: float | None
+
+    @property
+    def transport_share(self) -> float | None:
+        """Transport as a fraction of the total trip cost (``None`` when uncostable).
+
+        The intuitive "how much of the trip is the journey" figure (e.g. ``0.62`` = 62%
+        of spend went to transport). ``None`` when the total is unknown or zero.
+        """
+        if self.transport is None or self.total is None or self.total <= 0:
+            return None
+        return self.transport / self.total
+
+
+def cost_breakdown(candidate: CandidateInputs) -> CostBreakdown:
+    """Break a candidate's trip cost into transport / accommodation / activities.
+
+    The single source of truth behind :func:`trip_cost` and the response's
+    ``cost_breakdown`` / ranked-candidate cost fields. Deterministic.
+    """
+    transport = candidate.transport.cost if candidate.transport is not None else None
+    prices = [a.price_per_night for a in candidate.accommodations if a.price_per_night is not None]
+    accommodation = statistics.median(prices) * max(1, candidate.nights) if prices else None
+    activities = sum(a.cost for a in candidate.activities if a.cost is not None)
+    # Transport cost is required to cost the trip at all (it is the dominant,
+    # distance-driven component); without it the total is unknown, not a cheap partial.
+    if transport is None:
+        total = None
+    else:
+        total = transport + (accommodation or 0.0) + activities
+    return CostBreakdown(
+        transport=transport, accommodation=accommodation, activities=activities, total=total
+    )
+
+
 def trip_cost(candidate: CandidateInputs) -> float | None:
     """Total EUR trip cost: transport + typical accommodation * nights + activities.
 
-    Accommodation uses the **median** nightly price of the representative options (a
-    typical stay, not the cheapest or dearest). Activity entrance costs are summed
-    where known (``None`` = free/unknown). Returns ``None`` only when no component is
-    known at all, so the cost factor can mark it missing. Deterministic.
+    The **transport cost is required**: it is the dominant, distance-driven component
+    that differentiates candidates, so a trip whose transport cost is unknown has an
+    unknown total and returns ``None`` — the cost factor then penalizes it as missing
+    rather than making it look artificially cheap for lacking a component. When
+    transport cost is known, accommodation (the **median** nightly price of the
+    representative options — a typical stay) and known activity entrance costs
+    (``None`` = free/unknown) are added. Deterministic.
     """
-    components: list[float] = []
-    if candidate.transport is not None and candidate.transport.cost is not None:
-        components.append(candidate.transport.cost)
-    prices = [a.price_per_night for a in candidate.accommodations if a.price_per_night is not None]
-    if prices:
-        components.append(statistics.median(prices) * max(1, candidate.nights))
-    activity_cost = sum(a.cost for a in candidate.activities if a.cost is not None)
-    if activity_cost:
-        components.append(activity_cost)
-    return sum(components) if components else None
+    return cost_breakdown(candidate).total
 
 
 def travel_minutes(candidate: CandidateInputs) -> float | None:
@@ -331,6 +379,120 @@ def travel_minutes(candidate: CandidateInputs) -> float | None:
     if transport is None or transport.duration_minutes is None:
         return None
     return float(transport.duration_minutes)
+
+
+# ============================================================================
+# Per-activity valuation + representative accommodation (Phase-6 reconciliation)
+# ============================================================================
+#
+# The optimizer schedules only a subset of a destination's activities. To keep the
+# *most preference-relevant* ones (rather than an arbitrary subset that merely fits the
+# time budget), each activity is valued against the user's preference vector and that
+# value drives the scheduler's selection. The mapping below is deterministic
+# classification logic (an activity's OSM/OpenTripMap category → a preference theme),
+# not ingested data — analogous to the labelled approximation constants elsewhere.
+
+# Baseline value every schedulable activity carries, so an off-theme or uncategorized
+# activity is still worth doing (and fills spare time) rather than being ignored.
+_ACTIVITY_VALUE_BASE = 0.3
+# Value used when preferences or the activity's theme give no signal either way.
+_NEUTRAL_ACTIVITY_VALUE = 0.5
+
+# Preference theme -> substrings that identify it in an activity's free-text category.
+# Matched case-insensitively as substrings, covering the common POI category words.
+_ACTIVITY_THEME_KEYWORDS: Mapping[str, tuple[str, ...]] = {
+    "culture": (
+        "museum",
+        "gallery",
+        "monument",
+        "castle",
+        "historic",
+        "architecture",
+        "church",
+        "cathedral",
+        "palace",
+        "memorial",
+        "theatre",
+        "theater",
+        "cultural",
+        "heritage",
+        "ruins",
+        "archaeolog",
+        "fort",
+        "tower",
+    ),
+    "nature": (
+        "park",
+        "garden",
+        "nature",
+        "beach",
+        "viewpoint",
+        "mountain",
+        "lake",
+        "forest",
+        "natural",
+        "waterfall",
+        "hill",
+        "reserve",
+        "zoo",
+        "botanic",
+    ),
+    "nightlife": ("bar", "club", "nightlife", "pub", "nightclub", "lounge"),
+    "food": ("restaurant", "cafe", "food", "market", "cuisine", "winery", "brewery"),
+    "tourism": ("attraction", "tourism", "landmark", "sightseeing", "tourist", "square"),
+}
+
+
+def _activity_theme(category: str | None) -> str | None:
+    """Classify an activity's category into a preference theme (``None`` if unknown)."""
+    if not category:
+        return None
+    lowered = category.lower()
+    for theme, keywords in _ACTIVITY_THEME_KEYWORDS.items():
+        if any(word in lowered for word in keywords):
+            return theme
+    return None
+
+
+def activity_value(activity: Activity, preferences: PreferenceWeights) -> float:
+    """How well one activity fits the user's preferences, in ``[0, 1]``.
+
+    The activity's category is classified into a preference theme; the value is the
+    theme's share of the user's positive preference weight, lifted onto a
+    ``[_ACTIVITY_VALUE_BASE, 1]`` floor so an off-theme activity still has worth (it can
+    fill spare time) but a preferred-theme activity scores higher. With no usable
+    preferences or an unrecognised category it returns a neutral value. Deterministic.
+    """
+    positive = {k: w for k, w in preferences.items() if w and w > 0 and k in _PREFERENCE_FEATURES}
+    theme = _activity_theme(activity.category)
+    if not positive or theme is None:
+        return _NEUTRAL_ACTIVITY_VALUE
+    share = positive.get(theme, 0.0) / sum(positive.values())
+    return _clamp01(_ACTIVITY_VALUE_BASE + (1.0 - _ACTIVITY_VALUE_BASE) * share)
+
+
+def activity_values(activities: Sequence[Activity], preferences: PreferenceWeights) -> list[float]:
+    """:func:`activity_value` for each activity, aligned to input order."""
+    return [activity_value(a, preferences) for a in activities]
+
+
+def representative_accommodation(
+    accommodations: Sequence[Accommodation],
+) -> Accommodation | None:
+    """Pick the single representative lodging for the plan — a *typical* priced stay.
+
+    Chooses the median-priced option (ties broken toward the better rating), matching
+    the median nightly price :func:`cost_breakdown` uses, so the reported plan's
+    accommodation and its cost are consistent. Returns ``None`` for no options, and the
+    first option when none carry a price. Deterministic.
+    """
+    if not accommodations:
+        return None
+    priced = [a for a in accommodations if a.price_per_night is not None]
+    if not priced:
+        return accommodations[0]
+    ordered = sorted(priced, key=lambda a: (a.price_per_night, -(a.rating or 0.0)))
+    return ordered[len(ordered) // 2]
 
 
 # --- assembly ---------------------------------------------------------------
@@ -369,3 +531,151 @@ def compute_factor_scores(
     ]
     logger.debug("scorer: computed factor scores for %d candidate(s)", len(scores))
     return scores
+
+
+# ============================================================================
+# Weighted overall score (BS-070) — configurable, preference-modulated weights
+# ============================================================================
+#
+# The six factor scores collapse into one ``overall_score`` per candidate — a
+# weighted sum minus any soft penalties (technical-doc §14, ADR-006):
+#
+#     overall_score = Σ (weight_f · factor_f) − penalty
+#
+# Weights are configurable (:class:`FactorWeights`; the defaults below are the
+# "config") and are **modulated by the user's preferences**: a thematically
+# concentrated preference (culture-heavy) lifts the ``preference`` factor's weight,
+# so the ranking tilts toward destinations that fit what the user cares about. The
+# weights are normalized at use, so lifting one factor proportionally lowers the
+# rest. Scoring stays separate from the optimizer's hard constraints/objective
+# (ADR-006): ``penalty`` here is a soft deduction the caller supplies, not a
+# feasibility rule.
+
+# Baseline factor weights (the request-level "config"): a budget-first profile.
+# Need not sum to 1 — they are normalized when applied.
+DEFAULT_WEIGHTS_MAP = {
+    "cost": 0.30,
+    "preference": 0.25,
+    "experience": 0.15,
+    "weather": 0.10,
+    "travel": 0.10,
+    "accommodation": 0.10,
+}
+
+# How strongly a concentrated preference lifts the preference factor weight:
+# modulated = base · (1 + strength · peak_share). At 1.0, an all-in thematic
+# preference (one theme with all the weight) doubles the preference weight.
+DEFAULT_PREFERENCE_MODULATION_STRENGTH = 1.0
+
+_FACTOR_NAMES = ("cost", "preference", "experience", "weather", "travel", "accommodation")
+
+
+@dataclass(frozen=True)
+class FactorWeights:
+    """Relative importance of each factor in the overall score (the scoring config).
+
+    Any non-negative weights are accepted; only their ratios matter because
+    :meth:`normalized` rescales them to sum to 1 before use. At least one must be
+    positive.
+    """
+
+    cost: float = DEFAULT_WEIGHTS_MAP["cost"]
+    preference: float = DEFAULT_WEIGHTS_MAP["preference"]
+    experience: float = DEFAULT_WEIGHTS_MAP["experience"]
+    weather: float = DEFAULT_WEIGHTS_MAP["weather"]
+    travel: float = DEFAULT_WEIGHTS_MAP["travel"]
+    accommodation: float = DEFAULT_WEIGHTS_MAP["accommodation"]
+
+    def __post_init__(self) -> None:
+        for name in _FACTOR_NAMES:
+            value = getattr(self, name)
+            if value < 0:
+                raise ValueError(f"weight {name} must be non-negative, got {value!r}")
+        if self.total() <= 0:
+            raise ValueError("at least one factor weight must be positive")
+
+    def total(self) -> float:
+        return sum(getattr(self, name) for name in _FACTOR_NAMES)
+
+    def normalized(self) -> FactorWeights:
+        """A copy whose weights sum to 1.0 (preserving their ratios)."""
+        total = self.total()
+        return FactorWeights(**{name: getattr(self, name) / total for name in _FACTOR_NAMES})
+
+
+DEFAULT_WEIGHTS = FactorWeights()
+
+
+def modulate_weights(
+    base: FactorWeights,
+    preferences: PreferenceWeights | None,
+    *,
+    strength: float = DEFAULT_PREFERENCE_MODULATION_STRENGTH,
+) -> FactorWeights:
+    """Lift the ``preference`` factor weight by how concentrated the user's prefs are.
+
+    ``peak_share`` is the largest single preference's share of the total positive
+    preference weight (1.0 = all-in on one theme, e.g. culture-heavy); the preference
+    factor weight becomes ``base.preference · (1 + strength · peak_share)``. With no
+    positive preferences the weights are returned unchanged. The other weights are
+    left as-is and shrink proportionally only when :meth:`FactorWeights.normalized`
+    is applied. Deterministic.
+    """
+    positive = {k: w for k, w in (preferences or {}).items() if w and w > 0}
+    if not positive:
+        return base
+    peak_share = max(positive.values()) / sum(positive.values())
+    boosted = base.preference * (1.0 + max(0.0, strength) * peak_share)
+    logger.debug(
+        "scorer: modulating preference weight %.3f -> %.3f (peak_share=%.2f)",
+        base.preference,
+        boosted,
+        peak_share,
+    )
+    return replace(base, preference=boosted)
+
+
+def overall_score(
+    factors: FactorScores,
+    weights: FactorWeights = DEFAULT_WEIGHTS,
+    *,
+    penalty: float = 0.0,
+) -> float:
+    """Weighted sum of the factor scores minus ``penalty``, clamped to ``[0, 1]``.
+
+    Weights are normalized to sum to 1, so the weighted sum is in ``[0, 1]``; a
+    non-negative ``penalty`` (a soft deduction from the caller — never a hard
+    constraint) lowers it. A negative penalty is rejected — it would be a silent
+    bonus, not a deduction. Deterministic.
+    """
+    if penalty < 0:
+        raise ValueError(f"penalty must be non-negative, got {penalty!r}")
+    w = weights.normalized()
+    # Sum over the canonical factor names so a new factor cannot be silently omitted.
+    score = sum(getattr(w, name) * getattr(factors, name) for name in _FACTOR_NAMES)
+    return _clamp01(score - penalty)
+
+
+def score_candidates(
+    factor_scores: Sequence[FactorScores],
+    *,
+    weights: FactorWeights = DEFAULT_WEIGHTS,
+    preferences: PreferenceWeights | None = None,
+    penalties: Sequence[float] | None = None,
+) -> list[float]:
+    """Overall score for each candidate, with preference-modulated weights applied once.
+
+    ``penalties`` (optional) must align with ``factor_scores`` one-to-one; omitted
+    means no penalties. The weights are modulated by ``preferences`` a single time and
+    reused for every candidate, so the ranking is consistent and deterministic.
+    """
+    if penalties is not None and len(penalties) != len(factor_scores):
+        raise ValueError(
+            f"penalties length ({len(penalties)}) must match factor_scores "
+            f"({len(factor_scores)})"
+        )
+    effective = modulate_weights(weights, preferences)
+    pens = penalties if penalties is not None else [0.0] * len(factor_scores)
+    return [
+        overall_score(f, effective, penalty=p) for f, p in zip(factor_scores, pens, strict=True)
+    ]
