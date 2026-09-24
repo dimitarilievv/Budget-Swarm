@@ -81,7 +81,9 @@ The single primary endpoint. Takes user constraints, runs the full agent → opt
             "indoor_outdoor": "outdoor",
             "start_time": "10:00",
             "end_time": "12:30",
-            "was_rescheduled": false
+            "was_rescheduled": false,
+            "latitude": 47.496,
+            "longitude": 19.0396
           }
         ]
       }

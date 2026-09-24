@@ -1,1 +1,85 @@
 @import "tailwindcss";
+
+/* Make Plus Jakarta Sans the default face so utilities like `font-sans` and all body
+   text use it. Loaded via <link> in index.html. */
+@theme {
+  --font-sans:
+    "Plus Jakarta Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    Roboto, Helvetica, Arial, sans-serif;
+}
+
+html {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Soft mint ground. The body carries the base tint and #root layers two faint
+   teal/amber radials over it, so the light interface never reads as blank white. */
+body {
+  margin: 0;
+  background: #eef7f5;
+  color: #0f172a;
+}
+
+/* Confine Leaflet's internal stacking (its panes/controls go up to z-index 1000) to the map
+   container by making it its own stacking context. Without this the map's controls paint over
+   the sticky navbar (z-20) when the page scrolls. */
+.leaflet-container {
+  isolation: isolate;
+}
+
+/* --- Entrance animations -------------------------------------------------- */
+/* Small, tasteful transitions used across pages. `--enter-delay` lets a list stagger its
+   children (set it inline per item). All motion is disabled under prefers-reduced-motion. */
+@keyframes bs-fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes bs-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.animate-enter {
+  animation: bs-fade-in-up 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: var(--enter-delay, 0ms);
+}
+
+.animate-fade {
+  animation: bs-fade-in 0.4s ease both;
+  animation-delay: var(--enter-delay, 0ms);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-enter,
+  .animate-fade {
+    animation: none;
+  }
+}
+
+#root {
+  min-height: 100vh;
+  background-image:
+    radial-gradient(
+      circle at 8% 58%,
+      rgba(45, 212, 191, 0.1),
+      transparent 22rem
+    ),
+    radial-gradient(
+      circle at 93% 72%,
+      rgba(251, 191, 36, 0.1),
+      transparent 19rem
+    );
+}

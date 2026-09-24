@@ -1,8 +1,12 @@
 import { AxiosError, type AxiosInstance, type AxiosResponse } from "axios";
 
-import { ApiError } from "./errors";
-import { generateTrip, getTrip } from "./trips";
-import type { ChosenPlan, TripRequestPayload, TripResponse } from "./types";
+import { ApiError } from "@/api/errors";
+import { generateTrip, getTrip } from "@/api/endpoints";
+import type {
+  ChosenPlan,
+  TripRequestPayload,
+  TripResponse,
+} from "@/types/trip";
 
 const REQUEST: TripRequestPayload = {
   budget: 1000,

@@ -69,6 +69,9 @@ class StubTripEngine:
                     "longitude": 19.0510,
                     "quality_flag": "estimated",
                 },
+                # Illustrative itinerary until the real engine (BS-044) supplies activities
+                # from the OSM/OpenTripMap-backed Attraction store. The coordinates below are
+                # the real locations of these Budapest landmarks, so the map renders correctly.
                 "itinerary": [
                     {
                         "day_number": 1,
@@ -80,9 +83,46 @@ class StubTripEngine:
                                 "start_time": "10:00",
                                 "end_time": "12:30",
                                 "was_rescheduled": False,
-                            }
+                                "latitude": 47.4960,
+                                "longitude": 19.0396,
+                            },
+                            {
+                                "name": "Fisherman's Bastion",
+                                "category": "historic",
+                                "indoor_outdoor": "outdoor",
+                                "start_time": "13:30",
+                                "end_time": "15:00",
+                                "was_rescheduled": False,
+                                "latitude": 47.5025,
+                                "longitude": 19.0345,
+                            },
                         ],
-                    }
+                    },
+                    {
+                        "day_number": 2,
+                        "activities": [
+                            {
+                                "name": "St. Stephen's Basilica",
+                                "category": "culture",
+                                "indoor_outdoor": "indoor",
+                                "start_time": "09:30",
+                                "end_time": "11:00",
+                                "was_rescheduled": False,
+                                "latitude": 47.5008,
+                                "longitude": 19.0537,
+                            },
+                            {
+                                "name": "Széchenyi Thermal Bath",
+                                "category": "leisure",
+                                "indoor_outdoor": "indoor",
+                                "start_time": "14:00",
+                                "end_time": "17:00",
+                                "was_rescheduled": False,
+                                "latitude": 47.5189,
+                                "longitude": 19.0817,
+                            },
+                        ],
+                    },
                 ],
                 "weather": [
                     {

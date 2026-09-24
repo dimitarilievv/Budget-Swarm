@@ -4,7 +4,7 @@ import {
   getBrowserOrigin,
   reverseGeocode,
 } from "./geolocation";
-import { originFields } from "./types";
+import { originFields } from "@/types/trip";
 
 /** A fake Geolocation whose getCurrentPosition runs the given behaviour. */
 function fakeGeolocation(

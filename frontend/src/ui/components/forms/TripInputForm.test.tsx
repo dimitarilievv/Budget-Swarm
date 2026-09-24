@@ -1,8 +1,8 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { vi } from "vitest";
 
-import { ApiError } from "../api/errors";
-import type { TripRequestPayload, TripResponse } from "../api/types";
+import { ApiError } from "@/api/errors";
+import type { TripRequestPayload, TripResponse } from "@/types/trip";
 import TripInputForm from "./TripInputForm";
 
 function fakeResponse(city = "Budapest"): TripResponse {
@@ -36,7 +36,8 @@ function setOrigin(label = "Skopje") {
   });
 }
 
-const plan = () => screen.getByRole("button", { name: /plan my trip/i });
+const plan = () =>
+  screen.getByRole("button", { name: /generate optimized plan/i });
 
 describe("TripInputForm", () => {
   it("renders all documented fields", () => {
@@ -142,8 +143,11 @@ describe("TripInputForm", () => {
     });
     expect(payload.preferences).not.toHaveProperty("nightlife");
 
-    expect(await screen.findByText(/Budapest, Hungary/i)).toBeInTheDocument();
-    expect(onResult).toHaveBeenCalledTimes(1);
+    // The plan is handed up to the parent (App renders the Results page from it).
+    await waitFor(() => expect(onResult).toHaveBeenCalledTimes(1));
+    expect(onResult.mock.calls[0][0].chosen_plan.destination.city).toBe(
+      "Budapest",
+    );
   });
 
   it("shows the loading screen while the request is in flight", async () => {
@@ -156,7 +160,7 @@ describe("TripInputForm", () => {
     expect(await screen.findByText(/agents are on it/i)).toBeInTheDocument();
   });
 
-  it("surfaces an API error with a friendly message and a retry", async () => {
+  it("shows a dedicated no-trip state and returns to the form to adjust", async () => {
     const submit = vi.fn(async () => {
       throw new ApiError(
         "NO_PLAN_AVAILABLE",
@@ -167,15 +171,24 @@ describe("TripInputForm", () => {
     setOrigin("Skopje");
     fireEvent.click(plan());
 
-    // Friendly title + the server's own message.
-    expect(await screen.findByText(/no trip fits/i)).toBeInTheDocument();
+    // Dedicated empty state: friendly title + the server's own message.
+    expect(
+      await screen.findByText(/no trip fits these constraints/i),
+    ).toBeInTheDocument();
     expect(
       screen.getByText(/no feasible plan within your budget/i),
     ).toBeInTheDocument();
 
-    // Retry re-submits the same request.
-    fireEvent.click(screen.getByRole("button", { name: /try again/i }));
-    await waitFor(() => expect(submit).toHaveBeenCalledTimes(2));
+    // "Adjust your budget or preferences" returns to the form (no pointless re-submit).
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /adjust your budget or preferences/i,
+      }),
+    );
+    expect(
+      screen.getByRole("button", { name: /generate optimized plan/i }),
+    ).toBeInTheDocument();
+    expect(submit).toHaveBeenCalledTimes(1);
   });
 
   it("edit details returns to the form", async () => {
@@ -190,7 +203,7 @@ describe("TripInputForm", () => {
       await screen.findByRole("button", { name: /edit details/i }),
     );
     expect(
-      screen.getByRole("button", { name: /plan my trip/i }),
+      screen.getByRole("button", { name: /generate optimized plan/i }),
     ).toBeInTheDocument();
   });
 });

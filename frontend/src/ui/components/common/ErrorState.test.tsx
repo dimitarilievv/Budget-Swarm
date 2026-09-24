@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { vi } from "vitest";
 
-import { ApiError } from "../api/errors";
+import { ApiError } from "@/api/errors";
 import ErrorState from "./ErrorState";
 
 describe("ErrorState", () => {

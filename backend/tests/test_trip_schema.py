@@ -13,7 +13,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
-from schemas.trip_schema import TripRequest, TripResponse
+from schemas.trip_schema import ItineraryActivity, TripRequest, TripResponse
 
 VALID_CAR_REQUEST = {
     "budget": 1000,
@@ -201,6 +201,8 @@ FULL_RESPONSE = {
                         "start_time": "10:00",
                         "end_time": "12:30",
                         "was_rescheduled": False,
+                        "latitude": 47.4960,
+                        "longitude": 19.0396,
                     }
                 ],
             }
@@ -254,6 +256,8 @@ def test_full_response_matches_api_md():
     resp = TripResponse.model_validate(FULL_RESPONSE)
     assert resp.chosen_plan.destination.city == "Budapest"
     assert resp.chosen_plan.transport.quality_flag == "estimated"
+    activity = resp.chosen_plan.itinerary[0].activities[0]
+    assert (activity.latitude, activity.longitude) == (47.4960, 19.0396)
     assert resp.chosen_plan.weather[0].forecast_date == date(2026, 9, 10)
     assert resp.ranked_candidates[1].feasible is False
     assert resp.meta.trip_id == 341
@@ -269,3 +273,15 @@ def test_response_explanation_may_be_null():
 def test_meta_generated_at_is_datetime():
     resp = TripResponse.model_validate(FULL_RESPONSE)
     assert resp.meta.generated_at == datetime(2026, 8, 15, 10, 22, tzinfo=UTC)
+
+
+def test_activity_coordinates_are_optional():
+    """An activity without a located POI validates with null coordinates."""
+    payload = {
+        "name": "Free afternoon",
+        "indoor_outdoor": "mixed",
+        "was_rescheduled": False,
+    }
+    activity = ItineraryActivity.model_validate(payload)
+    assert activity.latitude is None
+    assert activity.longitude is None

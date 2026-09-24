@@ -168,7 +168,13 @@ def test_activities_persisted_with_order_and_flags(client, db_engine):
             .order_by(TripActivity.day_number, TripActivity.slot_order)
         ).all()
         assert rows  # ordered activities were written
-        assert [r.slot_order for r in rows] == sorted(r.slot_order for r in rows)
+        # slot_order is per day (unique on trip_id, day_number, slot_order), so it resets each
+        # day: assert each day's slots are a contiguous 0..n-1 sequence in order.
+        slots_by_day: dict[int, list[int]] = {}
+        for r in rows:
+            slots_by_day.setdefault(r.day_number, []).append(r.slot_order)
+        for slots in slots_by_day.values():
+            assert slots == list(range(len(slots)))
 
 
 @pytest.mark.integration
