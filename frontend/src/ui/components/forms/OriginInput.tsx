@@ -16,7 +16,9 @@ import {
   type BrowserOrigin,
   GeolocationError,
   getBrowserOrigin,
-} from "../api/geolocation";
+} from "@/api/geolocation";
+import { IconLocation } from "@/ui/components/common/Icons";
+import { INPUT_CLASS } from "@/ui/theme/theme";
 
 export interface OriginValue {
   originLabel: string;
@@ -80,16 +82,26 @@ export default function OriginInput({
   return (
     <div className="text-left">
       <div className="flex items-center justify-between">
-        <label htmlFor={inputId} className="text-sm font-medium text-slate-700">
+        <label
+          htmlFor={inputId}
+          className="text-sm font-semibold text-slate-800"
+        >
           Starting from
         </label>
         <button
           type="button"
           onClick={detect}
           disabled={status === "locating"}
-          className="text-xs font-medium text-indigo-600 hover:text-indigo-800 disabled:opacity-50"
+          className="flex items-center gap-1 text-xs font-medium text-teal-600 hover:text-teal-800 disabled:opacity-50"
         >
-          {status === "locating" ? "Locating…" : "📍 Use my location"}
+          {status === "locating" ? (
+            "Locating…"
+          ) : (
+            <>
+              <IconLocation className="h-3.5 w-3.5" />
+              Use my location
+            </>
+          )}
         </button>
       </div>
 
@@ -99,15 +111,16 @@ export default function OriginInput({
         value={value.originLabel}
         onChange={(e) => handleManualEdit(e.target.value)}
         placeholder="e.g. Skopje"
-        className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+        className={INPUT_CLASS}
       />
 
       <p className="mt-1 min-h-[1.25rem] text-xs" aria-live="polite">
         {status === "error" && error ? (
           <span className="text-amber-600">{error}</span>
         ) : status === "detected" && hasCoords ? (
-          <span className="text-emerald-600">
-            📍 Using your location ({value.originLat!.toFixed(3)},{" "}
+          <span className="inline-flex items-center gap-1 text-emerald-600">
+            <IconLocation className="h-3.5 w-3.5" />
+            Using your location ({value.originLat!.toFixed(3)},{" "}
             {value.originLon!.toFixed(3)})
           </span>
         ) : value.originLabel.trim() ? (

@@ -5,7 +5,7 @@
  * friendly title + hint, shows the server's own message as detail, and offers a retry
  * affordance. Announced via role="alert".
  */
-import type { ApiError } from "../api/errors";
+import type { ApiError } from "@/api/errors";
 
 const MESSAGES: Record<string, { title: string; hint: string }> = {
   VALIDATION_ERROR: {

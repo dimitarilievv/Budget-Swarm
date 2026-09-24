@@ -3,7 +3,7 @@
  * (and backend/schemas/trip_schema.py). These are the single source of type-truth the
  * UI builds against, so a response that drifts from the contract is a compile error.
  */
-import type { BrowserOrigin } from "./geolocation";
+import type { BrowserOrigin } from "@/api/geolocation";
 
 export type TransportMode = "airplane" | "car" | "bus" | "train";
 export type QualityFlag = "real" | "cached" | "estimated";
@@ -80,6 +80,9 @@ export interface ItineraryActivity {
   start_time?: string | null;
   end_time?: string | null;
   was_rescheduled: boolean;
+  /** POI coordinates (from the Attraction). Optional — an unlocated activity isn't mapped. */
+  latitude?: number | null;
+  longitude?: number | null;
 }
 
 export interface ItineraryDay {

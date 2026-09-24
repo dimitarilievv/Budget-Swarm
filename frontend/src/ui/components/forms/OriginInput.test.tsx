@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 
-import { GeolocationError } from "../api/geolocation";
+import { GeolocationError } from "@/api/geolocation";
 import OriginInput, { type OriginValue } from "./OriginInput";
 
 const EMPTY: OriginValue = {

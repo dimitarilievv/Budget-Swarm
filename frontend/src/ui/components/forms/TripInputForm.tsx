@@ -6,34 +6,60 @@
  * client-side (mirroring the server, which stays authoritative), and submits a typed
  * TripRequestPayload to POST /api/generate-trip. `submit` is injectable for tests.
  */
-import { useId, useRef, useState, type FormEvent } from "react";
+import {
+  useId,
+  useRef,
+  useState,
+  type ComponentType,
+  type FormEvent,
+  type SVGProps,
+} from "react";
 
-import { ApiError } from "../api/errors";
-import { generateTrip } from "../api/trips";
+import { ApiError } from "@/api/errors";
+import { generateTrip } from "@/api/endpoints";
 import type {
   TransportMode,
   TripRequestPayload,
   TripResponse,
-} from "../api/types";
-import ErrorState from "./ErrorState";
-import LoadingState from "./LoadingState";
+} from "@/types/trip";
+import ErrorState from "@/ui/components/common/ErrorState";
+import LoadingState from "@/ui/components/common/LoadingState";
+import NoTripFound from "@/ui/components/common/NoTripFound";
 import OriginInput, { type OriginValue } from "./OriginInput";
+import {
+  IconArrowRight,
+  IconBus,
+  IconCamera,
+  IconCar,
+  IconLandmark,
+  IconMoon,
+  IconMountain,
+  IconPlane,
+  IconTrain,
+  IconUtensils,
+} from "@/ui/components/common/Icons";
+import { INPUT_CLASS } from "@/ui/theme/theme";
 
-const TRANSPORT_MODES: { value: TransportMode; label: string; icon: string }[] =
-  [
-    { value: "airplane", label: "Airplane", icon: "✈️" },
-    { value: "car", label: "Car", icon: "🚗" },
-    { value: "bus", label: "Bus", icon: "🚌" },
-    { value: "train", label: "Train", icon: "🚆" },
-  ];
+type IconType = ComponentType<SVGProps<SVGSVGElement>>;
+
+const TRANSPORT_MODES: {
+  value: TransportMode;
+  label: string;
+  Icon: IconType;
+}[] = [
+  { value: "airplane", label: "Airplane", Icon: IconPlane },
+  { value: "car", label: "Car", Icon: IconCar },
+  { value: "bus", label: "Bus", Icon: IconBus },
+  { value: "train", label: "Train", Icon: IconTrain },
+];
 
 // Interests map to the engine's preference themes (culture/nature/nightlife/food/tourism).
-const INTERESTS: { key: string; label: string; icon: string }[] = [
-  { key: "culture", label: "Culture", icon: "🏛️" },
-  { key: "nature", label: "Nature", icon: "⛰️" },
-  { key: "food", label: "Food", icon: "🍽️" },
-  { key: "nightlife", label: "Nightlife", icon: "🍸" },
-  { key: "tourism", label: "Sightseeing", icon: "📸" },
+const INTERESTS: { key: string; label: string; Icon: IconType }[] = [
+  { key: "culture", label: "Culture", Icon: IconLandmark },
+  { key: "nature", label: "Nature", Icon: IconMountain },
+  { key: "food", label: "Food", Icon: IconUtensils },
+  { key: "nightlife", label: "Nightlife", Icon: IconMoon },
+  { key: "tourism", label: "Sightseeing", Icon: IconCamera },
 ];
 const DEFAULT_INTERESTS = ["culture", "food", "tourism"];
 
@@ -160,13 +186,22 @@ export default function TripInputForm({
     if (lastPayload.current) void runSubmit(lastPayload.current);
   }
 
-  const numberField =
-    "mt-1 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-lg font-semibold text-slate-900 shadow-sm focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/30";
+  const numberField = INPUT_CLASS;
 
   // While a request is in flight, show the agent-progress screen; on failure, the error
   // state with a retry affordance. Form state persists behind both (same component).
   if (submitting) return <LoadingState />;
-  if (submitError)
+  if (submitError) {
+    // A no-plan result is an outcome, not a failure: guide the user to adjust their inputs
+    // rather than offering a retry of the identical (and equally infeasible) request.
+    if (submitError.code === "NO_PLAN_AVAILABLE")
+      return (
+        <NoTripFound
+          budget={parseFloat(budget)}
+          message={submitError.message}
+          onAdjust={() => setSubmitError(null)}
+        />
+      );
     return (
       <ErrorState
         error={submitError}
@@ -174,6 +209,7 @@ export default function TripInputForm({
         onEdit={() => setSubmitError(null)}
       />
     );
+  }
 
   return (
     <form onSubmit={handleSubmit} noValidate className="space-y-6 text-left">
@@ -246,12 +282,12 @@ export default function TripInputForm({
           >
             Travelers
           </label>
-          <div className="mt-1 flex items-center rounded-xl border border-slate-200 bg-white shadow-sm">
+          <div className="mt-1.5 flex items-center rounded-lg border border-slate-200 bg-white shadow-sm">
             <button
               type="button"
               aria-label="Fewer travelers"
               onClick={() => setTravelers((n) => Math.max(1, n - 1))}
-              className="px-4 py-3 text-lg text-slate-500 hover:text-teal-600"
+              className="px-3.5 py-2.5 text-lg text-slate-500 hover:text-teal-600"
             >
               −
             </button>
@@ -262,13 +298,13 @@ export default function TripInputForm({
               value={travelers}
               aria-invalid={Boolean(errors.travelers)}
               onChange={(e) => setTravelers(Number(e.target.value))}
-              className="w-full border-x border-slate-100 py-3 text-center text-lg font-semibold text-slate-900 focus:outline-none"
+              className="w-full border-x border-slate-100 py-2.5 text-center text-[15px] font-medium text-slate-900 focus:outline-none"
             />
             <button
               type="button"
               aria-label="More travelers"
               onClick={() => setTravelers((n) => n + 1)}
-              className="px-4 py-3 text-lg text-slate-500 hover:text-teal-600"
+              className="px-3.5 py-2.5 text-lg text-slate-500 hover:text-teal-600"
             >
               +
             </button>
@@ -296,13 +332,13 @@ export default function TripInputForm({
                 type="button"
                 aria-pressed={active}
                 onClick={() => setTransportMode(m.value)}
-                className={`flex flex-col items-center gap-1 rounded-xl border px-3 py-3 text-sm font-medium transition ${
+                className={`flex flex-col items-center gap-1.5 rounded-xl border px-3 py-3 text-sm font-medium transition ${
                   active
                     ? "border-teal-500 bg-teal-50 text-teal-700 ring-1 ring-teal-500/40"
                     : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
                 }`}
               >
-                <span className="text-xl">{m.icon}</span>
+                <m.Icon className="h-5 w-5" />
                 {m.label}
               </button>
             );
@@ -361,7 +397,7 @@ export default function TripInputForm({
                     : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
                 }`}
               >
-                <span>{it.icon}</span>
+                <it.Icon className="h-4 w-4" />
                 {it.label}
               </button>
             );
@@ -372,26 +408,13 @@ export default function TripInputForm({
         )}
       </div>
 
-      {/* Helper note */}
-      <div className="flex items-start gap-2 rounded-xl bg-teal-50/70 px-4 py-3 text-sm text-slate-600">
-        <span aria-hidden>✨</span>
-        <p>
-          <span className="font-semibold text-slate-800">How it works:</span>{" "}
-          all planning happens on our servers — our AI agents pick the single
-          best trip within budget and build your day-by-day itinerary. Results
-          take a few seconds.
-        </p>
-      </div>
-
       {/* CTA */}
       <button
         type="submit"
-        className="w-full rounded-xl bg-teal-600 px-4 py-4 text-center font-semibold text-white shadow-md transition hover:bg-teal-700"
+        className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-teal-600 to-teal-500 px-4 py-3.5 text-base font-semibold text-white shadow-sm transition hover:from-teal-700 hover:to-teal-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40"
       >
-        <span className="block text-lg">✨ Plan my trip</span>
-        <span className="block text-sm font-normal text-teal-100">
-          Let AI discover the perfect destination for you
-        </span>
+        Generate Optimized Plan
+        <IconArrowRight className="h-5 w-5" />
       </button>
     </form>
   );

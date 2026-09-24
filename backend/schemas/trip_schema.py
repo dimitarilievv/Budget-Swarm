@@ -152,6 +152,10 @@ class ItineraryActivity(BaseModel):
     start_time: str | None = None
     end_time: str | None = None
     was_rescheduled: bool = False
+    # POI coordinates (from the OSM/OpenTripMap-backed Attraction), so the frontend can
+    # map each activity. Optional: an activity without a located POI is simply not plotted.
+    latitude: float | None = None
+    longitude: float | None = None
 
 
 class ItineraryDay(BaseModel):

@@ -8,9 +8,13 @@
  */
 import type { AxiosInstance } from "axios";
 
-import apiClient from "./client";
-import { ApiError, toApiError } from "./errors";
-import type { ChosenPlan, TripRequestPayload, TripResponse } from "./types";
+import apiClient from "@/api/axios";
+import { ApiError, toApiError } from "@/api/errors";
+import type {
+  ChosenPlan,
+  TripRequestPayload,
+  TripResponse,
+} from "@/types/trip";
 
 /** `POST /api/generate-trip` — run the pipeline and return the full plan. */
 export async function generateTrip(
