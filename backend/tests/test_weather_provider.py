@@ -176,14 +176,13 @@ def test_service_degrades_when_no_forecast_returned():
 def test_service_serves_stale_cache_on_error():
     # With a cache hook, a fetch error over a stale entry degrades to cached data
     # (BS-037 read-through) rather than weather-unchecked. The cache holds the
-    # provider's NORMALIZED output (what _fetch returns), so seed that.
+    # RAW Open-Meteo body (JSON-serializable); it is normalized on the way out.
     from datetime import UTC, datetime
 
-    normalized = OpenMeteoProvider._normalize(RECORDED_OM)
     store = FakeStore()
     key = make_signature(OpenMeteoProvider(lambda r: {}).cache_key(REQ))
     store.data[("open-meteo", key)] = CacheEntry(
-        normalized, None, datetime(2000, 1, 1, tzinfo=UTC)  # expired -> stale
+        RECORDED_OM, None, datetime(2000, 1, 1, tzinfo=UTC)  # expired -> stale
     )
     hook = read_through_hook(read_through, store)
 
