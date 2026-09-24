@@ -270,14 +270,36 @@ class BaseProvider(ABC, Generic[Req, Data]):
             return None
         return ttl_for(self.cache_type)
 
-    @abstractmethod
     def _fetch(self, request: Req) -> Data:
         """Perform the vendor call and return the normalized internal shape.
 
         Implementations should enforce :attr:`timeout` on their HTTP client, raise
         :class:`ProviderUnavailable` for transient errors (timeout/5xx/network)
         and :class:`ProviderNoResult` when the source has no data for ``request``.
+
+        A provider implements **either** ``_fetch`` (fetch + normalize in one step)
+        **or** the cache-friendly pair below (:meth:`_raw` + :meth:`_from_raw`); the
+        default ``_fetch`` composes that pair.
         """
+        return self._from_raw(request, self._raw(request))
+
+    def _raw(self, request: Req) -> object:
+        """The **cacheable, JSON-serializable** vendor response (e.g. the API's JSON body).
+
+        Override this (with :meth:`_from_raw`) instead of :meth:`_fetch` so the cache
+        stores the raw response — normalized domain objects are not JSON-serializable
+        and could not be re-read from ``api_cache``. Same error contract as ``_fetch``.
+        """
+        raise NotImplementedError("provider must implement _fetch or _raw/_from_raw")
+
+    def _from_raw(self, request: Req, raw: object) -> Data:
+        """Normalize a (possibly cached) :meth:`_raw` response into the internal shape.
+
+        Runs on both a fresh fetch and a cache hit, so a cached raw body is turned
+        back into the same domain object. The default is identity, for providers that
+        already return a normalized value from ``_fetch``.
+        """
+        return raw  # type: ignore[return-value]
 
     def cache_key(self, request: Req) -> object:
         """The cache signature for ``request``. Override when the raw request is
@@ -295,15 +317,31 @@ class BaseProvider(ABC, Generic[Req, Data]):
         to that stale value (``cached`` + ``stale``) instead of crashing.
         """
 
-        def live() -> Data:
-            return self.retry.run(lambda: self._fetch(request), what=self.name)
-
         if self.cache is None:
-            return ProviderResult(live(), QUALITY_REAL, self.name, "live")
+            data = self.retry.run(lambda: self._fetch(request), what=self.name)
+            return ProviderResult(data, QUALITY_REAL, self.name, "live")
 
-        outcome = self.cache(self.name, self.cache_key(request), live, ttl=self.ttl)
+        # Cache the raw, JSON-serializable response when the provider separates it
+        # (_raw/_from_raw); otherwise cache the normalized _fetch output as-is (a
+        # provider whose result is already serialisable, e.g. a plain dict).
+        uses_raw = type(self)._raw is not BaseProvider._raw
+
+        if uses_raw:
+
+            def cacheable() -> object:
+                raw = self.retry.run(lambda: self._raw(request), what=self.name)
+                self._from_raw(request, raw)  # validate before caching (don't store unusable)
+                return raw
+
+        else:
+
+            def cacheable() -> object:
+                return self.retry.run(lambda: self._fetch(request), what=self.name)
+
+        outcome = self.cache(self.name, self.cache_key(request), cacheable, ttl=self.ttl)
+        data = self._from_raw(request, outcome.data) if uses_raw else outcome.data
         return ProviderResult(
-            outcome.data,
+            data,
             outcome.quality_flag,
             self.name,
             outcome.source,

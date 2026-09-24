@@ -120,14 +120,16 @@ class TravelpayoutsProvider(FlightProvider):
         super().__init__(**kwargs)
         self._transport = transport
 
-    def _fetch(self, request: FlightRequest) -> Flight:
+    def _raw(self, request: FlightRequest) -> dict[str, Any]:
         try:
-            body = self._transport(request)
+            return self._transport(request)
         except ProviderUnavailable:
             raise
         except Exception as exc:  # noqa: BLE001 - normalize any transport error
             raise ProviderUnavailable(f"Travelpayouts request failed: {exc}") from exc
-        return self._normalize(request, body)
+
+    def _from_raw(self, request: FlightRequest, raw: object) -> Flight:
+        return self._normalize(request, raw)  # type: ignore[arg-type]
 
     @staticmethod
     def _normalize(request: FlightRequest, body: dict[str, Any]) -> Flight:

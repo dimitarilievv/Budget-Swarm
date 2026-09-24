@@ -144,14 +144,16 @@ class OpenMeteoProvider(WeatherProvider):
         super().__init__(**kwargs)
         self._transport = transport
 
-    def _fetch(self, request: WeatherRequest) -> list[WeatherProfile]:
+    def _raw(self, request: WeatherRequest) -> dict[str, Any]:
         try:
-            body = self._transport(request)
+            return self._transport(request)
         except ProviderUnavailable:
             raise
         except Exception as exc:  # noqa: BLE001
             raise ProviderUnavailable(f"Open-Meteo request failed: {exc}") from exc
-        return self._normalize(body)
+
+    def _from_raw(self, request: WeatherRequest, raw: object) -> list[WeatherProfile]:
+        return self._normalize(raw)  # type: ignore[arg-type]
 
     @staticmethod
     def _normalize(body: dict[str, Any]) -> list[WeatherProfile]:

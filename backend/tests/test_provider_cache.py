@@ -1,16 +1,17 @@
-"""Integration tests: caching wired into the quota-exposed providers (BS-091).
+"""Tests for caching wired into the quota-exposed providers (BS-091).
 
-Each test builds a cache-wired provider service (weather / route / flight) over the
-real ``api_cache`` table, then issues the **same** request twice through a scripted
-transport that counts external calls. The acceptance criteria are asserted directly:
-the second call is served from cache (``quality_flag='cached'``), and the external
-transport is invoked only once (calls reduced).
-
-Marked ``integration`` — skipped automatically when no database is reachable.
+* **Unit** (no DB): the ``cached_*`` builders wire a cache hook + the per-type TTL;
+  and each provider caches a **JSON-serializable** body (a store that enforces the
+  ``api_cache`` JSONB contract would reject a normalized domain object).
+* **Integration** (``integration`` marker, skipped without a database): each service
+  issues the **same** request twice over the real ``api_cache`` table — the second
+  call is served from cache (``quality_flag='cached'``) and the external transport is
+  invoked only once (calls reduced).
 """
 
 from __future__ import annotations
 
+import json
 from datetime import timedelta
 from pathlib import Path
 
@@ -18,6 +19,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from config import get_settings
+from db.retrieval import CacheEntry, read_through
 from db.session import SessionLocal
 from services.provider_cache import (
     cached_flight_service,
@@ -27,9 +29,10 @@ from services.provider_cache import (
 )
 from sqlalchemy import create_engine
 
-from ai_engine.providers.flight import FlightRequest
-from ai_engine.providers.route import RouteRequest
-from ai_engine.providers.weather import WeatherRequest
+from ai_engine.providers.flight import FlightRequest, TravelpayoutsProvider
+from ai_engine.providers.route import OpenRouteServiceProvider, RouteRequest
+from ai_engine.providers.weather import OpenMeteoProvider, WeatherRequest
+from ai_engine.utils.api_clients import read_through_hook
 from ai_engine.utils.geo import GeoPoint
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -147,6 +150,72 @@ def test_public_transport_builder_wires_supplied_transports():
 def test_public_transport_builder_omits_missing_transports():
     svc = cached_public_transport_service(object())
     assert svc.real_providers == []  # estimate-first when no keys configured
+
+
+# --- the cached body must be JSON-serializable (mirrors JSONB) -------------------
+
+
+class _JsonStore:
+    """Fake store enforcing api_cache's JSONB contract: a non-serializable body raises."""
+
+    def __init__(self):
+        self.data: dict[tuple[str, str], CacheEntry] = {}
+
+    def get(self, provider, signature):
+        return self.data.get((provider, signature))
+
+    def put(self, provider, signature, body, expires_at):
+        json.dumps(body)  # raises TypeError on a domain object — the CI failure in miniature
+        self.data[(provider, signature)] = CacheEntry(
+            json.loads(json.dumps(body)), None, expires_at
+        )
+
+
+def test_weather_provider_caches_a_json_serializable_body():
+    store = _JsonStore()
+    transport = _CountingTransport(RECORDED_OM)
+    provider = OpenMeteoProvider(transport, cache=read_through_hook(read_through, store))
+    req = WeatherRequest(center=THESSALONIKI, destination="Thessaloniki", forecast_days=2)
+
+    first = provider.fetch(req)
+    second = provider.fetch(req)
+
+    assert first.quality_flag == "real"
+    assert second.quality_flag == "cached"
+    assert transport.calls == 1
+    assert [p.date for p in second.data] == [p.date for p in first.data]
+
+
+def test_route_provider_caches_a_json_serializable_body():
+    store = _JsonStore()
+    transport = _CountingTransport(RECORDED_ORS)
+    provider = OpenRouteServiceProvider(transport, cache=read_through_hook(read_through, store))
+    req = RouteRequest(origin=SKOPJE, destination=THESSALONIKI)
+
+    first = provider.fetch(req)
+    second = provider.fetch(req)
+
+    assert first.quality_flag == "real"
+    assert second.quality_flag == "cached"
+    assert transport.calls == 1
+    assert second.data.distance_km == first.data.distance_km
+
+
+def test_flight_provider_caches_a_json_serializable_body():
+    store = _JsonStore()
+    transport = _CountingTransport(RECORDED_TP)
+    provider = TravelpayoutsProvider(transport, cache=read_through_hook(read_through, store))
+    req = FlightRequest(
+        origin="SKP", destination="BCN", origin_point=SKP, destination_point=BCN, currency="eur"
+    )
+
+    first = provider.fetch(req)
+    second = provider.fetch(req)
+
+    assert first.quality_flag == "real"
+    assert second.quality_flag == "cached"
+    assert transport.calls == 1
+    assert second.data.price == first.data.price
 
 
 # --- integration: the second identical call is served from cache ----------------
