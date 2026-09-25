@@ -1051,6 +1051,13 @@ Caching (in PostgreSQL and/or an in-memory layer) reduces external calls, protec
 - **No API keys in the frontend** — all external calls happen server-side; the browser only ever talks to BudgetSwarm's own API. This is the single most important rule — a key shipped to the browser is a leaked key.
 - **Authentication (only if accounts exist)** — if `users`/trip history is implemented, use hashed passwords or an OAuth/identity provider and protected routes; otherwise the system can run anonymously with no auth surface at all.
 
+**Implementation (BS-093).**
+
+- **CORS** — `main.py` installs `CORSMiddleware` with `allow_origins=settings.cors_origins_list` (from `CORS_ORIGINS`, default the local frontend). No wildcard: a request from an unlisted origin is not granted `Access-Control-Allow-Origin`, so a browser blocks it.
+- **Rate limiting** — `api/rate_limit.py` enforces a sliding-window per-client limit on `POST /api/generate-trip` (default 20 requests / 60 s, tunable via `RATE_LIMIT_ENABLED` / `RATE_LIMIT_REQUESTS` / `RATE_LIMIT_WINDOW_SECONDS`). The client is keyed by `X-Forwarded-For` (first hop, behind the proxy) else the peer IP; over-limit returns the `429 RATE_LIMITED` envelope.
+- **No keys in the frontend** — audited: the only build-time var is `VITE_API_BASE_URL` (the backend URL, not a secret); the browser only ever calls BudgetSwarm's own API, and every provider key stays server-side in backend settings. `frontend/.env.example` documents this rule.
+- **Input validation** — every request is validated by the Pydantic `TripRequest` (budget > 0, duration/travelers ≥ 1, transport-mode enum, preference weights in `[0,1]`, paired origin coordinates in range, `extra="forbid"`, and car-mode requiring `vehicle_consumption`); a violation returns the `422 VALIDATION_ERROR` envelope. Covered by `test_trip_schema.py` and the route-level 422 tests.
+
 ---
 
 # 25. Evaluation
