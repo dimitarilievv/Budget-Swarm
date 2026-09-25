@@ -1013,6 +1013,12 @@ Return a usable value, marked quality_flag = "estimated"
 
 **Key principle: degrade, don't crash.** A missing piece downgrades a candidate's data quality (and can lower its score or exclude it), but it never aborts the whole request. Every value carries a `quality_flag` (`real` / `cached` / `estimated`) that propagates to the optimizer and the UI, so the system is always *honest* about how firm its numbers are. This honesty is itself an evaluable property (Section 25) and a defensible engineering stance for the thesis.
 
+**Implementation.** The chain is realized in three layers:
+
+- **Provider level** — `ai_engine.utils.api_clients.fetch_with_fallback` sequences *primary → fallback → estimate*: it skips a provider that raises `ProviderError` or returns empty and tries the next, and if all real sources are exhausted it returns the injected estimate flagged `estimated` (or raises `AllProvidersFailed` only when no estimate exists). Each provider family exposes a `*Service` (`RouteService`, `FlightService`, `WeatherService`, `PublicTransportService`, accommodation) that wires this chain with an always-available estimate, so a single provider outage never propagates.
+- **Pipeline level** — `ai_engine.core.pipeline.gather_agent_outputs` runs the four specialists per candidate with **error isolation**: each agent call is wrapped so any exception degrades *that piece* to `None`/empty for *that candidate only*, never aborting siblings or the request. Only a total ScoutAgent failure (no candidates) stops the run.
+- **Response level** — the coordinator marks each candidate's missing/estimated parts, and `ai_engine.core.planner` emits `OptimalPlan.degraded_sources` (`"<part>:<flag>"`, e.g. `transport:estimated`, `accommodation:missing`), which the engine maps to `meta.degraded_sources` (api.md). A transport piece is essential (a plan can't be costed without it), so a candidate that loses transport entirely is excluded as infeasible rather than chosen; its single-provider failure is handled by the estimate fallback instead.
+
 ---
 
 # 23. Caching
