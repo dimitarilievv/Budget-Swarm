@@ -50,6 +50,14 @@ class Settings(BaseSettings):
     # whenever the database is reachable, regardless of this flag.
     enable_real_engine: bool = False
 
+    # --- Security: per-client rate limiting (BS-093, technical-doc §24) ----
+    # A sliding window per client IP on POST /api/generate-trip, to stop one
+    # client from exhausting the backend's own upstream free tiers. These are
+    # plain tuning knobs (no secrets); set RATE_LIMIT_ENABLED=false to disable.
+    rate_limit_enabled: bool = True
+    rate_limit_requests: int = 20
+    rate_limit_window_seconds: int = 60
+
     @property
     def cors_origins_list(self) -> list[str]:
         """CORS origins as a clean list for the FastAPI middleware."""

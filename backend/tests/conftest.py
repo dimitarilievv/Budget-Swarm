@@ -19,3 +19,8 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 os.environ.setdefault("DATABASE_URL", "postgresql+psycopg://test:test@localhost:5432/test")
+
+# Keep the per-client rate limit effectively unlimited for the general suite (many
+# tests POST /api/generate-trip from the same TestClient host in quick succession);
+# the dedicated rate-limit test overrides the limiter to a small window on purpose.
+os.environ.setdefault("RATE_LIMIT_REQUESTS", "1000000")
