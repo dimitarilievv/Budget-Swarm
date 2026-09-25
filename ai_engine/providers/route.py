@@ -114,14 +114,16 @@ class OpenRouteServiceProvider(RouteProvider):
         super().__init__(**kwargs)
         self._transport = transport
 
-    def _fetch(self, request: RouteRequest) -> Route:
+    def _raw(self, request: RouteRequest) -> dict[str, Any]:
         try:
-            body = self._transport(request)
+            return self._transport(request)
         except ProviderUnavailable:
             raise
         except Exception as exc:  # noqa: BLE001 - normalize any transport error
             raise ProviderUnavailable(f"ORS request failed: {exc}") from exc
-        return self._normalize(request, body)
+
+    def _from_raw(self, request: RouteRequest, raw: object) -> Route:
+        return self._normalize(request, raw)  # type: ignore[arg-type]
 
     @staticmethod
     def _normalize(request: RouteRequest, body: dict[str, Any]) -> Route:
