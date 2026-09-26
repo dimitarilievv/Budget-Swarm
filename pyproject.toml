@@ -36,3 +36,18 @@ pythonpath = [".", "backend"]
 markers = [
     "integration: tests that require a live database (skipped when none is reachable)",
 ]
+
+# --- Coverage (BS Phase 11) --------------------------------------------------
+# Measures the app code (ai_engine + backend packages); mechanical/generated files
+# and the tests themselves are excluded so the number reflects real logic coverage.
+[tool.coverage.run]
+branch = true
+omit = [
+    "*/tests/*",
+    "*/__pycache__/*",
+    "backend/alembic/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false

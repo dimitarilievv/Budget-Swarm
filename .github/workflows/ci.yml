@@ -53,8 +53,9 @@ jobs:
       - name: Alembic — verify downgrade is reversible
         run: alembic downgrade base
 
-      - name: Pytest
-        run: pytest -q
+      - name: Pytest (with coverage)
+        working-directory: .
+        run: pytest -q --cov=ai_engine --cov=backend --cov-report=term-missing --cov-report=xml
 
   frontend:
     name: Frontend (lint + tests + build)
