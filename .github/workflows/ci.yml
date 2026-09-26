@@ -81,8 +81,8 @@ jobs:
       - name: Prettier (format check)
         run: npm run format:check
 
-      - name: Vitest
-        run: npm test
+      - name: Vitest (with coverage)
+        run: npm run test:coverage
 
       - name: Build
         run: npm run build
