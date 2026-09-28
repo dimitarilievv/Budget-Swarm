@@ -167,15 +167,52 @@ def test_weather_reschedule_flows_into_the_itinerary():
 
 
 def test_failing_agent_degrades_and_is_surfaced_in_meta():
-    def boom_stay(_inp, dest):
-        raise RuntimeError("accommodation source down")
+    # A non-fatal part (weather) failing must degrade, not crash: the plan is still
+    # produced and the missing part is surfaced honestly. (Lodging is a hard
+    # requirement — see test_candidate_without_accommodation_is_excluded below.)
+    def boom_weather(_inp, dest):
+        raise RuntimeError("weather source down")
 
-    result = TripPlanEngine(_agents(stay=boom_stay)).generate_trip(_engine_input())
+    result = TripPlanEngine(_agents(weather=boom_weather)).generate_trip(_engine_input())
     # Still a valid plan...
     TripResponse.model_validate(result)
-    # ...with the missing lodging surfaced honestly.
-    assert any("accommodation" in s for s in result["meta"]["degraded_sources"])
-    assert result["chosen_plan"]["accommodation"] is None
+    # ...with the missing weather surfaced honestly.
+    assert any("weather" in s for s in result["meta"]["degraded_sources"])
+    assert result["chosen_plan"]["weather"] == []
+
+
+def test_candidate_without_accommodation_is_excluded_not_chosen():
+    # A destination with no lodging must never be selected — even when it scores higher
+    # — because counting its lodging as zero would make it spuriously the cheapest.
+    def scout(_inp):
+        # "NoBeds" is the more attractive (higher culture) but has nowhere to stay.
+        return [_dest("NoBeds", 0.99), _dest("Budapest", 0.5)]
+
+    def cheap_transport(_inp, dest):
+        return TransportOption(
+            mode=TransportMode.CAR, cost=150.0, duration_minutes=600, distance_km=1300.0
+        )
+
+    def stay(_inp, dest):
+        return [] if dest.city == "NoBeds" else [Accommodation(name="Flat", price_per_night=60.0)]
+
+    result = TripPlanEngine(
+        _agents(scout=scout, transport=cheap_transport, stay=stay)
+    ).generate_trip(_engine_input())
+    assert result["chosen_plan"]["destination"]["city"] == "Budapest"
+    ranked = {rc["destination"]["city"]: rc for rc in result["ranked_candidates"]}
+    assert ranked["NoBeds"]["feasible"] is False  # excluded for having no accommodation
+    assert ranked["Budapest"]["feasible"] is True
+
+
+def test_no_accommodation_anywhere_raises_no_plan_available():
+    # When no candidate has any lodging, there is no plan (rather than a trip with
+    # nowhere to sleep) — the documented NO_PLAN_AVAILABLE path.
+    def stay(_inp, dest):
+        return []
+
+    with pytest.raises(NoPlanAvailableError):
+        TripPlanEngine(_agents(stay=stay)).generate_trip(_engine_input())
 
 
 def test_estimated_quality_is_surfaced_in_degraded_sources():
