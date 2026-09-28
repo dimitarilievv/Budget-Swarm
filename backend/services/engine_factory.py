@@ -23,7 +23,8 @@ from __future__ import annotations
 
 import logging
 
-from api.routes import get_trip_persister, get_trip_store
+from api.routes import get_trip_engine, get_trip_persister, get_trip_store
+from db.repositories import DestinationRepository
 from db.session import get_engine, ping
 from errors import NoPlanAvailableError as ApiNoPlanAvailableError
 from fastapi import FastAPI
@@ -71,6 +72,46 @@ def install_persistence(app: FastAPI, session_factory: SessionFactory | None = N
     logger.info("engine_factory: DB-backed trip persistence + store installed")
 
 
+def _destinations_seeded(session_factory: SessionFactory) -> bool:
+    """True when the reference DB has at least one destination for Scout to rank."""
+    try:
+        with session_factory() as session:
+            return DestinationRepository(session).count() > 0
+    except Exception as exc:  # noqa: BLE001 - a probe failure means "treat as unseeded"
+        logger.warning("engine_factory: could not check destination seed (%s)", exc)
+        return False
+
+
+def install_real_engine(app: FastAPI, session_factory: SessionFactory | None = None) -> bool:
+    """Build the real :class:`TripPlanEngine` and install it via ``get_trip_engine``.
+
+    Returns ``True`` when the real engine was installed; ``False`` (leaving the stub in
+    place) when the reference DB is not seeded or construction fails — startup never
+    aborts on a wiring problem (the app stays usable on the stub).
+    """
+    from config import get_settings  # local import: keeps module import side-effect-free
+
+    factory = session_factory or build_session_factory()
+    if not _destinations_seeded(factory):
+        logger.warning(
+            "engine_factory: enable_real_engine is set but the destinations table is empty; "
+            "serving the stub engine (seed the reference DB, then restart)"
+        )
+        return False
+
+    try:
+        from services.agent_wiring import build_real_engine
+
+        engine = TranslatingTripEngine(build_real_engine(get_settings(), factory))
+    except Exception as exc:  # noqa: BLE001 - never let wiring crash startup
+        logger.exception("engine_factory: real engine construction failed (%s); serving stub", exc)
+        return False
+
+    app.dependency_overrides[get_trip_engine] = lambda: engine
+    logger.info("engine_factory: real trip engine installed (Scout→agents→optimizer→explanation)")
+    return True
+
+
 def configure_services(app: FastAPI, settings: object) -> list[str]:
     """Install the real services whose dependencies are available; return what was wired.
 
@@ -91,13 +132,11 @@ def configure_services(app: FastAPI, settings: object) -> list[str]:
         )
 
     if getattr(settings, "enable_real_engine", False):
-        # The mechanism is ready; the real AgentSet construction (Scout/Transport/Stay/
-        # Experience/Weather over live providers) needs a seeded reference DB + provider
-        # keys and lands as a follow-up. Until then, keep serving the stub engine.
-        logger.warning(
-            "engine_factory: enable_real_engine is set, but the real engine wiring is "
-            "pending (needs a seeded reference DB + provider keys); serving the stub engine"
-        )
+        # Build the real Scout→agents→optimizer→explanation pipeline over live providers
+        # and the seeded reference DB. Falls back to the stub (logged) when the DB is not
+        # seeded or construction fails, so a misconfiguration degrades rather than crashes.
+        if install_real_engine(app):
+            installed.append("real-engine")
 
     logger.info("engine_factory: startup wiring complete (installed=%s)", installed or ["none"])
     return installed

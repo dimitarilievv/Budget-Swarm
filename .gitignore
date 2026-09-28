@@ -44,6 +44,8 @@ data/*
 !data/fuel_prices_live_summary.json
 # ECB EUR reference rates snapshot — offline/CI floor for currency (BS-034).
 !data/ecb_eur_rates.json
+# OurAirports IATA snapshot — nearest-airport resolution for air-mode pricing.
+!data/airports.json
 
 # ---- IDE / OS ----
 .idea/
