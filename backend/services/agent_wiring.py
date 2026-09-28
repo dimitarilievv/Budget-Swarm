@@ -102,6 +102,10 @@ _DEFAULT_VEHICLE_CONSUMPTION = 7.0
 # a short trip still gets a usable outlook.
 _MAX_FORECAST_DAYS = 16
 _MIN_FORECAST_DAYS = 3
+# Target number of activities to fetch per trip day, so a multi-day trip has enough to
+# fill a few slots each day (ExperienceAgent clamps this to its own MAX_LIMIT). The
+# scheduler then spreads them across the days.
+_ACTIVITIES_PER_DAY = 4
 
 
 # ---------------------------------------------------------------------------
@@ -380,8 +384,11 @@ def build_agent_set(bundle: WiringBundle) -> AgentSet:
 
     def experience(engine_input: object, dest: Destination) -> Sequence[Activity]:
         center = GeoPoint(dest.latitude, dest.longitude)
+        # Fetch enough POIs to fill a few slots on each trip day (the agent clamps to its
+        # own max); the scheduler then spreads them across the days.
+        limit = max(1, int(engine_input.duration_days) * _ACTIVITIES_PER_DAY)
         return bundle.experience_agent.activities_for(
-            center, destination=f"{dest.city}, {dest.country}", enrich=False
+            center, destination=f"{dest.city}, {dest.country}", limit=limit, enrich=False
         )
 
     def weather(engine_input: object, dest: Destination) -> WeatherProfile | None:

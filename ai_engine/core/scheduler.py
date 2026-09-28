@@ -115,6 +115,12 @@ class SchedulingPolicy:
     available_minutes: int | None = None
     default_activity_minutes: int = _DEFAULT_ACTIVITY_MINUTES
     transition_buffer_minutes: int = 0
+    #: Hard cap on how many activities may be placed on a single day. ``None`` (the
+    #: default) balances the load automatically — the cap becomes ``ceil(n / days)`` so
+    #: activities spread evenly across the stay instead of piling onto one day (the
+    #: time-budget constraint alone leaves the distribution arbitrary). Set an explicit
+    #: value to model a fixed daily pace.
+    max_activities_per_day: int | None = None
     max_time_seconds: float = 5.0
 
     def __post_init__(self) -> None:
@@ -130,6 +136,10 @@ class SchedulingPolicy:
         if self.transition_buffer_minutes < 0:
             raise ValueError(
                 f"transition_buffer_minutes must be >= 0, got {self.transition_buffer_minutes!r}"
+            )
+        if self.max_activities_per_day is not None and self.max_activities_per_day < 1:
+            raise ValueError(
+                f"max_activities_per_day must be >= 1, got {self.max_activities_per_day!r}"
             )
         window = self.day_end_minute - self.day_start_minute
         if self.available_minutes is not None and not (1 <= self.available_minutes <= window):
@@ -355,6 +365,19 @@ class ActivityScheduler:
             ]
             if terms:
                 model.Add(sum(terms) <= budget + buffer)
+
+        # Per-day count cap so activities spread across the stay instead of clustering on
+        # one day. Maximizing the number done leaves the day distribution arbitrary, so
+        # without this the solver may pile everything onto a single day. The default cap
+        # is ceil(n / days) — just enough to still fit every activity while forcing an
+        # even spread — and an explicit policy value overrides it for a fixed daily pace.
+        per_day_cap = policy.max_activities_per_day or -(-len(activities) // max(1, days))
+        for d in range(days):
+            day_presences = [
+                presence[(ai, d)] for ai in range(len(activities)) if (ai, d) in presence
+            ]
+            if day_presences:
+                model.Add(sum(day_presences) <= per_day_cap)
 
         # Objective: maximize the total value of the activities done (each taken one
         # also worth a small base value so the schedule fills available time).
