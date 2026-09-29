@@ -125,6 +125,39 @@ def test_no_match_returns_empty_without_error():
     assert agent.activities_for(BARCELONA, categories=["spa"]) == []
 
 
+def test_duplicate_places_are_deduped():
+    # The same venue is often returned twice under different kinds (so its category label
+    # differs, e.g. "architecture" vs "cultural"); it must collapse to a single entry
+    # rather than appear on two itinerary days. Same name + near-identical location merges;
+    # the first (best-ranked) occurrence is kept.
+    dupes = [
+        {
+            "xid": "A",
+            "name": "Vinohrady Theatre",
+            "rate": 6,
+            "kinds": "architecture,historic_architecture",
+            "point": {"lon": 14.4400, "lat": 50.0770},
+        },
+        {
+            "xid": "B",
+            "name": "Vinohrady Theatre",
+            "rate": 5,
+            "kinds": "cultural,theatres",
+            "point": {"lon": 14.4401, "lat": 50.0771},
+        },
+        {
+            "xid": "C",
+            "name": "Prague Castle",
+            "rate": 7,
+            "kinds": "castles",
+            "point": {"lon": 14.4009, "lat": 50.0900},
+        },
+    ]
+    names = [a.name for a in _agent(lambda _req: dupes).activities_for(BARCELONA)]
+    assert names.count("Vinohrady Theatre") == 1  # collapsed, not shown twice
+    assert "Prague Castle" in names
+
+
 # --- normalization ----------------------------------------------------------
 
 
