@@ -9,7 +9,7 @@ agent degrades rather than crashes, and that no feasible plan raises NoPlanAvail
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
@@ -107,6 +107,7 @@ def _agents(**overrides) -> AgentSet:
         stay=overrides.get("stay", _stay),
         experience=overrides.get("experience", _experience),
         weather=overrides.get("weather", _weather),
+        weather_window=overrides.get("weather_window"),
     )
 
 
@@ -145,6 +146,88 @@ def test_meta_has_degraded_sources_and_timing():
     assert isinstance(meta["elapsed_ms"], int) and meta["elapsed_ms"] >= 0
     assert meta["generated_at"] is not None
     assert meta["trip_id"] is None
+
+
+def test_trip_window_uses_transport_departure_and_duration():
+    # The trip's calendar dates are derived (not user input): the start comes from the
+    # transport's indicative departure timestamp (e.g. the cheapest-fare date), the end is
+    # duration_days on-the-ground days later (inclusive), and the departure clock time is
+    # surfaced when present.
+    def dated_transport(_inp, dest):
+        return TransportOption(
+            mode=TransportMode.CAR,
+            cost=150.0,
+            duration_minutes=600,
+            departure_at="2026-12-01T10:20:00+00:00",
+        )
+
+    result = TripPlanEngine(_agents(transport=dated_transport)).generate_trip(
+        _engine_input(duration_days=5)
+    )
+    cp = result["chosen_plan"]
+    assert cp["start_date"] == date(2026, 12, 1)
+    assert cp["end_date"] == date(2026, 12, 5)  # 5-day trip, inclusive
+    assert cp["transport"]["depart_time"] == "10:20"
+
+
+def test_weather_is_realigned_to_the_trip_window():
+    # For a future (air) departure, the chosen plan's forecast is re-fetched for the actual
+    # travel dates and used for the shown weather + scheduling, not the fan-out "today" one.
+    def dated_transport(_inp, dest):
+        return TransportOption(
+            mode=TransportMode.CAR,
+            cost=150.0,
+            duration_minutes=600,
+            departure_at="2026-12-01T09:00:00+00:00",
+        )
+
+    captured: dict[str, tuple[str, str]] = {}
+
+    def window_weather(_inp, dest, start, end):
+        captured["window"] = (start, end)
+        return WeatherProfile(
+            days=[
+                WeatherDay(
+                    forecast_date=date(2026, 12, 1),
+                    temp_min=1.0,
+                    temp_max=5.0,
+                    conditions="snow",
+                )
+            ]
+        )
+
+    result = TripPlanEngine(
+        _agents(transport=dated_transport, weather_window=window_weather)
+    ).generate_trip(_engine_input(duration_days=5))
+
+    assert captured["window"] == ("2026-12-01", "2026-12-05")  # derived from the fare date
+    weather = result["chosen_plan"]["weather"]
+    assert len(weather) == 1 and weather[0]["forecast_date"] == date(2026, 12, 1)
+
+
+def test_weather_window_not_used_when_the_trip_starts_today():
+    # No future departure (car/bus): the fan-out forecast is already aligned, so the
+    # windowed re-fetch is skipped entirely.
+    calls = {"n": 0}
+
+    def window_weather(_inp, dest, start, end):
+        calls["n"] += 1
+        return None
+
+    TripPlanEngine(_agents(weather_window=window_weather)).generate_trip(_engine_input())
+    assert calls["n"] == 0
+
+
+def test_trip_window_defaults_to_today_without_a_departure():
+    # No departure timestamp (car/bus, or an estimated flight): the window starts today and
+    # no departure time is shown.
+    from datetime import UTC, datetime
+
+    result = TripPlanEngine(_agents()).generate_trip(_engine_input(duration_days=3))
+    cp = result["chosen_plan"]
+    assert cp["start_date"] == datetime.now(UTC).date()
+    assert cp["end_date"] == cp["start_date"] + timedelta(days=2)
+    assert cp["transport"]["depart_time"] is None
 
 
 def test_ranked_candidates_include_the_infeasible_runner_up():

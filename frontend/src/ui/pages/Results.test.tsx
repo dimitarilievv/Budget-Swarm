@@ -21,6 +21,8 @@ function fixture(): TripResponse {
       },
       overall_score: 0.92,
       total_cost: 842,
+      start_date: "2026-12-01",
+      end_date: "2026-12-05",
       cost_breakdown: {
         transport: 245,
         accommodation: 320,
@@ -32,6 +34,7 @@ function fixture(): TripResponse {
         duration_min: 375,
         distance_km: 640,
         quality_flag: "real",
+        depart_time: "10:15",
       },
       accommodation: {
         name: "Riverview Boutique",
@@ -132,6 +135,14 @@ describe("ResultsPage", () => {
     expect(scoped.getByText(/640 km/)).toBeInTheDocument();
     expect(scoped.getByText(/€245/)).toBeInTheDocument();
     expect(scoped.getByText(/6 h 15 min/)).toBeInTheDocument(); // 375 min
+    // The derived travel dates + departure time are shown, not just a price.
+    expect(scoped.getByText(/1 Dec, 10:15/)).toBeInTheDocument(); // departure
+    expect(scoped.getByText(/5 Dec/)).toBeInTheDocument(); // return
+  });
+
+  it("shows the trip date range in the header", () => {
+    render(<ResultsPage response={fixture()} />);
+    expect(screen.getByText("1 Dec – 5 Dec 2026")).toBeInTheDocument();
   });
 
   it("renders accommodation with name, nightly price, nights and rating", () => {
@@ -145,6 +156,11 @@ describe("ResultsPage", () => {
     // 320 accommodation spend / 80 per night = 4 nights.
     expect(scoped.getByText(/4 nights/)).toBeInTheDocument();
     expect(scoped.getByText(/★ 4.6/)).toBeInTheDocument();
+    // Check-in/check-out match the trip window (1 Dec – 5 Dec).
+    expect(scoped.getByText("Check-in")).toBeInTheDocument();
+    expect(scoped.getByText("Check-out")).toBeInTheDocument();
+    expect(scoped.getByText("1 Dec")).toBeInTheDocument();
+    expect(scoped.getByText("5 Dec")).toBeInTheDocument();
   });
 
   it("shows the itinerary per day with indoor/outdoor and rescheduled markers", () => {

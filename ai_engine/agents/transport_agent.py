@@ -587,6 +587,9 @@ class TransportAgent:
             distance_km=distance_km,
             route_summary=summary,
             quality_flag=quality,
+            # The indicative cheapest-fare departure timestamp (Travelpayouts), when known,
+            # so the plan can show the actual travel dates rather than only a price.
+            departure_at=flight.departure_at,
         )
 
     def public_transport_option(self, request: PublicTransportTripRequest) -> TransportOption:
@@ -674,6 +677,7 @@ class TransportAgent:
         distance_km: float | None,
         route_summary: str | None,
         quality_flag: QualityFlag,
+        departure_at: str | None = None,
     ) -> TransportOption:
         """The single exit point every mode routes through (technical-doc §17/§19).
 
@@ -690,6 +694,7 @@ class TransportAgent:
             distance_km=round(distance_km, 3) if distance_km is not None else None,
             route_summary=route_summary,
             quality_flag=quality_flag,
+            departure_at=departure_at,
         )
         logger.debug(
             "normalized TransportOption: mode=%s cost=%s duration=%s distance=%s quality=%s",

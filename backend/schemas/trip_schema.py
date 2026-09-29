@@ -125,6 +125,9 @@ class PlanTransport(BaseModel):
     duration_min: int | None = None
     distance_km: float | None = None
     quality_flag: QualityFlagStr
+    # Outbound departure clock time ("HH:MM") when the fare source provides one (air);
+    # None for modes/sources without a scheduled departure time.
+    depart_time: str | None = None
 
 
 class PlanAccommodation(BaseModel):
@@ -188,6 +191,10 @@ class ChosenPlan(BaseModel):
     destination: PlanDestination
     overall_score: float
     total_cost: float
+    # The concrete travel window (derived from the cheapest option, not user-chosen), so
+    # the UI can show real dates instead of only a price. Optional for back-compat.
+    start_date: date | None = None
+    end_date: date | None = None
     cost_breakdown: CostBreakdown
     transport: PlanTransport | None = None
     accommodation: PlanAccommodation | None = None
