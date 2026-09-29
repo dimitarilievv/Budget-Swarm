@@ -80,10 +80,12 @@ class _FakeAirports:
 class _FakeExperience:
     def __init__(self):
         self.center = None
+        self.calls = []
 
     def activities_for(self, center, **kwargs):
         self.center = center
-        return []
+        self.calls.append(kwargs)
+        return ["poi"]  # non-empty so the strict-filter fallback is not triggered
 
 
 class _FakeWeather:
@@ -253,3 +255,13 @@ def test_experience_passes_center():
     agents = build_agent_set(_bundle(experience_agent=exp))
     agents.experience(FakeEngineInput(), _dest())
     assert exp.center == GeoPoint(47.4979, 19.0402)
+
+
+def test_experience_filters_to_positive_preferences():
+    # Strict: only the user's positive-weight themes are requested as categories, so the
+    # itinerary is restricted to preference-matching activities.
+    exp = _FakeExperience()
+    agents = build_agent_set(_bundle(experience_agent=exp))
+    inp = FakeEngineInput(preferences={"nature": 0.9, "food": 0.0})
+    agents.experience(inp, _dest())
+    assert exp.calls[0]["categories"] == ["nature"]  # food (weight 0) excluded

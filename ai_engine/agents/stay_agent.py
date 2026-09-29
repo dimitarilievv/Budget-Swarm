@@ -93,19 +93,24 @@ class StayAgent:
         *,
         limit: int | None = None,
         currency: str = "eur",
+        travelers: int = 1,
     ) -> list[Accommodation]:
         """Return up to ``limit`` representative :class:`Accommodation`s for a city.
 
         Resolves representatives from the :class:`AccommodationService` (real
         listings → price-stats estimate), bounds the count to ``[1, max_limit]``,
         and normalizes each into the domain model with the service's
-        ``quality_flag``. A destination with no accommodation data at all yields an
-        empty list (logged), never an error.
+        ``quality_flag``. ``travelers`` is the party size — the provider prefers
+        listings that sleep at least that many, so the stay fits the group. A
+        destination with no accommodation data at all yields an empty list (logged),
+        never an error.
         """
         if destination_id is None or destination_id < 1:
             raise ValueError(f"destination_id must be a positive integer, got {destination_id!r}")
         if limit is not None and limit < 1:
             raise ValueError(f"limit must be >= 1, got {limit!r}")
+        if travelers < 1:
+            raise ValueError(f"travelers must be >= 1, got {travelers!r}")
         if not isinstance(currency, str) or len(currency) != 3 or not currency.isalpha():
             raise ValueError(f"currency must be a 3-letter code, got {currency!r}")
         if currency.lower() != "eur":
@@ -115,7 +120,10 @@ class StayAgent:
 
         bound = self._bounded_limit(limit)
         request = AccommodationRequest(
-            destination_id=destination_id, limit=bound, currency=currency
+            destination_id=destination_id,
+            limit=bound,
+            currency=currency,
+            travelers=travelers,
         )
 
         try:
@@ -174,6 +182,13 @@ class StayAgent:
                 rating=option.rating,
                 latitude=option.latitude,
                 longitude=option.longitude,
+                listing_url=option.listing_url,
+                picture_url=option.picture_url,
+                review_count=option.review_count,
+                location_score=option.location_score,
+                neighbourhood=option.neighbourhood,
+                amenities=tuple(option.amenities or ()),
+                accommodates=option.accommodates,
             )
         except ValueError as exc:
             # A listing with an invalid price / rating / coordinate is dropped and

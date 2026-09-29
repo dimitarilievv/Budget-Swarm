@@ -142,6 +142,14 @@ class PlanAccommodation(BaseModel):
     latitude: float | None = None
     longitude: float | None = None
     quality_flag: QualityFlagStr
+    # Listing detail for the UI card (BS-104); present only for real listings, all optional.
+    listing_url: str | None = None
+    picture_url: str | None = None
+    review_count: int | None = None
+    location_score: float | None = None
+    neighbourhood: str | None = None
+    amenities: list[str] = Field(default_factory=list)
+    accommodates: int | None = None  # guest capacity, matched to the party size
 
 
 class ItineraryActivity(BaseModel):

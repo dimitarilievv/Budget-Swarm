@@ -174,6 +174,15 @@ class Accommodation:
     rating: float | None = None
     latitude: float | None = None
     longitude: float | None = None
+    # Optional listing detail for the UI card (BS-104); present only for real listings,
+    # ``None``/empty for a price-stats-estimate option.
+    listing_url: str | None = None
+    picture_url: str | None = None
+    review_count: int | None = None
+    location_score: float | None = None
+    neighbourhood: str | None = None
+    amenities: tuple[str, ...] = ()
+    accommodates: int | None = None  # guest capacity (Inside Airbnb)
 
     def __post_init__(self) -> None:
         if self.price_per_night is None:
@@ -183,6 +192,8 @@ class Accommodation:
             raise ValueError(f"rating must be within [0, 5], got {self.rating!r}")
         _check_latitude("latitude", self.latitude)
         _check_longitude("longitude", self.longitude)
+        # Freeze amenities to a tuple so the value object stays immutable/hashable.
+        object.__setattr__(self, "amenities", tuple(self.amenities or ()))
         object.__setattr__(
             self, "quality_flag", _coerce_enum("quality_flag", self.quality_flag, QualityFlag)
         )

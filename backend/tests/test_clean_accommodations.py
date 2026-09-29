@@ -86,6 +86,37 @@ def test_currency_normalized_to_eur(rates):
     assert listing.price_per_night_eur == pytest.approx(158.37, abs=0.01)  # 3824.33 / 24.148
 
 
+def test_listing_detail_fields_captured(rates):
+    row = {
+        "id": "42",
+        "price": "$100",
+        "latitude": "50.08",
+        "longitude": "14.43",
+        "listing_url": "https://www.airbnb.com/rooms/42",
+        "picture_url": "https://example.com/p.jpg",
+        "number_of_reviews": "312",
+        "review_scores_location": "4.8",
+        "neighbourhood_cleansed": "Praha 1",
+        "amenities": '["Wifi", "Air conditioning", "Kitchen", "Elevator", "Bathtub"]',
+    }
+    listing, reason = clean_row(
+        row,
+        source="inside-airbnb",
+        city="prague",
+        snapshot_label="inside-airbnb-prague-2026-06-27",
+        currency="EUR",
+        rates=rates,
+    )
+    assert reason is None
+    assert listing.listing_url == "https://www.airbnb.com/rooms/42"
+    assert listing.picture_url == "https://example.com/p.jpg"
+    assert listing.review_count == 312
+    assert listing.location_score == pytest.approx(4.8)
+    assert listing.neighbourhood == "Praha 1"
+    # Only declared amenities, mapped to canonical chips in priority order.
+    assert listing.amenities == ["Wi-Fi", "Kitchen", "AC", "Elevator"]
+
+
 @pytest.mark.parametrize(
     "row,reason",
     [

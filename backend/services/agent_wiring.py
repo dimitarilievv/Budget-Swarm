@@ -380,16 +380,35 @@ def build_agent_set(bundle: WiringBundle) -> AgentSet:
                 )
                 return []
             stay_agent = StayAgent(build_accommodation_service(session))
-            return stay_agent.options_for(row.id)
+            return stay_agent.options_for(
+                row.id, travelers=int(getattr(engine_input, "travelers", 1) or 1)
+            )
 
     def experience(engine_input: object, dest: Destination) -> Sequence[Activity]:
         center = GeoPoint(dest.latitude, dest.longitude)
+        label = f"{dest.city}, {dest.country}"
         # Fetch enough POIs to fill a few slots on each trip day (the agent clamps to its
         # own max); the scheduler then spreads them across the days.
         limit = max(1, int(engine_input.duration_days) * _ACTIVITIES_PER_DAY)
-        return bundle.experience_agent.activities_for(
-            center, destination=f"{dest.city}, {dest.country}", limit=limit, enrich=False
+        # Strict preference filtering: keep only activities matching the user's chosen
+        # themes (e.g. "nature" -> parks/gardens/viewpoints), so the itinerary reflects
+        # what they asked for rather than a generic mix.
+        prefs = getattr(engine_input, "preferences", None) or {}
+        categories = [key for key, weight in prefs.items() if weight and weight > 0] or None
+        activities = bundle.experience_agent.activities_for(
+            center, destination=label, categories=categories, limit=limit, enrich=False
         )
+        # Safety net: if a destination has no on-theme POIs at all, fall back to an
+        # unfiltered fetch so the trip still has an itinerary rather than an empty one
+        # (the POI source is cached per destination, so this is not a second network call).
+        if not activities and categories:
+            logger.info(
+                "experience: no %s POIs for %s; using an unfiltered itinerary", categories, label
+            )
+            activities = bundle.experience_agent.activities_for(
+                center, destination=label, limit=limit, enrich=False
+            )
+        return activities
 
     def weather(engine_input: object, dest: Destination) -> WeatherProfile | None:
         center = GeoPoint(dest.latitude, dest.longitude)

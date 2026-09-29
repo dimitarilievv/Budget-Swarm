@@ -128,6 +128,13 @@ def _accommodation_rows(listings: list[CleanListing], destination_id: int) -> li
             "longitude": listing.longitude,
             "quality_flag": listing.quality_flag,  # 'real'
             "snapshot_label": listing.snapshot_label,
+            "listing_url": listing.listing_url,
+            "picture_url": listing.picture_url,
+            "review_count": listing.review_count,
+            "location_score": listing.location_score,
+            "neighbourhood": listing.neighbourhood,
+            "amenities": listing.amenities or None,
+            "accommodates": listing.accommodates,
         }
         for listing in listings
     ]
