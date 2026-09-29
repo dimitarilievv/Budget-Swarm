@@ -16,7 +16,7 @@ route and adapter are untouched.
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from services.coordinator_service import EngineInput
 
@@ -37,6 +37,8 @@ class StubTripEngine:
             request.origin_label,
             request.transport_mode,
         )
+        start = datetime.now(UTC).date()
+        end = start + timedelta(days=max(0, request.duration_days - 1))
         return {
             "chosen_plan": {
                 "destination": {
@@ -48,6 +50,8 @@ class StubTripEngine:
                 },
                 "overall_score": 0.87,
                 "total_cost": 812.50,
+                "start_date": start,
+                "end_date": end,
                 "cost_breakdown": {
                     "transport": 151.00,
                     "accommodation": 240.00,
@@ -59,6 +63,7 @@ class StubTripEngine:
                     "duration_min": 780,
                     "distance_km": 1300,
                     "quality_flag": "estimated",
+                    "depart_time": "10:15" if request.transport_mode == "airplane" else None,
                 },
                 "accommodation": {
                     "name": "Central apartment",

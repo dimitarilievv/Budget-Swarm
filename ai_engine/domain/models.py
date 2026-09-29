@@ -140,6 +140,10 @@ class TransportOption:
     distance_km: float | None = None
     route_summary: str | None = None
     quality_flag: QualityFlag = QualityFlag.REAL
+    # Indicative outbound departure timestamp for this option, when the source provides
+    # one (e.g. the Travelpayouts cheapest-fare ``departure_at``). ISO-8601 string —
+    # a date, or a date-time; ``None`` for modes/sources without a scheduled departure.
+    departure_at: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "mode", _coerce_enum("mode", self.mode, TransportMode))

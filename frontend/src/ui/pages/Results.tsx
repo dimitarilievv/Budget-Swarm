@@ -89,7 +89,11 @@ export default function ResultsPage({
       {/* Summary card row — cost, transport, accommodation, weather. */}
       <div className="grid gap-5 lg:grid-cols-4 sm:grid-cols-2">
         <TotalCostCard plan={plan} />
-        <TransportCard transport={plan.transport} />
+        <TransportCard
+          transport={plan.transport}
+          startDate={plan.start_date}
+          endDate={plan.end_date}
+        />
         <AccommodationCard
           accommodation={plan.accommodation}
           nights={estimateNights(plan)}
@@ -129,6 +133,11 @@ function Header({ plan, onBack }: { plan: ChosenPlan; onBack?: () => void }) {
         <h1 className="mt-3 text-3xl font-extrabold tracking-tight text-slate-900 sm:text-4xl">
           {destination.city}, {destination.country}
         </h1>
+        {formatDateRange(plan.start_date, plan.end_date) && (
+          <p className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-600">
+            {formatDateRange(plan.start_date, plan.end_date)}
+          </p>
+        )}
         <p className="mt-2 flex items-center gap-2 text-sm text-slate-500">
           Match score
           <span className="text-2xl font-extrabold text-teal-600">
@@ -267,7 +276,15 @@ const TRANSPORT_ICON: Record<
   train: IconTrain,
 };
 
-function TransportCard({ transport }: { transport?: PlanTransport | null }) {
+function TransportCard({
+  transport,
+  startDate,
+  endDate,
+}: {
+  transport?: PlanTransport | null;
+  startDate?: string | null;
+  endDate?: string | null;
+}) {
   if (!transport) {
     return (
       <Card title="Transport">
@@ -307,6 +324,18 @@ function TransportCard({ transport }: { transport?: PlanTransport | null }) {
             label="Duration"
             value={formatDuration(transport.duration_min)}
           />
+        )}
+        {startDate && (
+          <MiniRow
+            label="Departure"
+            value={
+              (formatDateShort(startDate) ?? "") +
+              (transport.depart_time ? `, ${transport.depart_time}` : "")
+            }
+          />
+        )}
+        {endDate && (
+          <MiniRow label="Return" value={formatDateShort(endDate) ?? "—"} />
         )}
       </dl>
     </Card>
@@ -947,6 +976,29 @@ function formatWeekday(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleDateString("en-GB", { weekday: "short" });
+}
+
+/** "1 Dec" for a single date, or null when absent/unparseable. */
+function formatDateShort(iso?: string | null): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+}
+
+/** "1 Dec – 5 Dec 2026" for the trip window, or null when neither date is present. */
+function formatDateRange(
+  start?: string | null,
+  end?: string | null,
+): string | null {
+  const s = formatDateShort(start);
+  const e = formatDateShort(end);
+  if (s && e) {
+    const year = new Date(end as string).getFullYear();
+    const suffix = Number.isNaN(year) ? "" : ` ${year}`;
+    return `${s} – ${e}${suffix}`;
+  }
+  return s ?? e;
 }
 
 function formatMonthDay(iso: string): string {

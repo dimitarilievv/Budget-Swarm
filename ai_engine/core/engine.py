@@ -30,7 +30,8 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import UTC, datetime
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from ai_engine.core.explanation import explain_plan
@@ -41,6 +42,7 @@ from ai_engine.core.pipeline import (
     gather_agent_outputs,
 )
 from ai_engine.core.planner import OptimalPlan, Planner, PlanRequest, RankedCandidate
+from ai_engine.domain import TransportOption
 from ai_engine.providers.explanation import ExplanationService
 
 if TYPE_CHECKING:  # pragma: no cover - typing only; avoids a core -> agents import cycle
@@ -122,29 +124,87 @@ class TripPlanEngine:
             len(aggregates),
             len(plan.degraded_sources),
         )
-        return _to_response_dict(plan, explanation.text, elapsed_ms)
+        return _to_response_dict(
+            plan,
+            explanation.text,
+            elapsed_ms,
+            duration_days=days,
+            generated_at=datetime.now(UTC),
+        )
 
 
 # --- OptimalPlan -> api.md wire dict -----------------------------------------
 
 
 def _to_response_dict(
-    plan: OptimalPlan, explanation: str | None, elapsed_ms: int
+    plan: OptimalPlan,
+    explanation: str | None,
+    elapsed_ms: int,
+    *,
+    duration_days: int,
+    generated_at: datetime,
 ) -> dict[str, Any]:
+    window = _trip_window(plan.transport, duration_days, generated_at)
     return {
-        "chosen_plan": _chosen_plan(plan),
+        "chosen_plan": _chosen_plan(plan, window),
         "ranked_candidates": [_ranked(rc) for rc in plan.ranked_candidates],
         "explanation": explanation,
         "meta": {
             "trip_id": None,  # assigned when the plan is persisted (later ticket)
-            "generated_at": datetime.now(UTC),
+            "generated_at": generated_at,
             "degraded_sources": list(plan.degraded_sources),
             "elapsed_ms": elapsed_ms,
         },
     }
 
 
-def _chosen_plan(plan: OptimalPlan) -> dict[str, Any]:
+@dataclass(frozen=True)
+class _TripWindow:
+    """The concrete calendar span of the trip, derived for display (not user input)."""
+
+    start_date: date
+    end_date: date
+    depart_time: str | None  # "HH:MM" when the transport source gives a departure time
+
+
+def _trip_window(
+    transport: TransportOption, duration_days: int, generated_at: datetime
+) -> _TripWindow:
+    """Derive the trip's start/end dates (and departure time) for display.
+
+    The app takes no travel dates as input; it books the *cheapest* option. So the start
+    is taken from the transport's own indicative ``departure_at`` when the source provides
+    one (e.g. the Travelpayouts cheapest fare), otherwise it defaults to the generation
+    date. The end is ``duration_days`` on-the-ground days later (inclusive), so a 5-day
+    trip departing 1 Dec returns 5 Dec.
+    """
+    start, depart_time = _parse_departure(transport.departure_at, generated_at)
+    end = start + timedelta(days=max(0, duration_days - 1))
+    return _TripWindow(start_date=start, end_date=end, depart_time=depart_time)
+
+
+def _parse_departure(departure_at: str | None, generated_at: datetime) -> tuple[date, str | None]:
+    """Parse an ISO ``departure_at`` into ``(date, "HH:MM" | None)``.
+
+    Accepts a bare date (``2026-12-01``) or a date-time (``2026-12-01T10:20:00+03:00``).
+    Falls back to the generation date with no time when the value is absent or unparseable.
+    """
+    if departure_at:
+        try:
+            dt = datetime.fromisoformat(departure_at)
+            has_time = "t" in departure_at.lower()
+            return dt.date(), (dt.strftime("%H:%M") if has_time else None)
+        except ValueError:
+            try:
+                return date.fromisoformat(departure_at[:10]), None
+            except ValueError:
+                logger.debug(
+                    "engine: unparseable departure_at %r; using generation date", departure_at
+                )
+    return generated_at.date(), None
+
+
+def _chosen_plan(plan: OptimalPlan, window: _TripWindow) -> dict[str, Any]:
     dest = plan.destination
     costs = plan.cost_breakdown
     return {
@@ -158,19 +218,22 @@ def _chosen_plan(plan: OptimalPlan) -> dict[str, Any]:
         },
         "overall_score": plan.overall_score,
         "total_cost": plan.total_cost,
+        # The concrete travel window (derived, not user-chosen) so the UI shows real dates.
+        "start_date": window.start_date,
+        "end_date": window.end_date,
         "cost_breakdown": {
             "transport": costs.transport or 0.0,
             "accommodation": costs.accommodation or 0.0,
             "activities": costs.activities,
         },
-        "transport": _transport(plan),
+        "transport": _transport(plan, window),
         "accommodation": _accommodation(plan),
         "itinerary": _itinerary(plan),
         "weather": _weather(plan),
     }
 
 
-def _transport(plan: OptimalPlan) -> dict[str, Any]:
+def _transport(plan: OptimalPlan, window: _TripWindow) -> dict[str, Any]:
     t = plan.transport
     return {
         "mode": t.mode.value,
@@ -178,6 +241,8 @@ def _transport(plan: OptimalPlan) -> dict[str, Any]:
         "duration_min": t.duration_minutes,
         "distance_km": t.distance_km,
         "quality_flag": t.quality_flag.value,
+        # The outbound departure clock time, when the fare source provides one (air).
+        "depart_time": window.depart_time,
     }
 
 

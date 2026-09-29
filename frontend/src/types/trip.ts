@@ -61,6 +61,8 @@ export interface PlanTransport {
   duration_min?: number | null;
   distance_km?: number | null;
   quality_flag: QualityFlag;
+  /** Outbound departure clock time ("HH:MM") when the fare source provides one (air). */
+  depart_time?: string | null;
 }
 
 export interface PlanAccommodation {
@@ -103,6 +105,9 @@ export interface ChosenPlan {
   destination: PlanDestination;
   overall_score: number;
   total_cost: number;
+  /** Travel window (ISO dates), derived from the cheapest option — not user-chosen. */
+  start_date?: string | null;
+  end_date?: string | null;
   cost_breakdown: CostBreakdown;
   transport?: PlanTransport | null;
   accommodation?: PlanAccommodation | null;

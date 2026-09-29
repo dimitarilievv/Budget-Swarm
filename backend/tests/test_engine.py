@@ -9,7 +9,7 @@ agent degrades rather than crashes, and that no feasible plan raises NoPlanAvail
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
@@ -145,6 +145,40 @@ def test_meta_has_degraded_sources_and_timing():
     assert isinstance(meta["elapsed_ms"], int) and meta["elapsed_ms"] >= 0
     assert meta["generated_at"] is not None
     assert meta["trip_id"] is None
+
+
+def test_trip_window_uses_transport_departure_and_duration():
+    # The trip's calendar dates are derived (not user input): the start comes from the
+    # transport's indicative departure timestamp (e.g. the cheapest-fare date), the end is
+    # duration_days on-the-ground days later (inclusive), and the departure clock time is
+    # surfaced when present.
+    def dated_transport(_inp, dest):
+        return TransportOption(
+            mode=TransportMode.CAR,
+            cost=150.0,
+            duration_minutes=600,
+            departure_at="2026-12-01T10:20:00+00:00",
+        )
+
+    result = TripPlanEngine(_agents(transport=dated_transport)).generate_trip(
+        _engine_input(duration_days=5)
+    )
+    cp = result["chosen_plan"]
+    assert cp["start_date"] == date(2026, 12, 1)
+    assert cp["end_date"] == date(2026, 12, 5)  # 5-day trip, inclusive
+    assert cp["transport"]["depart_time"] == "10:20"
+
+
+def test_trip_window_defaults_to_today_without_a_departure():
+    # No departure timestamp (car/bus, or an estimated flight): the window starts today and
+    # no departure time is shown.
+    from datetime import UTC, datetime
+
+    result = TripPlanEngine(_agents()).generate_trip(_engine_input(duration_days=3))
+    cp = result["chosen_plan"]
+    assert cp["start_date"] == datetime.now(UTC).date()
+    assert cp["end_date"] == cp["start_date"] + timedelta(days=2)
+    assert cp["transport"]["depart_time"] is None
 
 
 def test_ranked_candidates_include_the_infeasible_runner_up():
