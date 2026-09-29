@@ -1013,6 +1013,12 @@ Return a usable value, marked quality_flag = "estimated"
 
 **Key principle: degrade, don't crash.** A missing piece downgrades a candidate's data quality (and can lower its score or exclude it), but it never aborts the whole request. Every value carries a `quality_flag` (`real` / `cached` / `estimated`) that propagates to the optimizer and the UI, so the system is always *honest* about how firm its numbers are. This honesty is itself an evaluable property (Section 25) and a defensible engineering stance for the thesis.
 
+**Implementation.** The chain is realized in three layers:
+
+- **Provider level** — `ai_engine.utils.api_clients.fetch_with_fallback` sequences *primary → fallback → estimate*: it skips a provider that raises `ProviderError` or returns empty and tries the next, and if all real sources are exhausted it returns the injected estimate flagged `estimated` (or raises `AllProvidersFailed` only when no estimate exists). Each provider family exposes a `*Service` (`RouteService`, `FlightService`, `WeatherService`, `PublicTransportService`, accommodation) that wires this chain with an always-available estimate, so a single provider outage never propagates.
+- **Pipeline level** — `ai_engine.core.pipeline.gather_agent_outputs` runs the four specialists per candidate with **error isolation**: each agent call is wrapped so any exception degrades *that piece* to `None`/empty for *that candidate only*, never aborting siblings or the request. Only a total ScoutAgent failure (no candidates) stops the run.
+- **Response level** — the coordinator marks each candidate's missing/estimated parts, and `ai_engine.core.planner` emits `OptimalPlan.degraded_sources` (`"<part>:<flag>"`, e.g. `transport:estimated`, `accommodation:missing`), which the engine maps to `meta.degraded_sources` (api.md). A transport piece is essential (a plan can't be costed without it), so a candidate that loses transport entirely is excluded as infeasible rather than chosen; its single-provider failure is handled by the estimate fallback instead.
+
 ---
 
 # 23. Caching
@@ -1039,6 +1045,19 @@ Caching (in PostgreSQL and/or an in-memory layer) reduces external calls, protec
 
 **Do not over-engineer.** A single cache table keyed by `(provider, query_signature)` with a `fetched_at` timestamp and per-data-type TTL is enough. No distributed cache, no elaborate invalidation graph — the access patterns are simple and read-heavy.
 
+**Implementation.** The read-through lives in `backend/db/retrieval.py` (`ApiCacheStore` over the `api_cache` table + `read_through`), and the per-data-type TTL policy in `backend/db/cache_ttl.py`. `make_signature` canonicalises request params (sorted-key JSON, SHA-256 when longer than the column) into `query_signature`. A fresh entry is served `cached` without a fetch; a missing or expired entry falls through to the live fetch, is stored with its TTL, and served `real` (an expired entry is thus refetched). `db.cache_ttl.CacheType` → default TTL:
+
+| Type | Default TTL | Env override |
+|------|-------------|--------------|
+| `weather` | 6 hours | `CACHE_TTL_WEATHER_HOURS` |
+| `price` (flights / transit) | 12 hours | `CACHE_TTL_PRICE_HOURS` |
+| `route` | 7 days | `CACHE_TTL_ROUTE_HOURS` |
+| `poi` | 30 days | `CACHE_TTL_POI_HOURS` |
+| `reference` | long-lived (no expiry) | `CACHE_TTL_REFERENCE_HOURS` |
+| `accommodation` | long-lived (refreshed by re-ingest) | `CACHE_TTL_ACCOMMODATION_HOURS` |
+
+Each provider family carries a `cache_type`, so `BaseProvider` applies the right TTL automatically; an explicit `ttl=` at construction overrides it, and an override of `0` hours means long-lived. `CACHE_TTL_*` are plain tuning knobs (no secrets).
+
 ---
 
 # 24. Security
@@ -1050,6 +1069,13 @@ Caching (in PostgreSQL and/or an in-memory layer) reduces external calls, protec
 - **CORS** — restrict allowed origins to the known frontend origin(s); do not use a wildcard in production.
 - **No API keys in the frontend** — all external calls happen server-side; the browser only ever talks to BudgetSwarm's own API. This is the single most important rule — a key shipped to the browser is a leaked key.
 - **Authentication (only if accounts exist)** — if `users`/trip history is implemented, use hashed passwords or an OAuth/identity provider and protected routes; otherwise the system can run anonymously with no auth surface at all.
+
+**Implementation (BS-093).**
+
+- **CORS** — `main.py` installs `CORSMiddleware` with `allow_origins=settings.cors_origins_list` (from `CORS_ORIGINS`, default the local frontend). No wildcard: a request from an unlisted origin is not granted `Access-Control-Allow-Origin`, so a browser blocks it.
+- **Rate limiting** — `api/rate_limit.py` enforces a sliding-window per-client limit on `POST /api/generate-trip` (default 20 requests / 60 s, tunable via `RATE_LIMIT_ENABLED` / `RATE_LIMIT_REQUESTS` / `RATE_LIMIT_WINDOW_SECONDS`). The client is keyed by `X-Forwarded-For` (first hop, behind the proxy) else the peer IP; over-limit returns the `429 RATE_LIMITED` envelope.
+- **No keys in the frontend** — audited: the only build-time var is `VITE_API_BASE_URL` (the backend URL, not a secret); the browser only ever calls BudgetSwarm's own API, and every provider key stays server-side in backend settings. `frontend/.env.example` documents this rule.
+- **Input validation** — every request is validated by the Pydantic `TripRequest` (budget > 0, duration/travelers ≥ 1, transport-mode enum, preference weights in `[0,1]`, paired origin coordinates in range, `extra="forbid"`, and car-mode requiring `vehicle_consumption`); a violation returns the `422 VALIDATION_ERROR` envelope. Covered by `test_trip_schema.py` and the route-level 422 tests.
 
 ---
 

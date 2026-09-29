@@ -28,6 +28,8 @@ from services.engine_stub import StubTripEngine
 from services.trip_persistence import NullTripPersister, TripPersister
 from services.trip_store import StubTripStore, TripStore
 
+from api.rate_limit import enforce_rate_limit
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
@@ -60,7 +62,12 @@ def get_trip_persister() -> TripPersister:
     return NullTripPersister()
 
 
-@router.post("/generate-trip", response_model=TripResponse, tags=["trips"])
+@router.post(
+    "/generate-trip",
+    response_model=TripResponse,
+    tags=["trips"],
+    dependencies=[Depends(enforce_rate_limit)],  # per-client 429 guard (BS-093)
+)
 def generate_trip(
     request: TripRequest,
     service: CoordinatorService = Depends(get_coordinator_service),

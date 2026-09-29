@@ -122,6 +122,7 @@ class WeatherProvider(BaseProvider[WeatherRequest, list[WeatherProfile]], ABC):
     """Interface for a source of normalized daily forecasts."""
 
     name = "weather"
+    cache_type = "weather"  # short TTL — forecasts move within hours (§23)
 
     def cache_key(self, request: WeatherRequest) -> dict[str, Any]:
         """Cache per destination + date window (short TTL set by the caller)."""
@@ -143,14 +144,16 @@ class OpenMeteoProvider(WeatherProvider):
         super().__init__(**kwargs)
         self._transport = transport
 
-    def _fetch(self, request: WeatherRequest) -> list[WeatherProfile]:
+    def _raw(self, request: WeatherRequest) -> dict[str, Any]:
         try:
-            body = self._transport(request)
+            return self._transport(request)
         except ProviderUnavailable:
             raise
         except Exception as exc:  # noqa: BLE001
             raise ProviderUnavailable(f"Open-Meteo request failed: {exc}") from exc
-        return self._normalize(body)
+
+    def _from_raw(self, request: WeatherRequest, raw: object) -> list[WeatherProfile]:
+        return self._normalize(raw)  # type: ignore[arg-type]
 
     @staticmethod
     def _normalize(body: dict[str, Any]) -> list[WeatherProfile]:

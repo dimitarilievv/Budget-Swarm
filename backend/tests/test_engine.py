@@ -225,6 +225,95 @@ def test_estimated_quality_is_surfaced_in_degraded_sources():
     assert any("transport:estimated" == s for s in result["meta"]["degraded_sources"])
 
 
+# --- fallback chain integration: force each provider to fail (BS-092) --------
+#
+# Two failure shapes per §22: a provider whose primary fails but whose fallback
+# supplies an ESTIMATE (transport, accommodation — the chain degrades, the piece is
+# present and flagged), and a source that is fully DOWN (stay/experience/weather —
+# the piece degrades to missing). Either way a valid, schema-conformant plan is still
+# produced and the degradation is surfaced in meta.degraded_sources.
+
+
+def _plan(agents: AgentSet) -> dict:
+    """Generate a plan and assert it always conforms to the wire schema."""
+    result = TripPlanEngine(agents).generate_trip(_engine_input())
+    TripResponse.model_validate(result)  # never returns a malformed plan
+    return result
+
+
+def _estimated_transport(_inp, dest):
+    cost = 150.0 if dest.city == "Budapest" else 5000.0  # keep Budapest feasible
+    return TransportOption(
+        mode=TransportMode.CAR,
+        cost=cost,
+        duration_minutes=600,
+        distance_km=1300.0,
+        quality_flag=QualityFlag.ESTIMATED,
+    )
+
+
+def _estimated_stay(_inp, dest):
+    return [
+        Accommodation(
+            name="Estimated flat",
+            price_per_night=60.0,
+            rating=4.0,
+            quality_flag=QualityFlag.ESTIMATED,
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    "overrides, expected",
+    [
+        ({"transport": _estimated_transport}, "transport:estimated"),
+        ({"stay": _estimated_stay}, "accommodation:estimated"),
+    ],
+)
+def test_estimated_fallback_still_plans_and_is_flagged(overrides, expected):
+    result = _plan(_agents(**overrides))
+    assert expected in result["meta"]["degraded_sources"]
+    assert result["chosen_plan"]["total_cost"] <= _engine_input().budget
+
+
+def _raiser(message: str):
+    def _fn(_inp, dest):
+        raise RuntimeError(message)
+
+    return _fn
+
+
+@pytest.mark.parametrize(
+    "agent, part",
+    [
+        ("stay", "accommodation"),
+        ("experience", "activities"),
+        ("weather", "weather"),
+    ],
+)
+def test_source_down_degrades_that_part_and_still_plans(agent, part):
+    result = _plan(_agents(**{agent: _raiser(f"{part} source down")}))
+    # A plan is still produced, with the failed part surfaced honestly.
+    assert result["chosen_plan"] is not None
+    assert any(part in s for s in result["meta"]["degraded_sources"])
+
+
+def test_multiple_simultaneous_failures_still_yield_a_valid_flagged_plan():
+    # Transport degrades to an estimate; lodging and weather sources are down — all at
+    # once. The pipeline must still return one valid plan, flagging every degraded part.
+    result = _plan(
+        _agents(
+            transport=_estimated_transport,
+            stay=_raiser("no listings"),
+            weather=_raiser("forecast down"),
+        )
+    )
+    degraded = result["meta"]["degraded_sources"]
+    assert "transport:estimated" in degraded
+    assert any("accommodation" in s for s in degraded)
+    assert any("weather" in s for s in degraded)
+
+
 # --- no feasible plan -------------------------------------------------------
 
 

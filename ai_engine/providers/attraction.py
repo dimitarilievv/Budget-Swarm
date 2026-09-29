@@ -148,6 +148,7 @@ class AttractionProvider(BaseProvider[AttractionRequest, list[Activity]], ABC):
     """Interface for a source of normalized POIs."""
 
     name = "attraction"
+    cache_type = "poi"  # long TTL — attractions change over weeks (§23)
 
     def cache_key(self, request: AttractionRequest) -> dict[str, Any]:
         """Cache per destination (+ search disc)."""

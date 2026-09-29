@@ -114,6 +114,7 @@ class PublicTransportProvider(BaseProvider[PublicTransportRequest, TransportOpti
     """Interface for a source of bus/train trip options."""
 
     name = "public-transport"
+    cache_type = "price"  # short-to-medium TTL — indicative prices, cache hard (§23)
 
     def cache_key(self, request: PublicTransportRequest) -> dict[str, Any]:
         """Cache per city-pair (+ currency/date) — indicative prices, cache hard."""
@@ -140,14 +141,16 @@ class ApifyFlixbusProvider(PublicTransportProvider):
         super().__init__(**kwargs)
         self._transport = transport
 
-    def _fetch(self, request: PublicTransportRequest) -> TransportOption:
+    def _raw(self, request: PublicTransportRequest) -> Any:
         try:
-            rows = self._transport(request)
+            return self._transport(request)
         except ProviderUnavailable:
             raise
         except Exception as exc:  # noqa: BLE001
             raise ProviderUnavailable(f"Apify request failed: {exc}") from exc
-        return self._normalize(request, rows)
+
+    def _from_raw(self, request: PublicTransportRequest, raw: object) -> TransportOption:
+        return self._normalize(request, raw)
 
     @staticmethod
     def _normalize(request: PublicTransportRequest, rows: Any) -> TransportOption:
@@ -193,14 +196,16 @@ class FlixRestProvider(PublicTransportProvider):
         super().__init__(**kwargs)
         self._transport = transport
 
-    def _fetch(self, request: PublicTransportRequest) -> TransportOption:
+    def _raw(self, request: PublicTransportRequest) -> Any:
         try:
-            journeys = self._transport(request)
+            return self._transport(request)
         except ProviderUnavailable:
             raise
         except Exception as exc:  # noqa: BLE001
             raise ProviderUnavailable(f"flix-rest request failed: {exc}") from exc
-        return self._normalize(request, journeys)
+
+    def _from_raw(self, request: PublicTransportRequest, raw: object) -> TransportOption:
+        return self._normalize(request, raw)
 
     @staticmethod
     def _normalize(request: PublicTransportRequest, journeys: Any) -> TransportOption:

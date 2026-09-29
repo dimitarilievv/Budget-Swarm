@@ -125,6 +125,7 @@ class AccommodationProvider(BaseProvider[AccommodationRequest, list[Accommodatio
     """Interface for a source of representative accommodation options."""
 
     name = "accommodation"
+    cache_type = "accommodation"  # long-lived — snapshot data, refreshed by re-ingest (§23)
 
 
 class InsideAirbnbProvider(AccommodationProvider):
