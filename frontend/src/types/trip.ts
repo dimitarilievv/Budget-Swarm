@@ -80,6 +80,7 @@ export interface PlanAccommodation {
   location_score?: number | null; // 0–5, Airbnb's review_scores_location
   neighbourhood?: string | null;
   amenities?: string[] | null;
+  accommodates?: number | null; // guest capacity, matched to the party size
 }
 
 export interface ItineraryActivity {

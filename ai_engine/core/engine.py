@@ -357,6 +357,7 @@ def _accommodation(plan: OptimalPlan) -> dict[str, Any] | None:
         "location_score": a.location_score,
         "neighbourhood": a.neighbourhood,
         "amenities": list(a.amenities),
+        "accommodates": a.accommodates,
     }
 
 

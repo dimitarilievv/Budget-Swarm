@@ -182,6 +182,7 @@ class Accommodation:
     location_score: float | None = None
     neighbourhood: str | None = None
     amenities: tuple[str, ...] = ()
+    accommodates: int | None = None  # guest capacity (Inside Airbnb)
 
     def __post_init__(self) -> None:
         if self.price_per_night is None:

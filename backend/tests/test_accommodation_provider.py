@@ -39,6 +39,7 @@ class FakeRow:
     latitude: float | None = None
     longitude: float | None = None
     quality_flag: str = "real"
+    accommodates: int | None = None
 
 
 @dataclass
@@ -100,6 +101,27 @@ def test_provider_returns_empty_list_when_no_listings():
     provider = InsideAirbnbProvider(FakeSource(rows={}))
     result = provider.fetch(REQ)
     assert result.quality_flag == QUALITY_REAL and result.data == []
+
+
+def test_provider_prefers_listings_that_fit_the_party():
+    rows = [
+        FakeRow(price_per_night=Decimal("30"), name="Studio", accommodates=1),
+        FakeRow(price_per_night=Decimal("50"), name="One-bed", accommodates=2),
+        FakeRow(price_per_night=Decimal("90"), name="Two-bed", accommodates=4),
+    ]
+    provider = InsideAirbnbProvider(FakeSource(rows={1: rows}))
+    options = provider.fetch(AccommodationRequest(destination_id=1, limit=3, travelers=2)).data
+    # Only listings that sleep the whole party (>= 2) are offered.
+    assert {o.name for o in options} == {"One-bed", "Two-bed"}
+    assert all(o.accommodates >= 2 for o in options)
+
+
+def test_provider_falls_back_when_no_listing_fits_the_party():
+    rows = [FakeRow(price_per_night=Decimal("30"), name="Studio", accommodates=1)]
+    provider = InsideAirbnbProvider(FakeSource(rows={1: rows}))
+    options = provider.fetch(AccommodationRequest(destination_id=1, limit=3, travelers=4)).data
+    # Nothing fits 4, but a stay is still offered rather than none.
+    assert len(options) == 1 and options[0].name == "Studio"
 
 
 def test_representative_indices_spreads_across_range():

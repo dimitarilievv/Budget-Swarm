@@ -393,6 +393,12 @@ function AccommodationCard({
               {subtitle}
             </p>
           )}
+          {a.accommodates != null && (
+            <p className="mt-0.5 text-sm text-slate-500">
+              Sleeps {a.accommodates}{" "}
+              {a.accommodates === 1 ? "guest" : "guests"}
+            </p>
+          )}
           {a.rating != null && (
             <p className="mt-1 text-sm font-semibold text-amber-600">
               ★ {a.rating.toFixed(1)}

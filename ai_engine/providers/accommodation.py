@@ -55,6 +55,7 @@ class AccommodationRow(Protocol):
     location_score: Any | None
     neighbourhood: str | None
     amenities: Any | None
+    accommodates: int | None
 
 
 @runtime_checkable
@@ -86,11 +87,16 @@ class AccommodationSource(Protocol):
 
 @dataclass(frozen=True)
 class AccommodationRequest:
-    """A lodging query for one destination; ``limit`` caps representative options."""
+    """A lodging query for one destination; ``limit`` caps representative options.
+
+    ``travelers`` is the party size: the DB provider prefers listings that sleep at least
+    this many, so the stay fits the group rather than being chosen on price alone.
+    """
 
     destination_id: int
     limit: int = 3
     currency: str = "eur"
+    travelers: int = 1
 
 
 @dataclass
@@ -116,6 +122,7 @@ class AccommodationOption:
     location_score: float | None = None
     neighbourhood: str | None = None
     amenities: list[str] = field(default_factory=list)
+    accommodates: int | None = None
 
 
 def _to_float(value: Any) -> float | None:
@@ -162,6 +169,24 @@ class InsideAirbnbProvider(AccommodationProvider):
         if not rows:
             logger.info("accommodation: no listings for destination %s", request.destination_id)
             return []
+        # Prefer listings that sleep the whole party. Only filter when it still leaves
+        # something — otherwise (no capacity data, or none large enough) fall back to the
+        # full list so a stay is always offered rather than none (degrade, don't crash).
+        if request.travelers > 1:
+            fitting = [
+                r
+                for r in rows
+                if getattr(r, "accommodates", None) is not None
+                and r.accommodates >= request.travelers
+            ]
+            if fitting:
+                rows = fitting
+            else:
+                logger.info(
+                    "accommodation: no listing sleeps %d for destination %s; using all listings",
+                    request.travelers,
+                    request.destination_id,
+                )
         labels = ["budget", "typical", "comfort"]
         idxs = _representative_indices(len(rows), request.limit)
         options: list[AccommodationOption] = []
@@ -185,6 +210,7 @@ class InsideAirbnbProvider(AccommodationProvider):
                     location_score=_to_float(getattr(row, "location_score", None)),
                     neighbourhood=getattr(row, "neighbourhood", None),
                     amenities=list(getattr(row, "amenities", None) or []),
+                    accommodates=getattr(row, "accommodates", None),
                 )
             )
         return options

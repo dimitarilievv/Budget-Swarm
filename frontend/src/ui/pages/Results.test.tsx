@@ -50,6 +50,7 @@ function fixture(): TripResponse {
         location_score: 4.8,
         neighbourhood: "District V",
         amenities: ["Wi-Fi", "Kitchen", "AC"],
+        accommodates: 4,
       },
       itinerary: [
         {
@@ -177,6 +178,7 @@ describe("ResultsPage", () => {
     const scoped = within(card);
     // Neighbourhood, review count, amenities and location score come from the listing.
     expect(scoped.getByText(/District V/)).toBeInTheDocument();
+    expect(scoped.getByText(/Sleeps 4 guests/)).toBeInTheDocument();
     expect(scoped.getByText(/\(312 reviews\)/)).toBeInTheDocument();
     expect(scoped.getByText("Wi-Fi")).toBeInTheDocument();
     expect(scoped.getByText(/Excellent location/)).toBeInTheDocument();

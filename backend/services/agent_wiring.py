@@ -380,7 +380,9 @@ def build_agent_set(bundle: WiringBundle) -> AgentSet:
                 )
                 return []
             stay_agent = StayAgent(build_accommodation_service(session))
-            return stay_agent.options_for(row.id)
+            return stay_agent.options_for(
+                row.id, travelers=int(getattr(engine_input, "travelers", 1) or 1)
+            )
 
     def experience(engine_input: object, dest: Destination) -> Sequence[Activity]:
         center = GeoPoint(dest.latitude, dest.longitude)

@@ -149,6 +149,7 @@ class PlanAccommodation(BaseModel):
     location_score: float | None = None
     neighbourhood: str | None = None
     amenities: list[str] = Field(default_factory=list)
+    accommodates: int | None = None  # guest capacity, matched to the party size
 
 
 class ItineraryActivity(BaseModel):

@@ -134,6 +134,7 @@ def _accommodation_rows(listings: list[CleanListing], destination_id: int) -> li
             "location_score": listing.location_score,
             "neighbourhood": listing.neighbourhood,
             "amenities": listing.amenities or None,
+            "accommodates": listing.accommodates,
         }
         for listing in listings
     ]
