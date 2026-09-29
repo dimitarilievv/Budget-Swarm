@@ -283,10 +283,13 @@ def _raiser(message: str):
     return _fn
 
 
+# Only the *soft* parts are covered here: activities and weather degrade to a thin plan.
+# Accommodation is a hard requirement (a trip needs somewhere to stay), so a downed stay
+# source for every candidate yields no plan instead — see
+# test_no_accommodation_anywhere_raises_no_plan_available.
 @pytest.mark.parametrize(
     "agent, part",
     [
-        ("stay", "accommodation"),
         ("experience", "activities"),
         ("weather", "weather"),
     ],
@@ -299,12 +302,14 @@ def test_source_down_degrades_that_part_and_still_plans(agent, part):
 
 
 def test_multiple_simultaneous_failures_still_yield_a_valid_flagged_plan():
-    # Transport degrades to an estimate; lodging and weather sources are down — all at
-    # once. The pipeline must still return one valid plan, flagging every degraded part.
+    # Transport degrades to an estimate, lodging falls back to a price-stats estimate, and
+    # the weather source is down — all at once. The pipeline must still return one valid
+    # plan, flagging every degraded part. (Lodging must still resolve to *something*, since
+    # a stay is a hard requirement; a fully-absent stay is the no-plan case tested above.)
     result = _plan(
         _agents(
             transport=_estimated_transport,
-            stay=_raiser("no listings"),
+            stay=_estimated_stay,
             weather=_raiser("forecast down"),
         )
     )
