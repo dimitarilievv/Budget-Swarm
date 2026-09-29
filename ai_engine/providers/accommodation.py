@@ -35,6 +35,11 @@ from ai_engine.utils.api_clients import (
 
 logger = logging.getLogger(__name__)
 
+# When several listings sleep the whole party, favour the closest-fitting size: keep those
+# from the smallest fitting capacity up to that plus this slack, so a small party is not
+# booked into a much larger place while still leaving a little price choice.
+_CAPACITY_SLACK = 2
+
 
 @runtime_checkable
 class AccommodationRow(Protocol):
@@ -164,29 +169,39 @@ class InsideAirbnbProvider(AccommodationProvider):
         super().__init__(**kwargs)
         self._source = source
 
+    def _by_capacity(self, rows: list, travelers: int, destination_id: int) -> list:
+        """Narrow price-sorted listings to ones sized for the party (closest fit).
+
+        Keeps listings that sleep at least ``travelers`` and, among those, favours the
+        **closest-fitting** size: the smallest fitting capacity plus a small slack band, so
+        a party of two is not booked into a place that sleeps sixteen while still leaving a
+        little price choice. Falls back to the full list when no capacity data is present or
+        nothing is large enough, so a stay is always offered (degrade, don't crash).
+        """
+        fitting = [
+            r
+            for r in rows
+            if getattr(r, "accommodates", None) is not None and r.accommodates >= travelers
+        ]
+        if not fitting:
+            if any(getattr(r, "accommodates", None) is not None for r in rows) and travelers > 1:
+                logger.info(
+                    "accommodation: no listing sleeps %d for destination %s; using all listings",
+                    travelers,
+                    destination_id,
+                )
+            return rows
+        smallest = min(r.accommodates for r in fitting)
+        cap = smallest + _CAPACITY_SLACK
+        close = [r for r in fitting if r.accommodates <= cap]
+        return close or fitting
+
     def _fetch(self, request: AccommodationRequest) -> list[AccommodationOption]:
         rows = self._source.list_by_destination(request.destination_id) or []
         if not rows:
             logger.info("accommodation: no listings for destination %s", request.destination_id)
             return []
-        # Prefer listings that sleep the whole party. Only filter when it still leaves
-        # something — otherwise (no capacity data, or none large enough) fall back to the
-        # full list so a stay is always offered rather than none (degrade, don't crash).
-        if request.travelers > 1:
-            fitting = [
-                r
-                for r in rows
-                if getattr(r, "accommodates", None) is not None
-                and r.accommodates >= request.travelers
-            ]
-            if fitting:
-                rows = fitting
-            else:
-                logger.info(
-                    "accommodation: no listing sleeps %d for destination %s; using all listings",
-                    request.travelers,
-                    request.destination_id,
-                )
+        rows = self._by_capacity(rows, request.travelers, request.destination_id)
         labels = ["budget", "typical", "comfort"]
         idxs = _representative_indices(len(rows), request.limit)
         options: list[AccommodationOption] = []

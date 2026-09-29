@@ -124,6 +124,21 @@ def test_provider_falls_back_when_no_listing_fits_the_party():
     assert len(options) == 1 and options[0].name == "Studio"
 
 
+def test_provider_favours_the_closest_fitting_size():
+    # A party of two must not be booked into a place that sleeps sixteen: keep the
+    # closest-fitting sizes (smallest fit + slack), dropping the oversized one.
+    rows = [
+        FakeRow(price_per_night=Decimal("40"), name="For-two", accommodates=2),
+        FakeRow(price_per_night=Decimal("55"), name="For-four", accommodates=4),
+        FakeRow(price_per_night=Decimal("70"), name="For-sixteen", accommodates=16),
+    ]
+    provider = InsideAirbnbProvider(FakeSource(rows={1: rows}))
+    options = provider.fetch(AccommodationRequest(destination_id=1, limit=3, travelers=2)).data
+    names = {o.name for o in options}
+    assert "For-sixteen" not in names  # oversized dropped
+    assert names == {"For-two", "For-four"}
+
+
 def test_representative_indices_spreads_across_range():
     assert _representative_indices(5, 3) == [0, 2, 4]
     assert _representative_indices(2, 3) == [0, 1]
