@@ -158,7 +158,7 @@ describe("ResultsPage", () => {
       .closest("section") as HTMLElement;
     const scoped = within(card);
     expect(scoped.getByText("Riverview Boutique")).toBeInTheDocument();
-    expect(scoped.getByText(/€80\/night/)).toBeInTheDocument();
+    expect(scoped.getByText(/€80/)).toBeInTheDocument(); // nightly price
     // 320 accommodation spend / 80 per night = 4 nights.
     expect(scoped.getByText(/4 nights/)).toBeInTheDocument();
     expect(scoped.getByText(/★ 4.6/)).toBeInTheDocument();

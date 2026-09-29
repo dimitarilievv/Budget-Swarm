@@ -86,22 +86,24 @@ export default function ResultsPage({
 
       <DestinationInfo city={destination.city} />
 
-      {/* Summary card row — cost, transport, accommodation, weather. */}
-      <div className="grid gap-5 lg:grid-cols-4 sm:grid-cols-2">
+      {/* Summary card row — cost, transport, weather. */}
+      <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
         <TotalCostCard plan={plan} />
         <TransportCard
           transport={plan.transport}
           startDate={plan.start_date}
           endDate={plan.end_date}
         />
-        <AccommodationCard
-          accommodation={plan.accommodation}
-          nights={estimateNights(plan)}
-          startDate={plan.start_date}
-          endDate={plan.end_date}
-        />
         <WeatherCard weather={plan.weather} />
       </div>
+
+      {/* Accommodation — a full-width, two-column card (details + map). */}
+      <AccommodationCard
+        accommodation={plan.accommodation}
+        nights={estimateNights(plan)}
+        startDate={plan.start_date}
+        endDate={plan.end_date}
+      />
 
       {/* Itinerary timeline beside the overview map. */}
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
@@ -379,105 +381,130 @@ function AccommodationCard({
       title="Accommodation"
       eyebrow={<QualityBadge flag={a.quality_flag} />}
     >
-      {a.picture_url && (
-        <img
-          src={a.picture_url}
-          alt={a.name ?? "Accommodation photo"}
-          loading="lazy"
-          className="mb-3 h-40 w-full rounded-xl object-cover ring-1 ring-slate-200"
-          onError={(e) => {
-            e.currentTarget.style.display = "none";
-          }}
-        />
-      )}
-      <p className="text-base font-bold leading-tight text-slate-900">
-        {a.name ?? "Selected stay"}
-      </p>
-      {subtitle && (
-        <p className="text-xs capitalize text-slate-500">{subtitle}</p>
-      )}
-      {a.rating != null && (
-        <p className="mt-1 text-sm font-medium text-amber-600">
-          ★ {a.rating.toFixed(1)}
-          {a.review_count != null && (
-            <span className="font-normal text-slate-400">
-              {" "}
-              ({a.review_count.toLocaleString()} reviews)
-            </span>
+      <div className="grid gap-6 lg:grid-cols-[1.5fr_1fr]">
+        {/* Left: listing detail + photo + booking action. */}
+        <div className="flex min-w-0 flex-col">
+          <h3 className="text-xl font-bold leading-snug text-slate-900">
+            {a.name ?? "Selected stay"}
+          </h3>
+          {subtitle && (
+            <p className="mt-0.5 flex items-center gap-1 text-sm capitalize text-slate-500">
+              <IconLocation className="h-4 w-4 shrink-0 text-slate-400" />
+              {subtitle}
+            </p>
           )}
-        </p>
-      )}
-      <p className="mt-2 text-sm text-slate-600">
-        {euro(a.price_per_night)}/night
-        {nights != null && nightsTotal != null && (
-          <>
-            {" · "}
-            {nights} {nights === 1 ? "night" : "nights"} ={" "}
-            <span className="font-semibold text-slate-800">
-              {euro(nightsTotal)}
-            </span>
-          </>
-        )}
-      </p>
-      {amenities.length > 0 && (
-        <ul className="mt-2 flex flex-wrap gap-1.5">
-          {amenities.map((amenity) => (
-            <li
-              key={amenity}
-              className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-600"
+          {a.rating != null && (
+            <p className="mt-1 text-sm font-semibold text-amber-600">
+              ★ {a.rating.toFixed(1)}
+              {a.review_count != null && (
+                <span className="font-normal text-slate-400">
+                  {" "}
+                  ({a.review_count.toLocaleString()} reviews)
+                </span>
+              )}
+            </p>
+          )}
+          <p className="mt-1 text-lg font-bold text-slate-900">
+            {euro(a.price_per_night)}
+            <span className="text-sm font-normal text-slate-500"> / night</span>
+            {nights != null && nightsTotal != null && (
+              <span className="text-sm font-normal text-slate-500">
+                {" · "}
+                {nights} {nights === 1 ? "night" : "nights"} ={" "}
+                <span className="font-semibold text-slate-700">
+                  {euro(nightsTotal)}
+                </span>
+              </span>
+            )}
+          </p>
+
+          {amenities.length > 0 && (
+            <ul className="mt-3 flex flex-wrap gap-2">
+              {amenities.map((amenity) => (
+                <li
+                  key={amenity}
+                  className="rounded-full bg-sky-50 px-3 py-1 text-xs font-medium text-sky-700 ring-1 ring-sky-100"
+                >
+                  {amenity}
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {a.picture_url && (
+            <img
+              src={a.picture_url}
+              alt={a.name ?? "Accommodation photo"}
+              loading="lazy"
+              className="mt-3 h-48 w-full rounded-xl object-cover ring-1 ring-slate-200"
+              onError={(e) => {
+                e.currentTarget.style.display = "none";
+              }}
+            />
+          )}
+
+          {formatDateShort(startDate) && formatDateShort(endDate) && (
+            <p className="mt-3 text-sm text-slate-600">
+              <span className="text-slate-400">Check-in</span>{" "}
+              <span className="font-medium text-slate-700">
+                {formatDateShort(startDate)}
+              </span>
+              {" · "}
+              <span className="text-slate-400">Check-out</span>{" "}
+              <span className="font-medium text-slate-700">
+                {formatDateShort(endDate)}
+              </span>
+            </p>
+          )}
+
+          {a.listing_url && (
+            <a
+              href={a.listing_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-4 inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-rose-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-rose-600 sm:w-auto sm:self-start sm:px-6"
             >
-              {amenity}
-            </li>
-          ))}
-        </ul>
-      )}
-      {formatDateShort(startDate) && formatDateShort(endDate) && (
-        <p className="mt-2 text-sm text-slate-600">
-          <span className="text-slate-400">Check-in</span>{" "}
-          <span className="font-medium text-slate-700">
-            {formatDateShort(startDate)}
-          </span>
-          {" · "}
-          <span className="text-slate-400">Check-out</span>{" "}
-          <span className="font-medium text-slate-700">
-            {formatDateShort(endDate)}
-          </span>
-        </p>
-      )}
-      {hasCoords && (
-        <MapView
-          markers={[
-            {
-              lat: a.latitude as number,
-              lon: a.longitude as number,
-              label: a.name ?? "Accommodation",
-              kind: "accommodation",
-            },
-          ]}
-          ariaLabel={`Map showing ${a.name ?? "the accommodation"} location`}
-          singleZoom={14}
-          className="mt-3 h-28 w-full overflow-hidden rounded-xl ring-1 ring-slate-200"
-        />
-      )}
-      {a.location_score != null && (
-        <p className="mt-2 flex items-center gap-1.5 text-xs text-slate-500">
-          <span className="rounded-md bg-teal-50 px-1.5 py-0.5 font-semibold text-teal-700">
-            {a.location_score.toFixed(1)}
-          </span>
-          {locationLabel(a.location_score)} location
-        </p>
-      )}
-      {a.listing_url && (
-        <a
-          href={a.listing_url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-xl bg-rose-500 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-rose-600"
-        >
-          View on Airbnb
-          <IconArrowRight className="h-4 w-4" />
-        </a>
-      )}
+              View on Airbnb
+              <IconArrowRight className="h-4 w-4" />
+            </a>
+          )}
+        </div>
+
+        {/* Right: map + a location-quality panel. */}
+        <div className="flex flex-col gap-3">
+          {hasCoords && (
+            <MapView
+              markers={[
+                {
+                  lat: a.latitude as number,
+                  lon: a.longitude as number,
+                  label: a.name ?? "Accommodation",
+                  kind: "accommodation",
+                },
+              ]}
+              ariaLabel={`Map showing ${a.name ?? "the accommodation"} location`}
+              singleZoom={14}
+              className="min-h-[12rem] flex-1 overflow-hidden rounded-xl ring-1 ring-slate-200"
+            />
+          )}
+          {a.location_score != null && (
+            <div className="rounded-xl bg-teal-50/70 p-3 ring-1 ring-teal-100">
+              <div className="flex items-center justify-between gap-2">
+                <p className="flex items-center gap-1.5 text-sm font-semibold text-slate-700">
+                  <IconLocation className="h-4 w-4 text-teal-600" />
+                  {locationLabel(a.location_score)} location
+                </p>
+                <span className="rounded-md bg-teal-600 px-1.5 py-0.5 text-xs font-bold text-white tabular-nums">
+                  {a.location_score.toFixed(1)}
+                </span>
+              </div>
+              <p className="mt-1 text-xs text-slate-500">
+                Guests rate the location {a.location_score.toFixed(1)} / 5.
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
     </Card>
   );
 }
