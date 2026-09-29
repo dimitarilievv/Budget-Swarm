@@ -388,17 +388,33 @@ function AccommodationCard({
 /* Weather                                                                     */
 /* -------------------------------------------------------------------------- */
 
+// precip_prob is a percentage in [0, 100] (api.md), matching Open-Meteo's
+// precipitation_probability_max — not a 0-1 fraction.
 function weatherIcon(day: PlanWeatherDay) {
   const text = (day.conditions ?? "").toLowerCase();
   const rainy =
     /rain|drizzle|shower|storm|thunder/.test(text) ||
-    (day.precip_prob != null && day.precip_prob >= 0.5);
+    (day.precip_prob != null && day.precip_prob >= 50);
   if (rainy) return IconCloudRain;
   if (/cloud|overcast|fog|mist/.test(text)) return IconCloud;
   if (/part|sun.*cloud|cloud.*sun/.test(text)) return IconCloudSun;
   if (/clear|sun|fair/.test(text)) return IconSun;
-  if (day.precip_prob != null && day.precip_prob >= 0.2) return IconCloudSun;
+  if (day.precip_prob != null && day.precip_prob >= 20) return IconCloudSun;
   return IconSun;
+}
+
+/** Small droplet glyph for the precipitation pill (no dependency on the icon set). */
+function Droplet({ className = "" }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden="true"
+      className={className}
+    >
+      <path d="M12 2.5S5.5 9.8 5.5 14.5a6.5 6.5 0 0 0 13 0C18.5 9.8 12 2.5 12 2.5Z" />
+    </svg>
+  );
 }
 
 function WeatherCard({ weather }: { weather: PlanWeatherDay[] }) {
@@ -409,43 +425,63 @@ function WeatherCard({ weather }: { weather: PlanWeatherDay[] }) {
       </Card>
     );
   }
+  const anyConflict = weather.some((day) => day.weather_conflict);
   return (
     <Card title={`Weather (${weather.length}-day forecast)`}>
-      <ul className="flex gap-1.5 overflow-x-auto">
+      <ul className="grid grid-cols-[repeat(auto-fill,minmax(4.5rem,1fr))] gap-2">
         {weather.map((day) => {
           const Icon = weatherIcon(day);
+          const conflict = day.weather_conflict;
           return (
             <li
               key={day.forecast_date}
-              className={`flex min-w-0 flex-1 flex-col items-center gap-1 rounded-lg px-1.5 py-2 text-center ${
-                day.weather_conflict ? "bg-amber-50 ring-1 ring-amber-200" : ""
+              className={`flex flex-col items-center gap-2 rounded-xl px-2 py-3 text-center ring-1 transition-colors ${
+                conflict
+                  ? "bg-amber-50 ring-amber-200"
+                  : "bg-slate-50 ring-slate-100"
               }`}
               title={day.conditions ?? undefined}
             >
-              <span className="text-[11px] font-medium text-slate-400">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                 {formatDay(day.forecast_date)}
               </span>
-              <Icon
-                className={`h-6 w-6 ${
-                  day.weather_conflict ? "text-amber-500" : "text-teal-500"
+              <span
+                className={`flex h-9 w-9 items-center justify-center rounded-full shadow-sm ${
+                  conflict ? "bg-amber-100" : "bg-white"
                 }`}
-              />
-              <span className="text-[11px] font-semibold tabular-nums text-slate-700">
+              >
+                <Icon
+                  className={`h-5 w-5 ${
+                    conflict ? "text-amber-500" : "text-teal-500"
+                  }`}
+                />
+              </span>
+              <span className="text-sm font-semibold tabular-nums text-slate-700">
                 {formatTempCompact(day)}
               </span>
               {day.precip_prob != null && (
                 <span
-                  className={`text-[10px] tabular-nums ${
-                    day.weather_conflict ? "text-amber-600" : "text-slate-400"
+                  className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium tabular-nums ${
+                    conflict
+                      ? "bg-amber-100 text-amber-700"
+                      : "bg-sky-50 text-sky-600"
                   }`}
                 >
-                  {Math.round(day.precip_prob * 100)}%
+                  <Droplet className="h-2.5 w-2.5" />
+                  {Math.round(day.precip_prob)}%
                 </span>
               )}
             </li>
           );
         })}
       </ul>
+      {anyConflict && (
+        <p className="mt-3 flex items-center gap-1.5 text-[11px] text-amber-600">
+          <span className="h-2 w-2 shrink-0 rounded-full bg-amber-300" />
+          Amber days have a high chance of rain — outdoor activities were
+          scheduled around them.
+        </p>
+      )}
     </Card>
   );
 }
