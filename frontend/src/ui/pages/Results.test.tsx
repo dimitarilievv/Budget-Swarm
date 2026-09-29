@@ -163,12 +163,15 @@ describe("ResultsPage", () => {
   it("renders a weather forecast with temperatures and precipitation", () => {
     render(<ResultsPage response={fixture()} />);
     const card = screen
-      .getByRole("heading", { name: /Weather \(2-day forecast\)/i })
+      .getByRole("heading", { name: /Weather · 2-day forecast/i })
       .closest("section") as HTMLElement;
     const scoped = within(card);
-    expect(scoped.getByText("24°/14°")).toBeInTheDocument();
+    // Each day shows its high and low temperature separately.
+    expect(scoped.getByText("24°")).toBeInTheDocument(); // day 1 high
+    expect(scoped.getByText("18°")).toBeInTheDocument(); // day 2 high
+    expect(scoped.getByText("12°")).toBeInTheDocument(); // day 2 low
+    // The rainy day surfaces its precipitation chance (percentage, not *100).
     expect(scoped.getByText("80%")).toBeInTheDocument();
-    expect(scoped.getByText("10%")).toBeInTheDocument();
   });
 
   it("renders the explanation as 'Why {city}?'", () => {

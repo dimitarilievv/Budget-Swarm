@@ -403,17 +403,95 @@ function weatherIcon(day: PlanWeatherDay) {
   return IconSun;
 }
 
-/** Small droplet glyph for the precipitation pill (no dependency on the icon set). */
-function Droplet({ className = "" }: { className?: string }) {
+/** A day counts as wet enough to surface its precipitation chance and a rain icon. */
+function isWetDay(day: PlanWeatherDay): boolean {
   return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="currentColor"
-      aria-hidden="true"
-      className={className}
-    >
-      <path d="M12 2.5S5.5 9.8 5.5 14.5a6.5 6.5 0 0 0 13 0C18.5 9.8 12 2.5 12 2.5Z" />
-    </svg>
+    day.weather_conflict ||
+    (day.precip_prob != null && day.precip_prob >= 30) ||
+    /rain|drizzle|shower|storm|thunder/.test(
+      (day.conditions ?? "").toLowerCase(),
+    )
+  );
+}
+
+/** A short headline + subtitle summarising the whole forecast (top of the card). */
+function weatherSummary(weather: PlanWeatherDay[]) {
+  const highs = weather
+    .map((d) => d.temp_max)
+    .filter((n): n is number => n != null);
+  const avgHigh = highs.length
+    ? highs.reduce((a, b) => a + b, 0) / highs.length
+    : null;
+  const adjective =
+    avgHigh == null
+      ? "Mixed"
+      : avgHigh < 8
+        ? "Cold"
+        : avgHigh < 16
+          ? "Cool"
+          : avgHigh < 24
+            ? "Mild"
+            : avgHigh < 30
+              ? "Warm"
+              : "Hot";
+
+  const wet = weather.filter(isWetDay).length;
+  const cloudy = weather.filter((d) =>
+    /cloud|overcast|fog|mist/.test((d.conditions ?? "").toLowerCase()),
+  ).length;
+  let sky: "rainy" | "cloudy" | "clear";
+  let Icon = IconSun;
+  if (wet >= Math.ceil(weather.length / 2)) {
+    sky = "rainy";
+    Icon = IconCloudRain;
+  } else if (cloudy >= weather.length - cloudy) {
+    sky = "cloudy";
+    Icon = IconCloud;
+  } else {
+    sky = "clear";
+    Icon = IconSun;
+  }
+
+  let subtitle = "";
+  if (highs.length) {
+    const lo = Math.round(Math.min(...highs));
+    const hi = Math.round(Math.max(...highs));
+    subtitle = lo === hi ? `${hi}° days` : `${lo}–${hi}° days`;
+  }
+  const firstWet = weather.find(isWetDay);
+  if (firstWet) {
+    subtitle +=
+      (subtitle ? " · " : "") +
+      `rain likely ${formatWeekday(firstWet.forecast_date)}`;
+  }
+  return { title: `${adjective} and ${sky}`, subtitle, Icon };
+}
+
+/** One day's low→high temperature bar, positioned within the week's range. */
+function TempBar({
+  day,
+  scaleMin,
+  span,
+}: {
+  day: PlanWeatherDay;
+  scaleMin: number;
+  span: number;
+}) {
+  const lo = day.temp_min ?? day.temp_max;
+  const hi = day.temp_max ?? day.temp_min;
+  if (lo == null || hi == null) {
+    return <div className="h-1.5 flex-1 rounded-full bg-slate-100" />;
+  }
+  const width = Math.max(((hi - lo) / span) * 100, 8); // keep a tiny range visible
+  let left = ((lo - scaleMin) / span) * 100;
+  if (left + width > 100) left = 100 - width;
+  return (
+    <div className="relative h-1.5 flex-1 rounded-full bg-slate-200">
+      <div
+        className="absolute inset-y-0 rounded-full bg-teal-500"
+        style={{ left: `${left}%`, width: `${width}%` }}
+      />
+    </div>
   );
 }
 
@@ -425,63 +503,61 @@ function WeatherCard({ weather }: { weather: PlanWeatherDay[] }) {
       </Card>
     );
   }
-  const anyConflict = weather.some((day) => day.weather_conflict);
+  const temps = weather.flatMap((d) =>
+    [d.temp_min, d.temp_max].filter((n): n is number => n != null),
+  );
+  const scaleMin = temps.length ? Math.min(...temps) : 0;
+  const span = (temps.length ? Math.max(...temps) : 1) - scaleMin || 1;
+  const { title, subtitle, Icon: SummaryIcon } = weatherSummary(weather);
+
   return (
-    <Card title={`Weather (${weather.length}-day forecast)`}>
-      <ul className="grid grid-cols-[repeat(auto-fill,minmax(4.5rem,1fr))] gap-2">
+    <Card title={`Weather · ${weather.length}-day forecast`}>
+      <div className="mb-2 flex items-center gap-3">
+        <SummaryIcon className="h-8 w-8 shrink-0 text-slate-400" />
+        <div className="leading-tight">
+          <p className="text-sm font-semibold text-slate-700">{title}</p>
+          {subtitle && <p className="text-xs text-slate-400">{subtitle}</p>}
+        </div>
+      </div>
+      <ul className="divide-y divide-slate-100">
         {weather.map((day) => {
           const Icon = weatherIcon(day);
-          const conflict = day.weather_conflict;
+          const wet = isWetDay(day);
           return (
             <li
               key={day.forecast_date}
-              className={`flex flex-col items-center gap-2 rounded-xl px-2 py-3 text-center ring-1 transition-colors ${
-                conflict
-                  ? "bg-amber-50 ring-amber-200"
-                  : "bg-slate-50 ring-slate-100"
-              }`}
+              className="flex items-center gap-3 py-2.5"
               title={day.conditions ?? undefined}
             >
-              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                {formatDay(day.forecast_date)}
-              </span>
-              <span
-                className={`flex h-9 w-9 items-center justify-center rounded-full shadow-sm ${
-                  conflict ? "bg-amber-100" : "bg-white"
-                }`}
-              >
+              <div className="w-11 shrink-0 leading-tight">
+                <div className="text-sm font-semibold text-slate-700">
+                  {formatWeekday(day.forecast_date)}
+                </div>
+                <div className="text-[11px] text-slate-400">
+                  {formatMonthDay(day.forecast_date)}
+                </div>
+              </div>
+              <div className="flex w-8 shrink-0 flex-col items-center">
                 <Icon
-                  className={`h-5 w-5 ${
-                    conflict ? "text-amber-500" : "text-teal-500"
-                  }`}
+                  className={`h-5 w-5 ${wet ? "text-sky-500" : "text-slate-400"}`}
                 />
+                {wet && day.precip_prob != null && (
+                  <span className="text-[10px] font-semibold tabular-nums text-sky-500">
+                    {Math.round(day.precip_prob)}%
+                  </span>
+                )}
+              </div>
+              <span className="w-7 shrink-0 text-right text-xs tabular-nums text-slate-400">
+                {day.temp_min != null ? `${Math.round(day.temp_min)}°` : "—"}
               </span>
-              <span className="text-sm font-semibold tabular-nums text-slate-700">
-                {formatTempCompact(day)}
+              <TempBar day={day} scaleMin={scaleMin} span={span} />
+              <span className="w-8 shrink-0 text-right text-sm font-semibold tabular-nums text-slate-700">
+                {day.temp_max != null ? `${Math.round(day.temp_max)}°` : "—"}
               </span>
-              {day.precip_prob != null && (
-                <span
-                  className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium tabular-nums ${
-                    conflict
-                      ? "bg-amber-100 text-amber-700"
-                      : "bg-sky-50 text-sky-600"
-                  }`}
-                >
-                  <Droplet className="h-2.5 w-2.5" />
-                  {Math.round(day.precip_prob)}%
-                </span>
-              )}
             </li>
           );
         })}
       </ul>
-      {anyConflict && (
-        <p className="mt-3 flex items-center gap-1.5 text-[11px] text-amber-600">
-          <span className="h-2 w-2 shrink-0 rounded-full bg-amber-300" />
-          Amber days have a high chance of rain — outdoor activities were
-          scheduled around them.
-        </p>
-      )}
     </Card>
   );
 }
@@ -867,17 +943,14 @@ function formatDuration(minutes: number): string {
   return m === 0 ? `${h} h` : `${h} h ${m} min`;
 }
 
-function formatDay(iso: string): string {
+function formatWeekday(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric" });
+  return d.toLocaleDateString("en-GB", { weekday: "short" });
 }
 
-function formatTempCompact(day: PlanWeatherDay): string {
-  const { temp_min, temp_max } = day;
-  if (temp_min != null && temp_max != null)
-    return `${Math.round(temp_max)}°/${Math.round(temp_min)}°`;
-  if (temp_max != null) return `${Math.round(temp_max)}°`;
-  if (temp_min != null) return `${Math.round(temp_min)}°`;
-  return "—";
+function formatMonthDay(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
