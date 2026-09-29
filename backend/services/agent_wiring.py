@@ -398,8 +398,27 @@ def build_agent_set(bundle: WiringBundle) -> AgentSet:
             center, destination=f"{dest.city}, {dest.country}", forecast_days=days
         )
 
+    def weather_window(
+        engine_input: object, dest: Destination, start_date: str, end_date: str
+    ) -> WeatherProfile | None:
+        # Forecast for the exact trip window (used after selection to align the chosen
+        # plan's weather with its travel dates). Open-Meteo only forecasts ~16 days ahead,
+        # so a far-future window degrades to weather-unchecked, which is honest.
+        center = GeoPoint(dest.latitude, dest.longitude)
+        return bundle.weather_agent.profile_for(
+            center,
+            destination=f"{dest.city}, {dest.country}",
+            start_date=start_date,
+            end_date=end_date,
+        )
+
     return AgentSet(
-        scout=scout, transport=transport, stay=stay, experience=experience, weather=weather
+        scout=scout,
+        transport=transport,
+        stay=stay,
+        experience=experience,
+        weather=weather,
+        weather_window=weather_window,
     )
 
 

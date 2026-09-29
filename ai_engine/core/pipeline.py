@@ -95,6 +95,10 @@ TransportFn = Callable[["EngineInput", Destination], TransportOption | None]
 StayFn = Callable[["EngineInput", Destination], Sequence[Accommodation]]
 ExperienceFn = Callable[["EngineInput", Destination], Sequence[Activity]]
 WeatherFn = Callable[["EngineInput", Destination], WeatherProfile | None]
+# Optional windowed weather: (request, candidate, start_date, end_date) -> profile for that
+# exact date range. Used only after selection to align the chosen plan's forecast with its
+# derived travel dates (the fan-out itself stays date-naive and fully parallel).
+WeatherWindowFn = Callable[["EngineInput", Destination, str, str], WeatherProfile | None]
 
 # Default cap on simultaneous agent calls across the whole fan-out. The short list is
 # small (k ≈ 4-6), so this bounds ~4k potential calls to a rate-limit-friendly number.
@@ -108,6 +112,12 @@ class AgentSet:
     Each is a synchronous callable; the pipeline runs the four specialists in threads so
     their I/O overlaps. Keeping them as callables is what lets ``ai_engine`` stay free of
     any provider/HTTP/DB wiring (technical-doc §17/§21).
+
+    ``weather_window`` is optional and *not* part of the fan-out: when provided, the engine
+    uses it after a destination is chosen to re-fetch that destination's forecast for the
+    trip's actual dates (derived from the chosen transport), so the shown weather and the
+    weather-aware itinerary match the travel window rather than "today". ``None`` keeps the
+    fan-out weather as the final forecast.
     """
 
     scout: ScoutFn
@@ -115,6 +125,7 @@ class AgentSet:
     stay: StayFn
     experience: ExperienceFn
     weather: WeatherFn
+    weather_window: WeatherWindowFn | None = None
 
 
 async def gather_agent_outputs(

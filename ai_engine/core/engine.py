@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -99,6 +99,7 @@ class TripPlanEngine:
         days = engine_input.duration_days
         nights = max(1, days - 1)
         started = time.perf_counter()
+        generated_at = datetime.now(UTC)
 
         outputs = await gather_agent_outputs(
             engine_input, self._agents, nights=nights, concurrency=self._concurrency
@@ -113,6 +114,17 @@ class TripPlanEngine:
             preferences=engine_input.preferences,
         )
         plan = self._planner.plan(plan_request)  # raises NoPlanAvailableError
+        # Align the chosen plan's forecast with its actual travel dates (see the method) and
+        # reschedule around it, before the explanation narrates the (possibly re-ordered) plan.
+        plan = self._align_chosen_weather(
+            plan,
+            aggregates,
+            coordinator,
+            engine_input,
+            duration_days=days,
+            nights=nights,
+            generated_at=generated_at,
+        )
         explanation = explain_plan(plan, plan_request, self._explanation, currency=self._currency)
 
         elapsed_ms = int((time.perf_counter() - started) * 1000)
@@ -129,8 +141,88 @@ class TripPlanEngine:
             explanation.text,
             elapsed_ms,
             duration_days=days,
-            generated_at=datetime.now(UTC),
+            generated_at=generated_at,
         )
+
+    def _align_chosen_weather(
+        self,
+        plan: OptimalPlan,
+        aggregates: list,
+        coordinator: CoordinatorAgent,
+        engine_input: EngineInput,
+        *,
+        duration_days: int,
+        nights: int,
+        generated_at: datetime,
+    ) -> OptimalPlan:
+        """Re-fetch the chosen destination's forecast for the real trip dates and reschedule.
+
+        The fan-out fetches weather date-naively (it runs before the transport/flight date is
+        known). Once a destination is chosen, its trip window is derived from the chosen
+        transport; when that window starts on a real future date (an air fare) and a windowed
+        weather source is configured, re-fetch the forecast for ``[start, end]``, rebuild the
+        chosen aggregate with it, and re-plan that single candidate so the shown weather and
+        the weather-aware itinerary match the travel window. The full ranked-candidate list is
+        preserved. Any failure falls back to the original plan (degrade, don't crash).
+        """
+        window_fn = self._agents.weather_window
+        if window_fn is None:
+            return plan
+        start, _depart_time = _parse_departure(plan.transport.departure_at, generated_at)
+        if start <= generated_at.date():
+            return plan  # window starts today — the fan-out forecast is already aligned
+        end = start + timedelta(days=max(0, duration_days - 1))
+        chosen = next(
+            (
+                a
+                for a in aggregates
+                if a.destination.city == plan.destination.city
+                and a.destination.country == plan.destination.country
+            ),
+            None,
+        )
+        if chosen is None:
+            return plan
+        try:
+            from ai_engine.agents.coordinator_agent import AgentOutputs
+
+            new_weather = window_fn(
+                engine_input, chosen.destination, start.isoformat(), end.isoformat()
+            )
+            refreshed = coordinator.aggregate(
+                AgentOutputs(
+                    destination=chosen.destination,
+                    transport=chosen.transport,
+                    accommodations=chosen.accommodations,
+                    activities=chosen.activities,
+                    weather=new_weather,
+                    nights=chosen.nights,
+                )
+            )
+            refined = self._planner.plan(
+                PlanRequest(
+                    candidates=[refreshed],
+                    budget=engine_input.budget,
+                    transport_mode=engine_input.transport_mode,
+                    nights=nights,
+                    duration_days=duration_days,
+                    preferences=engine_input.preferences,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 - never let refinement break a valid plan
+            logger.warning(
+                "engine: weather alignment failed (%s); keeping the fan-out forecast", exc
+            )
+            return plan
+        logger.info(
+            "engine: aligned %s/%s weather to %s..%s",
+            plan.destination.city,
+            plan.destination.country,
+            start.isoformat(),
+            end.isoformat(),
+        )
+        # Keep the original ranked list (the refined solve saw only the chosen candidate).
+        return replace(refined, ranked_candidates=plan.ranked_candidates)
 
 
 # --- OptimalPlan -> api.md wire dict -----------------------------------------
