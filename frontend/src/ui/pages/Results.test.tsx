@@ -185,6 +185,10 @@ describe("ResultsPage", () => {
     // The "View on Airbnb" button links to the real listing.
     const link = scoped.getByRole("link", { name: /View on Airbnb/i });
     expect(link).toHaveAttribute("href", "https://www.airbnb.com/rooms/12345");
+    // The card carries no map of its own — it links to the trip map below instead.
+    expect(
+      scoped.getByRole("button", { name: /Show on map/i }),
+    ).toBeInTheDocument();
   });
 
   it("shows the itinerary per day with indoor/outdoor and rescheduled markers", () => {

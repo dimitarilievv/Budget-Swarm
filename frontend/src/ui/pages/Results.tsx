@@ -173,19 +173,25 @@ function Header({ plan, onBack }: { plan: ChosenPlan; onBack?: () => void }) {
 /* Card shell                                                                  */
 /* -------------------------------------------------------------------------- */
 
+/** DOM id of the Trip map card, so the accommodation's "Show on map" can scroll to it. */
+const TRIP_MAP_ID = "trip-map";
+
 function Card({
   title,
   eyebrow,
   children,
   className = "",
+  id,
 }: {
   title: string;
   eyebrow?: React.ReactNode;
   children: React.ReactNode;
   className?: string;
+  id?: string;
 }) {
   return (
     <section
+      id={id}
       className={`flex flex-col rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200 transition-shadow duration-200 hover:shadow-md ${className}`}
     >
       <div className="mb-3 flex items-center justify-between gap-2">
@@ -375,6 +381,10 @@ function AccommodationCard({
   const nightsTotal = nights != null ? a.price_per_night * nights : null;
   const amenities = a.amenities ?? [];
   const subtitle = [a.accom_type, a.neighbourhood].filter(Boolean).join(" · ");
+  const showOnMap = () =>
+    document
+      .getElementById(TRIP_MAP_ID)
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
 
   return (
     <Card
@@ -476,23 +486,9 @@ function AccommodationCard({
           )}
         </div>
 
-        {/* Right: map + a location-quality panel. */}
+        {/* Right: a location-quality panel + a link to the trip map below (the
+            accommodation is plotted there, so this card carries no map of its own). */}
         <div className="flex flex-col gap-3">
-          {hasCoords && (
-            <MapView
-              markers={[
-                {
-                  lat: a.latitude as number,
-                  lon: a.longitude as number,
-                  label: a.name ?? "Accommodation",
-                  kind: "accommodation",
-                },
-              ]}
-              ariaLabel={`Map showing ${a.name ?? "the accommodation"} location`}
-              singleZoom={14}
-              className="min-h-[12rem] flex-1 overflow-hidden rounded-xl ring-1 ring-slate-200"
-            />
-          )}
           {a.location_score != null && (
             <div className="rounded-xl bg-teal-50/70 p-3 ring-1 ring-teal-100">
               <div className="flex items-center justify-between gap-2">
@@ -508,6 +504,16 @@ function AccommodationCard({
                 Guests rate the location {a.location_score.toFixed(1)} / 5.
               </p>
             </div>
+          )}
+          {hasCoords && (
+            <button
+              type="button"
+              onClick={showOnMap}
+              className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition-colors hover:border-slate-300 hover:bg-slate-50"
+            >
+              <IconLocation className="h-4 w-4 text-teal-600" />
+              Show on map
+            </button>
           )}
         </div>
       </div>
@@ -823,7 +829,7 @@ function OverviewMapCard({
 }) {
   const kinds = Array.from(new Set(markers.map((m) => m.kind)));
   return (
-    <Card title="Trip map" className="min-h-[20rem]">
+    <Card title="Trip map" id={TRIP_MAP_ID} className="min-h-[20rem]">
       {markers.length === 0 ? (
         <div className="flex flex-1 items-center justify-center rounded-xl bg-slate-50 text-sm text-slate-400">
           No mapped locations available.
