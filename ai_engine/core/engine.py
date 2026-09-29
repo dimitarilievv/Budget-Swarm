@@ -208,6 +208,10 @@ def _itinerary(plan: OptimalPlan) -> list[dict[str, Any]]:
                 "start_time": _hhmm(item.start_minute),
                 "end_time": _hhmm(item.end_minute),
                 "was_rescheduled": item.was_rescheduled,
+                # POI coordinates so the frontend can plot each activity on the trip map
+                # (an activity without a located POI is simply not plotted).
+                "latitude": item.activity.latitude,
+                "longitude": item.activity.longitude,
             }
         )
     return [{"day_number": day + 1, "activities": by_day[day]} for day in sorted(by_day)]

@@ -106,6 +106,32 @@ def test_over_budget_candidate_is_excluded_not_downscored():
     assert pricey_decision.total_cost == pytest.approx(5160.0)
 
 
+# --- accommodation constraint -----------------------------------------------
+
+
+def test_candidate_without_accommodation_is_excluded():
+    # No lodging at all (no listings, no price-stats estimate) -> infeasible, not a
+    # zero-cost bargain.
+    cand = _candidate("NoBeds", nightly=None)
+    result = Optimizer().solve(_problem([cand], budget=1000.0))
+
+    assert result.selected is None
+    assert result.status is SolveStatus.INFEASIBLE
+    assert result.decisions[0].feasible is False
+    assert result.decisions[0].exclusion_reason is ExclusionReason.MISSING_ACCOMMODATION
+
+
+def test_accommodationless_candidate_not_chosen_over_a_priced_one():
+    # The lodging-less candidate is cheaper on paper but must be excluded, so the
+    # priced one is chosen instead of winning on a spurious zero lodging cost.
+    nobeds = _candidate("NoBeds", nightly=None, transport_cost=50.0)
+    priced = _candidate("Priced", nightly=60.0, transport_cost=100.0)
+    result = Optimizer().solve(_problem([nobeds, priced], budget=1000.0))
+
+    assert result.selected is priced
+    assert result.decisions[0].exclusion_reason is ExclusionReason.MISSING_ACCOMMODATION
+
+
 def test_all_over_budget_is_infeasible():
     cands = [_candidate("A", transport_cost=5000.0), _candidate("B", transport_cost=6000.0)]
     result = Optimizer().solve(_problem(cands, budget=500.0))

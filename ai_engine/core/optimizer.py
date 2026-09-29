@@ -14,6 +14,9 @@ Scope of this ticket — the **core hard constraints** (technical-doc §15.1):
   same :func:`ai_engine.core.scorer.trip_cost` the scorer uses) must be **≤ budget**.
 * **Transport mode** of the selected candidate equals the user's chosen mode.
 * **Duration** of the selected candidate equals the requested stay length.
+* **Accommodation available** — the candidate must have at least one lodging option
+  (a real listing or a price-stats estimate); a destination with nowhere to stay is
+  excluded, not selected on a zero lodging cost.
 
 The crucial distinction (technical-doc §15.3): a candidate that violates a hard
 constraint is **infeasible and excluded**, *not* merely down-scored. An over-budget
@@ -77,6 +80,10 @@ class ExclusionReason(StrEnum):
 
     #: No transport option, or its cost is unknown, so the trip cannot be costed.
     MISSING_TRANSPORT = "missing_transport"
+    #: No accommodation is available for the stay — a multi-night trip needs somewhere
+    #: to sleep, so a destination with neither real listings nor a price-stats estimate
+    #: is excluded rather than selected on an artificially zero lodging cost.
+    MISSING_ACCOMMODATION = "missing_accommodation"
     #: The candidate's transport mode is not the user's selected mode.
     MODE_MISMATCH = "mode_mismatch"
     #: The candidate's stay length is not the requested duration.
@@ -316,6 +323,12 @@ class Optimizer:
                 feasible=False,
                 exclusion_reason=reason,
             )
+
+        # A stay needs lodging: with no accommodation at all (no listings and no
+        # price-stats estimate) the trip is unplannable, and counting its lodging as
+        # zero would make it spuriously the cheapest option. Exclude it outright.
+        if not aggregate.accommodations:
+            return excluded(ExclusionReason.MISSING_ACCOMMODATION)
 
         if transport.mode != problem.transport_mode:
             return excluded(ExclusionReason.MODE_MISMATCH)

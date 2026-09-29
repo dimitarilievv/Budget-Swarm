@@ -78,7 +78,7 @@ function fixture(): TripResponse {
           forecast_date: "2026-09-12",
           temp_min: 14,
           temp_max: 24,
-          precip_prob: 0.1,
+          precip_prob: 10,
           conditions: "Sunny",
           weather_conflict: false,
         },
@@ -86,7 +86,7 @@ function fixture(): TripResponse {
           forecast_date: "2026-09-13",
           temp_min: 12,
           temp_max: 18,
-          precip_prob: 0.8,
+          precip_prob: 80,
           conditions: "Rain",
           weather_conflict: true,
         },
@@ -163,12 +163,15 @@ describe("ResultsPage", () => {
   it("renders a weather forecast with temperatures and precipitation", () => {
     render(<ResultsPage response={fixture()} />);
     const card = screen
-      .getByRole("heading", { name: /Weather \(2-day forecast\)/i })
+      .getByRole("heading", { name: /Weather · 2-day forecast/i })
       .closest("section") as HTMLElement;
     const scoped = within(card);
-    expect(scoped.getByText("24°/14°")).toBeInTheDocument();
+    // Each day shows its high and low temperature separately.
+    expect(scoped.getByText("24°")).toBeInTheDocument(); // day 1 high
+    expect(scoped.getByText("18°")).toBeInTheDocument(); // day 2 high
+    expect(scoped.getByText("12°")).toBeInTheDocument(); // day 2 low
+    // The rainy day surfaces its precipitation chance (percentage, not *100).
     expect(scoped.getByText("80%")).toBeInTheDocument();
-    expect(scoped.getByText("10%")).toBeInTheDocument();
   });
 
   it("renders the explanation as 'Why {city}?'", () => {

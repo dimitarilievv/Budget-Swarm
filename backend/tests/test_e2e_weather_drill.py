@@ -66,20 +66,38 @@ def _stay(_inp, dest):
 
 
 def _experience(_inp, dest):
-    return [
+    # A realistic slate: several outdoor sights (which the rainy day 1 must push off)
+    # plus indoor ones to fill it. With the scheduler spreading ~2/day across the
+    # 3-day stay, the outdoor activities are what the weather logic reschedules.
+    outdoor = ("fort", "park", "castle")
+    indoor = ("museum", "gallery", "church")
+    activities = [
         Activity(
             name=_OUTDOOR,
             category="fort",
             indoor_outdoor=IndoorOutdoor.OUTDOOR,
             est_duration_minutes=120,
-        ),
+        )
+    ]
+    activities += [
         Activity(
-            name="City Museum",
-            category="museum",
+            name=f"{cat.title()} Site",
+            category=cat,
+            indoor_outdoor=IndoorOutdoor.OUTDOOR,
+            est_duration_minutes=120,
+        )
+        for cat in outdoor[1:]
+    ]
+    activities += [
+        Activity(
+            name=f"City {cat.title()}",
+            category=cat,
             indoor_outdoor=IndoorOutdoor.INDOOR,
             est_duration_minutes=120,
-        ),
+        )
+        for cat in indoor
     ]
+    return activities
 
 
 def _weather_with_conflict(_inp, dest):

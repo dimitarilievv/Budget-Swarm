@@ -388,17 +388,111 @@ function AccommodationCard({
 /* Weather                                                                     */
 /* -------------------------------------------------------------------------- */
 
+// precip_prob is a percentage in [0, 100] (api.md), matching Open-Meteo's
+// precipitation_probability_max — not a 0-1 fraction.
 function weatherIcon(day: PlanWeatherDay) {
   const text = (day.conditions ?? "").toLowerCase();
   const rainy =
     /rain|drizzle|shower|storm|thunder/.test(text) ||
-    (day.precip_prob != null && day.precip_prob >= 0.5);
+    (day.precip_prob != null && day.precip_prob >= 50);
   if (rainy) return IconCloudRain;
   if (/cloud|overcast|fog|mist/.test(text)) return IconCloud;
   if (/part|sun.*cloud|cloud.*sun/.test(text)) return IconCloudSun;
   if (/clear|sun|fair/.test(text)) return IconSun;
-  if (day.precip_prob != null && day.precip_prob >= 0.2) return IconCloudSun;
+  if (day.precip_prob != null && day.precip_prob >= 20) return IconCloudSun;
   return IconSun;
+}
+
+/** A day counts as wet enough to surface its precipitation chance and a rain icon. */
+function isWetDay(day: PlanWeatherDay): boolean {
+  return (
+    day.weather_conflict ||
+    (day.precip_prob != null && day.precip_prob >= 30) ||
+    /rain|drizzle|shower|storm|thunder/.test(
+      (day.conditions ?? "").toLowerCase(),
+    )
+  );
+}
+
+/** A short headline + subtitle summarising the whole forecast (top of the card). */
+function weatherSummary(weather: PlanWeatherDay[]) {
+  const highs = weather
+    .map((d) => d.temp_max)
+    .filter((n): n is number => n != null);
+  const avgHigh = highs.length
+    ? highs.reduce((a, b) => a + b, 0) / highs.length
+    : null;
+  const adjective =
+    avgHigh == null
+      ? "Mixed"
+      : avgHigh < 8
+        ? "Cold"
+        : avgHigh < 16
+          ? "Cool"
+          : avgHigh < 24
+            ? "Mild"
+            : avgHigh < 30
+              ? "Warm"
+              : "Hot";
+
+  const wet = weather.filter(isWetDay).length;
+  const cloudy = weather.filter((d) =>
+    /cloud|overcast|fog|mist/.test((d.conditions ?? "").toLowerCase()),
+  ).length;
+  let sky: "rainy" | "cloudy" | "clear";
+  let Icon = IconSun;
+  if (wet >= Math.ceil(weather.length / 2)) {
+    sky = "rainy";
+    Icon = IconCloudRain;
+  } else if (cloudy >= weather.length - cloudy) {
+    sky = "cloudy";
+    Icon = IconCloud;
+  } else {
+    sky = "clear";
+    Icon = IconSun;
+  }
+
+  let subtitle = "";
+  if (highs.length) {
+    const lo = Math.round(Math.min(...highs));
+    const hi = Math.round(Math.max(...highs));
+    subtitle = lo === hi ? `${hi}° days` : `${lo}–${hi}° days`;
+  }
+  const firstWet = weather.find(isWetDay);
+  if (firstWet) {
+    subtitle +=
+      (subtitle ? " · " : "") +
+      `rain likely ${formatWeekday(firstWet.forecast_date)}`;
+  }
+  return { title: `${adjective} and ${sky}`, subtitle, Icon };
+}
+
+/** One day's low→high temperature bar, positioned within the week's range. */
+function TempBar({
+  day,
+  scaleMin,
+  span,
+}: {
+  day: PlanWeatherDay;
+  scaleMin: number;
+  span: number;
+}) {
+  const lo = day.temp_min ?? day.temp_max;
+  const hi = day.temp_max ?? day.temp_min;
+  if (lo == null || hi == null) {
+    return <div className="h-1.5 flex-1 rounded-full bg-slate-100" />;
+  }
+  const width = Math.max(((hi - lo) / span) * 100, 8); // keep a tiny range visible
+  let left = ((lo - scaleMin) / span) * 100;
+  if (left + width > 100) left = 100 - width;
+  return (
+    <div className="relative h-1.5 flex-1 rounded-full bg-slate-200">
+      <div
+        className="absolute inset-y-0 rounded-full bg-teal-500"
+        style={{ left: `${left}%`, width: `${width}%` }}
+      />
+    </div>
+  );
 }
 
 function WeatherCard({ weather }: { weather: PlanWeatherDay[] }) {
@@ -409,39 +503,57 @@ function WeatherCard({ weather }: { weather: PlanWeatherDay[] }) {
       </Card>
     );
   }
+  const temps = weather.flatMap((d) =>
+    [d.temp_min, d.temp_max].filter((n): n is number => n != null),
+  );
+  const scaleMin = temps.length ? Math.min(...temps) : 0;
+  const span = (temps.length ? Math.max(...temps) : 1) - scaleMin || 1;
+  const { title, subtitle, Icon: SummaryIcon } = weatherSummary(weather);
+
   return (
-    <Card title={`Weather (${weather.length}-day forecast)`}>
-      <ul className="flex gap-1.5 overflow-x-auto">
+    <Card title={`Weather · ${weather.length}-day forecast`}>
+      <div className="mb-2 flex items-center gap-3">
+        <SummaryIcon className="h-8 w-8 shrink-0 text-slate-400" />
+        <div className="leading-tight">
+          <p className="text-sm font-semibold text-slate-700">{title}</p>
+          {subtitle && <p className="text-xs text-slate-400">{subtitle}</p>}
+        </div>
+      </div>
+      <ul className="divide-y divide-slate-100">
         {weather.map((day) => {
           const Icon = weatherIcon(day);
+          const wet = isWetDay(day);
           return (
             <li
               key={day.forecast_date}
-              className={`flex min-w-0 flex-1 flex-col items-center gap-1 rounded-lg px-1.5 py-2 text-center ${
-                day.weather_conflict ? "bg-amber-50 ring-1 ring-amber-200" : ""
-              }`}
+              className="flex items-center gap-3 py-2.5"
               title={day.conditions ?? undefined}
             >
-              <span className="text-[11px] font-medium text-slate-400">
-                {formatDay(day.forecast_date)}
+              <div className="w-11 shrink-0 leading-tight">
+                <div className="text-sm font-semibold text-slate-700">
+                  {formatWeekday(day.forecast_date)}
+                </div>
+                <div className="text-[11px] text-slate-400">
+                  {formatMonthDay(day.forecast_date)}
+                </div>
+              </div>
+              <div className="flex w-8 shrink-0 flex-col items-center">
+                <Icon
+                  className={`h-5 w-5 ${wet ? "text-sky-500" : "text-slate-400"}`}
+                />
+                {wet && day.precip_prob != null && (
+                  <span className="text-[10px] font-semibold tabular-nums text-sky-500">
+                    {Math.round(day.precip_prob)}%
+                  </span>
+                )}
+              </div>
+              <span className="w-7 shrink-0 text-right text-xs tabular-nums text-slate-400">
+                {day.temp_min != null ? `${Math.round(day.temp_min)}°` : "—"}
               </span>
-              <Icon
-                className={`h-6 w-6 ${
-                  day.weather_conflict ? "text-amber-500" : "text-teal-500"
-                }`}
-              />
-              <span className="text-[11px] font-semibold tabular-nums text-slate-700">
-                {formatTempCompact(day)}
+              <TempBar day={day} scaleMin={scaleMin} span={span} />
+              <span className="w-8 shrink-0 text-right text-sm font-semibold tabular-nums text-slate-700">
+                {day.temp_max != null ? `${Math.round(day.temp_max)}°` : "—"}
               </span>
-              {day.precip_prob != null && (
-                <span
-                  className={`text-[10px] tabular-nums ${
-                    day.weather_conflict ? "text-amber-600" : "text-slate-400"
-                  }`}
-                >
-                  {Math.round(day.precip_prob * 100)}%
-                </span>
-              )}
             </li>
           );
         })}
@@ -831,17 +943,14 @@ function formatDuration(minutes: number): string {
   return m === 0 ? `${h} h` : `${h} h ${m} min`;
 }
 
-function formatDay(iso: string): string {
+function formatWeekday(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric" });
+  return d.toLocaleDateString("en-GB", { weekday: "short" });
 }
 
-function formatTempCompact(day: PlanWeatherDay): string {
-  const { temp_min, temp_max } = day;
-  if (temp_min != null && temp_max != null)
-    return `${Math.round(temp_max)}°/${Math.round(temp_min)}°`;
-  if (temp_max != null) return `${Math.round(temp_max)}°`;
-  if (temp_min != null) return `${Math.round(temp_min)}°`;
-  return "—";
+function formatMonthDay(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }

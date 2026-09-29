@@ -91,6 +91,22 @@ def test_budget_spreads_activities_across_days():
     assert _no_overlaps(result.items)
 
 
+def test_activities_spread_across_days_by_default():
+    # 6 * 120 = 720 would all fit a single day's time budget, but the default per-day
+    # cap (ceil(6/3) = 2) spreads them evenly instead of clustering onto one day.
+    acts = [_activity(n) for n in ("A", "B", "C", "D", "E", "F")]
+    result = ActivityScheduler().schedule(acts, days=3)
+    assert result.scheduled_count == 6
+    assert all(len(day) == 2 for day in result.by_day())  # 2 per day, not 6 on one
+
+
+def test_explicit_max_activities_per_day_is_respected():
+    policy = SchedulingPolicy(max_activities_per_day=1)
+    acts = [_activity(n) for n in ("A", "B", "C")]
+    result = ActivityScheduler(policy).schedule(acts, days=3)
+    assert all(len(day) <= 1 for day in result.by_day())
+
+
 # --- no overlaps ------------------------------------------------------------
 
 
