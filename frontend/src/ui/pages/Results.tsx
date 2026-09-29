@@ -97,6 +97,8 @@ export default function ResultsPage({
         <AccommodationCard
           accommodation={plan.accommodation}
           nights={estimateNights(plan)}
+          startDate={plan.start_date}
+          endDate={plan.end_date}
         />
         <WeatherCard weather={plan.weather} />
       </div>
@@ -349,9 +351,13 @@ function TransportCard({
 function AccommodationCard({
   accommodation,
   nights,
+  startDate,
+  endDate,
 }: {
   accommodation?: PlanAccommodation | null;
   nights: number | null;
+  startDate?: string | null;
+  endDate?: string | null;
 }) {
   if (!accommodation) {
     return (
@@ -392,6 +398,19 @@ function AccommodationCard({
       {a.rating != null && (
         <p className="mt-1 text-sm font-medium text-amber-600">
           ★ {a.rating.toFixed(1)}
+        </p>
+      )}
+      {formatDateShort(startDate) && formatDateShort(endDate) && (
+        <p className="mt-2 text-sm text-slate-600">
+          <span className="text-slate-400">Check-in</span>{" "}
+          <span className="font-medium text-slate-700">
+            {formatDateShort(startDate)}
+          </span>
+          {" · "}
+          <span className="text-slate-400">Check-out</span>{" "}
+          <span className="font-medium text-slate-700">
+            {formatDateShort(endDate)}
+          </span>
         </p>
       )}
       {hasCoords && (

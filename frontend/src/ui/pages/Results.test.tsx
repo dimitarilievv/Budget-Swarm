@@ -156,6 +156,11 @@ describe("ResultsPage", () => {
     // 320 accommodation spend / 80 per night = 4 nights.
     expect(scoped.getByText(/4 nights/)).toBeInTheDocument();
     expect(scoped.getByText(/★ 4.6/)).toBeInTheDocument();
+    // Check-in/check-out match the trip window (1 Dec – 5 Dec).
+    expect(scoped.getByText("Check-in")).toBeInTheDocument();
+    expect(scoped.getByText("Check-out")).toBeInTheDocument();
+    expect(scoped.getByText("1 Dec")).toBeInTheDocument();
+    expect(scoped.getByText("5 Dec")).toBeInTheDocument();
   });
 
   it("shows the itinerary per day with indoor/outdoor and rescheduled markers", () => {
