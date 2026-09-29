@@ -44,6 +44,12 @@ function fixture(): TripResponse {
         latitude: 47.5,
         longitude: 19.05,
         quality_flag: "cached",
+        listing_url: "https://www.airbnb.com/rooms/12345",
+        picture_url: "https://example.com/photo.jpg",
+        review_count: 312,
+        location_score: 4.8,
+        neighbourhood: "District V",
+        amenities: ["Wi-Fi", "Kitchen", "AC"],
       },
       itinerary: [
         {
@@ -161,6 +167,22 @@ describe("ResultsPage", () => {
     expect(scoped.getByText("Check-out")).toBeInTheDocument();
     expect(scoped.getByText("1 Dec")).toBeInTheDocument();
     expect(scoped.getByText("5 Dec")).toBeInTheDocument();
+  });
+
+  it("shows accommodation listing detail and the Airbnb link", () => {
+    render(<ResultsPage response={fixture()} />);
+    const card = screen
+      .getByRole("heading", { name: "Accommodation" })
+      .closest("section") as HTMLElement;
+    const scoped = within(card);
+    // Neighbourhood, review count, amenities and location score come from the listing.
+    expect(scoped.getByText(/District V/)).toBeInTheDocument();
+    expect(scoped.getByText(/\(312 reviews\)/)).toBeInTheDocument();
+    expect(scoped.getByText("Wi-Fi")).toBeInTheDocument();
+    expect(scoped.getByText(/Excellent location/)).toBeInTheDocument();
+    // The "View on Airbnb" button links to the real listing.
+    const link = scoped.getByRole("link", { name: /View on Airbnb/i });
+    expect(link).toHaveAttribute("href", "https://www.airbnb.com/rooms/12345");
   });
 
   it("shows the itinerary per day with indoor/outdoor and rescheduled markers", () => {

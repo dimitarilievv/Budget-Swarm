@@ -371,17 +371,41 @@ function AccommodationCard({
   const a = accommodation;
   const hasCoords = a.latitude != null && a.longitude != null;
   const nightsTotal = nights != null ? a.price_per_night * nights : null;
+  const amenities = a.amenities ?? [];
+  const subtitle = [a.accom_type, a.neighbourhood].filter(Boolean).join(" · ");
 
   return (
     <Card
       title="Accommodation"
       eyebrow={<QualityBadge flag={a.quality_flag} />}
     >
+      {a.picture_url && (
+        <img
+          src={a.picture_url}
+          alt={a.name ?? "Accommodation photo"}
+          loading="lazy"
+          className="mb-3 h-40 w-full rounded-xl object-cover ring-1 ring-slate-200"
+          onError={(e) => {
+            e.currentTarget.style.display = "none";
+          }}
+        />
+      )}
       <p className="text-base font-bold leading-tight text-slate-900">
         {a.name ?? "Selected stay"}
       </p>
-      {a.accom_type && (
-        <p className="text-xs capitalize text-slate-500">{a.accom_type}</p>
+      {subtitle && (
+        <p className="text-xs capitalize text-slate-500">{subtitle}</p>
+      )}
+      {a.rating != null && (
+        <p className="mt-1 text-sm font-medium text-amber-600">
+          ★ {a.rating.toFixed(1)}
+          {a.review_count != null && (
+            <span className="font-normal text-slate-400">
+              {" "}
+              ({a.review_count.toLocaleString()} reviews)
+            </span>
+          )}
+        </p>
       )}
       <p className="mt-2 text-sm text-slate-600">
         {euro(a.price_per_night)}/night
@@ -395,10 +419,17 @@ function AccommodationCard({
           </>
         )}
       </p>
-      {a.rating != null && (
-        <p className="mt-1 text-sm font-medium text-amber-600">
-          ★ {a.rating.toFixed(1)}
-        </p>
+      {amenities.length > 0 && (
+        <ul className="mt-2 flex flex-wrap gap-1.5">
+          {amenities.map((amenity) => (
+            <li
+              key={amenity}
+              className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-600"
+            >
+              {amenity}
+            </li>
+          ))}
+        </ul>
       )}
       {formatDateShort(startDate) && formatDateShort(endDate) && (
         <p className="mt-2 text-sm text-slate-600">
@@ -428,8 +459,35 @@ function AccommodationCard({
           className="mt-3 h-28 w-full overflow-hidden rounded-xl ring-1 ring-slate-200"
         />
       )}
+      {a.location_score != null && (
+        <p className="mt-2 flex items-center gap-1.5 text-xs text-slate-500">
+          <span className="rounded-md bg-teal-50 px-1.5 py-0.5 font-semibold text-teal-700">
+            {a.location_score.toFixed(1)}
+          </span>
+          {locationLabel(a.location_score)} location
+        </p>
+      )}
+      {a.listing_url && (
+        <a
+          href={a.listing_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-xl bg-rose-500 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-rose-600"
+        >
+          View on Airbnb
+          <IconArrowRight className="h-4 w-4" />
+        </a>
+      )}
     </Card>
   );
+}
+
+/** A short qualitative label for an Airbnb location sub-score (0–5). */
+function locationLabel(score: number): string {
+  if (score >= 4.5) return "Excellent";
+  if (score >= 4) return "Very good";
+  if (score >= 3.5) return "Good";
+  return "Central";
 }
 
 /* -------------------------------------------------------------------------- */

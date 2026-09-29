@@ -350,6 +350,13 @@ def _accommodation(plan: OptimalPlan) -> dict[str, Any] | None:
         "latitude": a.latitude,
         "longitude": a.longitude,
         "quality_flag": a.quality_flag.value,
+        # Listing detail for the UI card (BS-104); populated for real listings only.
+        "listing_url": a.listing_url,
+        "picture_url": a.picture_url,
+        "review_count": a.review_count,
+        "location_score": a.location_score,
+        "neighbourhood": a.neighbourhood,
+        "amenities": list(a.amenities),
     }
 
 

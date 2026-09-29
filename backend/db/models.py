@@ -138,6 +138,14 @@ class Accommodation(Base):
         String(12), nullable=False, server_default=text("'real'")
     )
     snapshot_label: Mapped[str | None] = mapped_column(String(60))
+    # Listing detail carried from the source row (BS-104) for a richer UI card; all
+    # optional (a price-stats-estimate option has none of them).
+    listing_url: Mapped[str | None] = mapped_column(String(300))
+    picture_url: Mapped[str | None] = mapped_column(String(500))
+    review_count: Mapped[int | None] = mapped_column(Integer)
+    location_score: Mapped[Decimal | None] = mapped_column(Numeric(3, 2))
+    neighbourhood: Mapped[str | None] = mapped_column(String(120))
+    amenities: Mapped[list[str] | None] = mapped_column(JSONB)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

@@ -73,6 +73,13 @@ export interface PlanAccommodation {
   latitude?: number | null;
   longitude?: number | null;
   quality_flag: QualityFlag;
+  /** Listing detail (Inside Airbnb) for the card; present only for real listings. */
+  listing_url?: string | null;
+  picture_url?: string | null;
+  review_count?: number | null;
+  location_score?: number | null; // 0–5, Airbnb's review_scores_location
+  neighbourhood?: string | null;
+  amenities?: string[] | null;
 }
 
 export interface ItineraryActivity {

@@ -174,6 +174,12 @@ class StayAgent:
                 rating=option.rating,
                 latitude=option.latitude,
                 longitude=option.longitude,
+                listing_url=option.listing_url,
+                picture_url=option.picture_url,
+                review_count=option.review_count,
+                location_score=option.location_score,
+                neighbourhood=option.neighbourhood,
+                amenities=tuple(option.amenities or ()),
             )
         except ValueError as exc:
             # A listing with an invalid price / rating / coordinate is dropped and

@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import logging
 from abc import ABC
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
 from ai_engine.utils.api_clients import (
@@ -47,6 +47,14 @@ class AccommodationRow(Protocol):
     latitude: float | None
     longitude: float | None
     quality_flag: str
+    # Optional listing detail for the UI card (BS-104); read defensively via getattr so a
+    # row without these still works.
+    listing_url: str | None
+    picture_url: str | None
+    review_count: int | None
+    location_score: Any | None
+    neighbourhood: str | None
+    amenities: Any | None
 
 
 @runtime_checkable
@@ -101,6 +109,13 @@ class AccommodationOption:
     # Per-option provenance carried from the source row (a real listing) or the
     # estimate provider ('estimated'), so honesty survives normalization (BS-062).
     quality_flag: str = QUALITY_REAL
+    # Optional listing detail for the UI card (BS-104); present only for real listings.
+    listing_url: str | None = None
+    picture_url: str | None = None
+    review_count: int | None = None
+    location_score: float | None = None
+    neighbourhood: str | None = None
+    amenities: list[str] = field(default_factory=list)
 
 
 def _to_float(value: Any) -> float | None:
@@ -164,6 +179,12 @@ class InsideAirbnbProvider(AccommodationProvider):
                     longitude=row.longitude,
                     representative=labels[pos] if len(idxs) <= len(labels) else None,
                     quality_flag=getattr(row, "quality_flag", None) or QUALITY_REAL,
+                    listing_url=getattr(row, "listing_url", None),
+                    picture_url=getattr(row, "picture_url", None),
+                    review_count=getattr(row, "review_count", None),
+                    location_score=_to_float(getattr(row, "location_score", None)),
+                    neighbourhood=getattr(row, "neighbourhood", None),
+                    amenities=list(getattr(row, "amenities", None) or []),
                 )
             )
         return options
