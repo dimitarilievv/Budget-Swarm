@@ -161,7 +161,8 @@ class ExperienceAgent:
 
         quality = QualityFlag(result.quality_flag)
         wanted = _wanted_tokens(_normalize_keywords(categories))
-        matched = [poi for poi in (result.data or []) if _matches(poi, wanted)]
+        pool = _dedupe_pois(result.data or [])
+        matched = [poi for poi in pool if _matches(poi, wanted)]
         activities = [self._normalize(poi, quality, enrich=enrich) for poi in matched[:bound]]
         logger.debug(
             "experience: destination %s -> %d/%d POIs after category filter %s [%s, enrich=%s]",
@@ -269,6 +270,34 @@ PREFERENCE_ALIASES: dict[str, frozenset[str]] = {
 }
 
 _TOKEN_SPLIT = re.compile(r"[^a-z0-9]+")
+
+
+def _dedupe_pois(pois: Sequence[AttractionActivity]) -> list[AttractionActivity]:
+    """Collapse POIs that refer to the same named place, keeping the first (best-ranked).
+
+    A single venue is often returned several times: OpenStreetMap maps a theatre as both
+    a node and a building way (their coordinates can differ by 100+ m), and OpenTripMap
+    lists the same place under several ``kinds`` — each becoming a separate POI whose
+    category label may differ (e.g. "architecture" vs "cultural"). Left unmerged, the
+    scheduler would place the same place on two different days under two labels. Since a
+    POI name from these sources is specific (not a bare "Park"), dedupe on the normalized
+    **name** within the destination's search radius — robust to the coordinate drift that
+    a location-based key misses. Input order is preserved (the pool is popularity-sorted
+    upstream), so the retained entry is the best-ranked occurrence; unnamed POIs, which
+    cannot be compared, are always kept.
+    """
+    seen: set[str] = set()
+    out: list[AttractionActivity] = []
+    for poi in pois:
+        name = (poi.name or "").strip().lower()
+        if not name:
+            out.append(poi)  # unnamed POIs are not comparable; keep as-is
+            continue
+        if name in seen:
+            continue
+        seen.add(name)
+        out.append(poi)
+    return out
 
 
 def _is_source_failure(exc: ProviderError) -> bool:
