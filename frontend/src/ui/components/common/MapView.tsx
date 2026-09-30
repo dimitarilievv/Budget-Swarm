@@ -8,8 +8,9 @@
  * it degrades to an empty (but valid) container under jsdom / SSR instead of throwing.
  *
  * A caller can ask the map to spotlight one marker (e.g. the accommodation's "Show on map"):
- * pass a `focus` with the target coordinates and a changing `nonce`, and the map recenters on
- * it and opens its popup. The `nonce` makes repeated clicks re-trigger the effect.
+ * pass a `focus` with the target coordinates and a changing `nonce`. The map keeps every
+ * marker in view (re-fits the full set) and just opens the requested marker's popup to pin
+ * it — the other markers are not hidden. The `nonce` makes repeated clicks re-trigger it.
  */
 import { useEffect, useRef } from "react";
 import L from "leaflet";
@@ -57,6 +58,7 @@ export default function MapView({
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | undefined>(undefined);
   const markerByKey = useRef<Map<string, L.Marker>>(new Map());
+  const pointsRef = useRef<L.LatLngTuple[]>([]);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -64,6 +66,7 @@ export default function MapView({
 
     let map: L.Map | undefined;
     const byKey = new Map<string, L.Marker>();
+    const points: L.LatLngTuple[] = [];
     try {
       map = L.map(el, {
         scrollWheelZoom: false,
@@ -75,7 +78,6 @@ export default function MapView({
         attribution: "&copy; OpenStreetMap contributors",
       }).addTo(map);
 
-      const points: L.LatLngTuple[] = [];
       for (const m of markers) {
         const marker = L.marker([m.lat, m.lon], {
           icon: pin(MARKER_COLOR[m.kind]),
@@ -98,6 +100,7 @@ export default function MapView({
 
     mapRef.current = map;
     markerByKey.current = byKey;
+    pointsRef.current = points;
 
     return () => {
       try {
@@ -107,22 +110,23 @@ export default function MapView({
       }
       mapRef.current = undefined;
       markerByKey.current = new Map();
+      pointsRef.current = [];
     };
   }, [markers, singleZoom]);
 
-  // Spotlight one marker on request (recenter + open its popup).
+  // Spotlight one marker on request WITHOUT hiding the others: keep every marker in view
+  // (re-fit the full set) and just open the requested marker's popup to pin it.
   useEffect(() => {
     if (!focus) return;
     const map = mapRef.current;
     if (!map) return;
     try {
-      map.setView(
-        [focus.lat, focus.lon],
-        focus.zoom ?? Math.max(singleZoom, 15),
-        {
-          animate: true,
-        },
-      );
+      const points = pointsRef.current;
+      if (points.length > 1) {
+        map.fitBounds(L.latLngBounds(points).pad(0.35));
+      } else if (points.length === 1) {
+        map.setView(points[0], singleZoom);
+      }
       markerByKey.current.get(_key(focus.lat, focus.lon))?.openPopup();
     } catch {
       /* map not ready (jsdom / hidden) — nothing to spotlight */

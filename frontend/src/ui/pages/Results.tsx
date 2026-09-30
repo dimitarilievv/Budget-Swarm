@@ -11,7 +11,7 @@
  * coordinates for (destination centre, accommodation); activity pins are not shown because the
  * itinerary carries no per-activity coordinates.
  */
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import type {
   ChosenPlan,
@@ -78,7 +78,8 @@ export default function ResultsPage({
 }: ResultsPageProps) {
   const plan = response.chosen_plan;
   const { destination } = plan;
-  const mapMarkers = planMarkers(plan);
+  // Stable marker set so focusing the map (Show on map) doesn't rebuild it and drop markers.
+  const mapMarkers = useMemo(() => planMarkers(plan), [plan]);
   const [mapFocus, setMapFocus] = useState<MapFocus | null>(null);
 
   const showAccommodationOnMap = () => {
