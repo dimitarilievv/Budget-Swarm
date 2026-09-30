@@ -6,6 +6,10 @@
  * accommodation) — it never invents positions — so a caller with sparse data gets an honest,
  * sparse map. The map is initialised lazily in an effect and every Leaflet call is guarded, so
  * it degrades to an empty (but valid) container under jsdom / SSR instead of throwing.
+ *
+ * A caller can ask the map to spotlight one marker (e.g. the accommodation's "Show on map"):
+ * pass a `focus` with the target coordinates and a changing `nonce`, and the map recenters on
+ * it and opens its popup. The `nonce` makes repeated clicks re-trigger the effect.
  */
 import { useEffect, useRef } from "react";
 import L from "leaflet";
@@ -22,27 +26,44 @@ function pin(color: string): L.DivIcon {
   });
 }
 
+export interface MapFocus {
+  lat: number;
+  lon: number;
+  /** Changing value that re-triggers the focus even when the coordinates repeat. */
+  nonce: number;
+  zoom?: number;
+}
+
 interface MapViewProps {
   markers: MapMarker[];
   className?: string;
   ariaLabel: string;
   /** Zoom used when there is a single marker (no bounds to fit). */
   singleZoom?: number;
+  /** When set, recenter on these coordinates and open the matching marker's popup. */
+  focus?: MapFocus | null;
 }
+
+const _key = (lat: number, lon: number) =>
+  `${lat.toFixed(5)},${lon.toFixed(5)}`;
 
 export default function MapView({
   markers,
   className,
   ariaLabel,
   singleZoom = 13,
+  focus = null,
 }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<L.Map | undefined>(undefined);
+  const markerByKey = useRef<Map<string, L.Marker>>(new Map());
 
   useEffect(() => {
     const el = containerRef.current;
     if (!el || markers.length === 0) return;
 
     let map: L.Map | undefined;
+    const byKey = new Map<string, L.Marker>();
     try {
       map = L.map(el, {
         scrollWheelZoom: false,
@@ -56,12 +77,13 @@ export default function MapView({
 
       const points: L.LatLngTuple[] = [];
       for (const m of markers) {
-        L.marker([m.lat, m.lon], {
+        const marker = L.marker([m.lat, m.lon], {
           icon: pin(MARKER_COLOR[m.kind]),
           title: m.label,
         })
           .addTo(map)
           .bindPopup(m.label);
+        byKey.set(_key(m.lat, m.lon), marker);
         points.push([m.lat, m.lon]);
       }
 
@@ -74,14 +96,38 @@ export default function MapView({
       // No usable DOM geometry (jsdom / SSR / hidden container): leave an empty container.
     }
 
+    mapRef.current = map;
+    markerByKey.current = byKey;
+
     return () => {
       try {
         map?.remove();
       } catch {
         /* already torn down */
       }
+      mapRef.current = undefined;
+      markerByKey.current = new Map();
     };
   }, [markers, singleZoom]);
+
+  // Spotlight one marker on request (recenter + open its popup).
+  useEffect(() => {
+    if (!focus) return;
+    const map = mapRef.current;
+    if (!map) return;
+    try {
+      map.setView(
+        [focus.lat, focus.lon],
+        focus.zoom ?? Math.max(singleZoom, 15),
+        {
+          animate: true,
+        },
+      );
+      markerByKey.current.get(_key(focus.lat, focus.lon))?.openPopup();
+    } catch {
+      /* map not ready (jsdom / hidden) — nothing to spotlight */
+    }
+  }, [focus, singleZoom]);
 
   return (
     <div

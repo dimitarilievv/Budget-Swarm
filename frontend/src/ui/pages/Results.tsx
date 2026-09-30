@@ -11,6 +11,8 @@
  * coordinates for (destination centre, accommodation); activity pins are not shown because the
  * itinerary carries no per-activity coordinates.
  */
+import { useState } from "react";
+
 import type {
   ChosenPlan,
   CostBreakdown,
@@ -22,7 +24,7 @@ import type {
   TripResponse,
 } from "@/types/trip";
 import DestinationInfo from "@/ui/components/common/DestinationInfo";
-import MapView from "@/ui/components/common/MapView";
+import MapView, { type MapFocus } from "@/ui/components/common/MapView";
 import {
   MARKER_COLOR,
   type MapMarker,
@@ -77,6 +79,17 @@ export default function ResultsPage({
   const plan = response.chosen_plan;
   const { destination } = plan;
   const mapMarkers = planMarkers(plan);
+  const [mapFocus, setMapFocus] = useState<MapFocus | null>(null);
+
+  const showAccommodationOnMap = () => {
+    const a = plan.accommodation;
+    if (a?.latitude != null && a.longitude != null) {
+      setMapFocus({ lat: a.latitude, lon: a.longitude, nonce: Date.now() });
+    }
+    document
+      .getElementById(TRIP_MAP_ID)
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 
   return (
     <div className="animate-enter space-y-6">
@@ -97,18 +110,24 @@ export default function ResultsPage({
         <WeatherCard weather={plan.weather} />
       </div>
 
-      {/* Accommodation — a full-width, two-column card (details + map). */}
+      {/* Accommodation — a compact listing card (photo + detail); the stay is plotted on
+          the Trip map below, reachable via its "Show on map" button. */}
       <AccommodationCard
         accommodation={plan.accommodation}
         nights={estimateNights(plan)}
         startDate={plan.start_date}
         endDate={plan.end_date}
+        onShowOnMap={showAccommodationOnMap}
       />
 
       {/* Itinerary timeline beside the overview map. */}
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <ItineraryCard plan={plan} />
-        <OverviewMapCard markers={mapMarkers} city={destination.city} />
+        <OverviewMapCard
+          markers={mapMarkers}
+          city={destination.city}
+          focus={mapFocus}
+        />
       </div>
 
       <WhyCard
@@ -361,11 +380,13 @@ function AccommodationCard({
   nights,
   startDate,
   endDate,
+  onShowOnMap,
 }: {
   accommodation?: PlanAccommodation | null;
   nights: number | null;
   startDate?: string | null;
   endDate?: string | null;
+  onShowOnMap?: () => void;
 }) {
   if (!accommodation) {
     return (
@@ -381,18 +402,34 @@ function AccommodationCard({
   const nightsTotal = nights != null ? a.price_per_night * nights : null;
   const amenities = a.amenities ?? [];
   const subtitle = [a.accom_type, a.neighbourhood].filter(Boolean).join(" · ");
-  const showOnMap = () =>
-    document
-      .getElementById(TRIP_MAP_ID)
-      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  const hasPhoto = !!a.picture_url;
 
   return (
     <Card
       title="Accommodation"
       eyebrow={<QualityBadge flag={a.quality_flag} />}
     >
-      <div className="grid gap-6 lg:grid-cols-[1.5fr_1fr]">
-        {/* Left: listing detail + photo + booking action. */}
+      <div
+        className={
+          hasPhoto
+            ? "grid gap-5 sm:grid-cols-[minmax(0,18rem)_minmax(0,1fr)]"
+            : ""
+        }
+      >
+        {/* Square listing photo. */}
+        {hasPhoto && (
+          <img
+            src={a.picture_url as string}
+            alt={a.name ?? "Accommodation photo"}
+            loading="lazy"
+            className="aspect-square w-full rounded-xl object-cover ring-1 ring-slate-200"
+            onError={(e) => {
+              e.currentTarget.style.display = "none";
+            }}
+          />
+        )}
+
+        {/* Details. */}
         <div className="flex min-w-0 flex-col">
           <h3 className="text-xl font-bold leading-snug text-slate-900">
             {a.name ?? "Selected stay"}
@@ -447,18 +484,6 @@ function AccommodationCard({
             </ul>
           )}
 
-          {a.picture_url && (
-            <img
-              src={a.picture_url}
-              alt={a.name ?? "Accommodation photo"}
-              loading="lazy"
-              className="mt-3 h-48 w-full rounded-xl object-cover ring-1 ring-slate-200"
-              onError={(e) => {
-                e.currentTarget.style.display = "none";
-              }}
-            />
-          )}
-
           {formatDateShort(startDate) && formatDateShort(endDate) && (
             <p className="mt-3 text-sm text-slate-600">
               <span className="text-slate-400">Check-in</span>{" "}
@@ -473,48 +498,39 @@ function AccommodationCard({
             </p>
           )}
 
-          {a.listing_url && (
-            <a
-              href={a.listing_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-4 inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-rose-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-rose-600 sm:w-auto sm:self-start sm:px-6"
-            >
-              View on Airbnb
-              <IconArrowRight className="h-4 w-4" />
-            </a>
-          )}
-        </div>
-
-        {/* Right: a location-quality panel + a link to the trip map below (the
-            accommodation is plotted there, so this card carries no map of its own). */}
-        <div className="flex flex-col gap-3">
           {a.location_score != null && (
-            <div className="rounded-xl bg-teal-50/70 p-3 ring-1 ring-teal-100">
-              <div className="flex items-center justify-between gap-2">
-                <p className="flex items-center gap-1.5 text-sm font-semibold text-slate-700">
-                  <IconLocation className="h-4 w-4 text-teal-600" />
-                  {locationLabel(a.location_score)} location
-                </p>
-                <span className="rounded-md bg-teal-600 px-1.5 py-0.5 text-xs font-bold text-white tabular-nums">
-                  {a.location_score.toFixed(1)}
-                </span>
-              </div>
-              <p className="mt-1 text-xs text-slate-500">
-                Guests rate the location {a.location_score.toFixed(1)} / 5.
-              </p>
-            </div>
+            <p className="mt-2 flex items-center gap-1.5 text-sm text-slate-600">
+              <span className="rounded-md bg-teal-600 px-1.5 py-0.5 text-xs font-bold text-white tabular-nums">
+                {a.location_score.toFixed(1)}
+              </span>
+              {locationLabel(a.location_score)} location
+            </p>
           )}
-          {hasCoords && (
-            <button
-              type="button"
-              onClick={showOnMap}
-              className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition-colors hover:border-slate-300 hover:bg-slate-50"
-            >
-              <IconLocation className="h-4 w-4 text-teal-600" />
-              Show on map
-            </button>
-          )}
+
+          {/* Actions: booking link + jump to this stay on the trip map below. */}
+          <div className="mt-4 flex flex-wrap gap-3">
+            {a.listing_url && (
+              <a
+                href={a.listing_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-rose-500 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-rose-600"
+              >
+                View on Airbnb
+                <IconArrowRight className="h-4 w-4" />
+              </a>
+            )}
+            {hasCoords && onShowOnMap && (
+              <button
+                type="button"
+                onClick={onShowOnMap}
+                className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition-colors hover:border-slate-300 hover:bg-slate-50"
+              >
+                <IconLocation className="h-4 w-4 text-teal-600" />
+                Show on map
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </Card>
@@ -823,9 +839,11 @@ const MARKER_LABEL: Record<MarkerKind, string> = {
 function OverviewMapCard({
   markers,
   city,
+  focus,
 }: {
   markers: MapMarker[];
   city: string;
+  focus?: MapFocus | null;
 }) {
   const kinds = Array.from(new Set(markers.map((m) => m.kind)));
   return (
@@ -838,6 +856,7 @@ function OverviewMapCard({
         <>
           <MapView
             markers={markers}
+            focus={focus}
             ariaLabel={`Map of ${city} showing the destination and accommodation`}
             className="min-h-[15rem] flex-1 overflow-hidden rounded-xl ring-1 ring-slate-200"
           />
