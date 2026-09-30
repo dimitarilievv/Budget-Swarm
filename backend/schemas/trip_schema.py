@@ -115,6 +115,44 @@ class CostBreakdown(BaseModel):
     activities: float
 
 
+class FlightEndpoint(BaseModel):
+    """One end of a flight — its airport (IATA code + name) and the city it serves."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    code: str
+    city: str | None = None
+    airport: str | None = None
+
+
+class FlightLeg(BaseModel):
+    """One flight leg's schedule: date, clock times, duration and stops (all indicative).
+
+    ``date`` is an ISO ``YYYY-MM-DD`` string (kept a string to avoid shadowing the
+    ``datetime.date`` type used elsewhere in this module).
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    date: str | None = None
+    depart_time: str | None = None
+    arrival_time: str | None = None
+    duration_min: int | None = None
+    stops: int | None = None
+
+
+class FlightPlan(BaseModel):
+    """Rich per-leg flight detail for the air card (both legs + a booking deep link)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    origin: FlightEndpoint
+    destination: FlightEndpoint
+    outbound: FlightLeg | None = None
+    inbound: FlightLeg | None = None
+    booking_url: str | None = None
+
+
 class PlanTransport(BaseModel):
     """The chosen transport leg, normalized (api.md ``chosen_plan.transport``)."""
 
@@ -128,6 +166,8 @@ class PlanTransport(BaseModel):
     # Outbound departure clock time ("HH:MM") when the fare source provides one (air);
     # None for modes/sources without a scheduled departure time.
     depart_time: str | None = None
+    # Rich per-leg flight detail (air mode only) for the flight card; None otherwise.
+    flight: FlightPlan | None = None
 
 
 class PlanAccommodation(BaseModel):

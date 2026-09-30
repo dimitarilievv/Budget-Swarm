@@ -105,6 +105,7 @@ def _bundle(**overrides) -> WiringBundle:
         experience_agent=_FakeExperience(),
         weather_agent=_FakeWeather(),
         airport_index=_FakeAirports(),
+        flight_service=None,  # only used by the flight_details closure, not these tests
         scout_k=6,
     )
     defaults.update(overrides)

@@ -99,6 +99,10 @@ WeatherFn = Callable[["EngineInput", Destination], WeatherProfile | None]
 # exact date range. Used only after selection to align the chosen plan's forecast with its
 # derived travel dates (the fan-out itself stays date-naive and fully parallel).
 WeatherWindowFn = Callable[["EngineInput", Destination, str, str], WeatherProfile | None]
+# Optional post-selection flight detail: (request, chosen destination, depart_date,
+# return_date) -> a display-ready flight payload (both legs, airports, booking link) or None.
+# Used only for air mode after a destination is chosen; the fan-out itself is date-naive.
+FlightDetailsFn = Callable[["EngineInput", Destination, str, str], "dict[str, object] | None"]
 
 # Default cap on simultaneous agent calls across the whole fan-out. The short list is
 # small (k ≈ 4-6), so this bounds ~4k potential calls to a rate-limit-friendly number.
@@ -126,6 +130,9 @@ class AgentSet:
     experience: ExperienceFn
     weather: WeatherFn
     weather_window: WeatherWindowFn | None = None
+    #: Optional post-selection flight detail for air mode (both legs + booking link). Not
+    #: part of the parallel fan-out; the engine calls it once the destination is chosen.
+    flight_details: FlightDetailsFn | None = None
 
 
 async def gather_agent_outputs(

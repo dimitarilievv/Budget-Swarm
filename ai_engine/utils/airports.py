@@ -98,30 +98,37 @@ class AirportIndex:
         logger.debug("AirportIndex: loaded %d airports from %s", len(airports), path)
         return cls(airports)
 
-    def nearest(self, point: GeoPoint, *, max_km: float | None = DEFAULT_MAX_KM) -> str | None:
-        """Return the IATA code of the closest airport to ``point``.
+    def nearest_airport(
+        self, point: GeoPoint, *, max_km: float | None = DEFAULT_MAX_KM
+    ) -> Airport | None:
+        """Return the closest :class:`Airport` to ``point`` (code + name + location).
 
-        ``None`` when the index is empty or the nearest airport is farther than
-        ``max_km`` (so an ocean/desert coordinate does not get a spurious hub).
+        ``None`` when the index is empty or the nearest airport is farther than ``max_km``
+        (so an ocean/desert coordinate does not get a spurious hub).
         """
-        best_iata: str | None = None
+        best: Airport | None = None
         best_km = math.inf
         for airport in self._airports:
             km = haversine_km(point, airport.point)
             if km < best_km:
                 best_km = km
-                best_iata = airport.iata
-        if best_iata is None:
+                best = airport
+        if best is None:
             return None
         if max_km is not None and best_km > max_km:
             logger.debug(
-                "AirportIndex: nearest airport to %s is %.0f km away (> %s); no IATA",
+                "AirportIndex: nearest airport to %s is %.0f km away (> %s); no match",
                 point,
                 best_km,
                 max_km,
             )
             return None
-        return best_iata
+        return best
+
+    def nearest(self, point: GeoPoint, *, max_km: float | None = DEFAULT_MAX_KM) -> str | None:
+        """Return the IATA code of the closest airport to ``point`` (or ``None``)."""
+        airport = self.nearest_airport(point, max_km=max_km)
+        return airport.iata if airport is not None else None
 
 
 __all__ = ["Airport", "AirportIndex", "DEFAULT_MAX_KM"]

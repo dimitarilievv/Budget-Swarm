@@ -16,6 +16,8 @@ import { useMemo, useState } from "react";
 import type {
   ChosenPlan,
   CostBreakdown,
+  FlightEndpoint,
+  FlightLeg,
   ItineraryActivity,
   PlanAccommodation,
   PlanTransport,
@@ -81,6 +83,9 @@ export default function ResultsPage({
   // Stable marker set so focusing the map (Show on map) doesn't rebuild it and drop markers.
   const mapMarkers = useMemo(() => planMarkers(plan), [plan]);
   const [mapFocus, setMapFocus] = useState<MapFocus | null>(null);
+  // Air trips with per-leg detail get the dedicated full-width flight card.
+  const showFlightCard =
+    plan.transport?.mode === "airplane" && !!plan.transport.flight;
 
   const showAccommodationOnMap = () => {
     const a = plan.accommodation;
@@ -100,16 +105,28 @@ export default function ResultsPage({
 
       <DestinationInfo city={destination.city} />
 
-      {/* Summary card row — cost, transport, weather. */}
-      <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+      {/* Summary card row — cost, transport, weather. For air with full flight detail the
+          transport tile is replaced by the dedicated full-width flight card below. */}
+      <div
+        className={`grid gap-5 sm:grid-cols-2 ${
+          showFlightCard ? "lg:grid-cols-2" : "lg:grid-cols-3"
+        }`}
+      >
         <TotalCostCard plan={plan} />
-        <TransportCard
-          transport={plan.transport}
-          startDate={plan.start_date}
-          endDate={plan.end_date}
-        />
+        {!showFlightCard && (
+          <TransportCard
+            transport={plan.transport}
+            startDate={plan.start_date}
+            endDate={plan.end_date}
+          />
+        )}
         <WeatherCard weather={plan.weather} />
       </div>
+
+      {/* Full flight card (air mode with per-leg detail). */}
+      {showFlightCard && plan.transport && (
+        <FlightCard transport={plan.transport} />
+      )}
 
       {/* Accommodation — a compact listing card (photo + detail); the stay is plotted on
           the Trip map below, reachable via its "Show on map" button. */}
@@ -369,6 +386,170 @@ function TransportCard({
         )}
       </dl>
     </Card>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Flight (full detail, air mode)                                              */
+/* -------------------------------------------------------------------------- */
+
+function stopsLabel(stops?: number | null): string {
+  if (stops == null) return "—";
+  if (stops === 0) return "Direct";
+  return `${stops} ${stops === 1 ? "stop" : "stops"}`;
+}
+
+function FlightLegRow({
+  from,
+  to,
+  leg,
+}: {
+  from: FlightEndpoint;
+  to: FlightEndpoint;
+  leg?: FlightLeg | null;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <div className="min-w-0">
+        <div className="text-xl font-extrabold text-slate-900">{from.code}</div>
+        {from.city && <div className="text-xs text-slate-500">{from.city}</div>}
+        {from.airport && (
+          <div className="truncate text-[10px] text-slate-400">
+            {from.airport}
+          </div>
+        )}
+      </div>
+      <div className="flex flex-1 flex-col items-center px-2">
+        <div className="flex w-full items-center gap-2">
+          <span className="text-sm font-semibold tabular-nums text-slate-700">
+            {leg?.depart_time ?? "—"}
+          </span>
+          <div className="relative flex-1 border-t border-dashed border-slate-300">
+            <IconPlane className="absolute -top-2 left-1/2 h-4 w-4 -translate-x-1/2 text-teal-500" />
+          </div>
+          <span className="text-sm font-semibold tabular-nums text-slate-700">
+            {leg?.arrival_time ?? "—"}
+          </span>
+        </div>
+        <div className="mt-1 text-[11px] text-slate-400">
+          {leg?.duration_min != null
+            ? formatDuration(leg.duration_min)
+            : stopsLabel(leg?.stops)}
+        </div>
+      </div>
+      <div className="min-w-0 text-right">
+        <div className="text-xl font-extrabold text-slate-900">{to.code}</div>
+        {to.city && <div className="text-xs text-slate-500">{to.city}</div>}
+        {to.airport && (
+          <div className="truncate text-[10px] text-slate-400">
+            {to.airport}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function FlightCard({ transport }: { transport: PlanTransport }) {
+  const f = transport.flight;
+  if (!f) return null;
+  const dist =
+    transport.distance_km != null
+      ? `≈ ${Math.round(transport.distance_km).toLocaleString()} km`
+      : null;
+
+  return (
+    <Card
+      title="Transport"
+      eyebrow={<QualityBadge flag={transport.quality_flag} />}
+    >
+      <div className="flex items-center gap-3">
+        <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-teal-50 text-teal-600">
+          <IconPlane className="h-6 w-6" />
+        </span>
+        <div>
+          <p className="text-lg font-bold text-slate-900">Airplane</p>
+          {dist && <p className="text-sm text-slate-500">{dist}</p>}
+        </div>
+      </div>
+
+      {/* Departure leg. */}
+      <div className="mt-4 rounded-xl bg-slate-50 p-3 ring-1 ring-slate-100">
+        <div className="mb-2 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-slate-400">
+          <span className="flex items-center gap-1.5 text-teal-600">
+            <IconPlane className="h-4 w-4" /> Departure flight
+          </span>
+          {f.outbound?.date && (
+            <span className="text-slate-500">
+              {formatDateShort(f.outbound.date)}
+              {f.outbound.depart_time ? `, ${f.outbound.depart_time}` : ""}
+            </span>
+          )}
+        </div>
+        <FlightLegRow from={f.origin} to={f.destination} leg={f.outbound} />
+      </div>
+
+      {/* Return leg (when present). */}
+      {f.inbound && (
+        <div className="mt-3 rounded-xl bg-slate-50 p-3 ring-1 ring-slate-100">
+          <div className="mb-2 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-slate-400">
+            <span className="flex items-center gap-1.5 text-teal-600">
+              <IconPlane className="h-4 w-4 -scale-x-100" /> Return flight
+            </span>
+            {f.inbound.date && (
+              <span className="text-slate-500">
+                {formatDateShort(f.inbound.date)}
+                {f.inbound.depart_time ? `, ${f.inbound.depart_time}` : ""}
+              </span>
+            )}
+          </div>
+          <FlightLegRow from={f.destination} to={f.origin} leg={f.inbound} />
+        </div>
+      )}
+
+      {/* Real stat tiles. */}
+      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {transport.cost != null && (
+          <StatTile label="Total cost" value={euro(transport.cost)} />
+        )}
+        {transport.duration_min != null && (
+          <StatTile
+            label="Total duration"
+            value={formatDuration(transport.duration_min)}
+          />
+        )}
+        {dist && <StatTile label="Distance" value={dist} />}
+        {f.outbound?.stops != null && (
+          <StatTile label="Stops" value={stopsLabel(f.outbound.stops)} />
+        )}
+      </div>
+
+      {f.booking_url && (
+        <a
+          href={f.booking_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-4 flex items-center justify-between gap-3 rounded-xl bg-teal-600 px-5 py-3 text-white shadow-sm transition-colors hover:bg-teal-700"
+        >
+          <span>
+            <span className="block text-sm font-bold">Reserve Flight</span>
+            <span className="block text-xs text-teal-100">
+              Go to booking page
+            </span>
+          </span>
+          <IconArrowRight className="h-5 w-5" />
+        </a>
+      )}
+    </Card>
+  );
+}
+
+function StatTile({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl bg-slate-50 p-3 text-center ring-1 ring-slate-100">
+      <div className="text-sm font-bold text-slate-900">{value}</div>
+      <div className="mt-0.5 text-[11px] text-slate-400">{label}</div>
+    </div>
   );
 }
 

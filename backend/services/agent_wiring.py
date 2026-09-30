@@ -35,6 +35,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta
 from functools import lru_cache
 from math import ceil
 
@@ -72,6 +73,7 @@ from ai_engine.providers.attraction import (
     overpass_http_transport,
 )
 from ai_engine.providers.flight import (
+    FlightRequest,
     FlightService,
     TravelpayoutsProvider,
     tp_http_transport,
@@ -216,6 +218,77 @@ def _origin_point(engine_input: object) -> GeoPoint | None:
 
 
 # ---------------------------------------------------------------------------
+# flight detail (post-selection, air mode) — both legs + a real booking link
+# ---------------------------------------------------------------------------
+
+
+def _flight_leg(
+    flight_service: FlightService,
+    from_air,
+    to_air,
+    date_iso: str,
+    from_point: GeoPoint,
+    to_point: GeoPoint,
+) -> dict | None:
+    """Resolve one real flight leg (times, duration, stops) for a date, or ``None``.
+
+    Uses the live flight provider (Travelpayouts → distance estimate) for the exact date;
+    the departure timestamp gives the clock time, and arrival is departure + duration.
+    """
+    try:
+        result = flight_service.resolve(
+            FlightRequest(
+                origin=from_air.iata,
+                destination=to_air.iata,
+                origin_point=from_point,
+                destination_point=to_point,
+                depart_date=date_iso,
+            )
+        )
+        f = result.data
+    except Exception as exc:  # noqa: BLE001 - a missing leg just yields no times
+        logger.info("wiring: flight leg %s->%s failed (%s)", from_air.iata, to_air.iata, exc)
+        return None
+    depart_time: str | None = None
+    arrival_time: str | None = None
+    if f.departure_at:
+        try:
+            dt = datetime.fromisoformat(f.departure_at)
+            depart_time = dt.strftime("%H:%M")
+            if f.duration_min:
+                arrival_time = (dt + timedelta(minutes=int(f.duration_min))).strftime("%H:%M")
+        except ValueError:
+            pass
+    return {
+        "date": date_iso,
+        "depart_time": depart_time,
+        "arrival_time": arrival_time,
+        "duration_min": int(f.duration_min) if f.duration_min is not None else None,
+        "stops": int(f.transfers) if f.transfers is not None else None,
+    }
+
+
+def _aviasales_url(
+    origin: str, dest: str, start_iso: str, end_iso: str, passengers: int
+) -> str | None:
+    """Build a real Aviasales search deep link (round trip) from IATA codes + dates.
+
+    Aviasales encodes a search as ``<ORIGIN><DDMM><DEST><DDMM><passengers>`` — a working
+    "go to booking page" link, not a specific reserved ticket.
+    """
+    try:
+        start = date.fromisoformat(start_iso)
+        end = date.fromisoformat(end_iso)
+    except ValueError:
+        return None
+    ddmm = lambda d: f"{d.day:02d}{d.month:02d}"  # noqa: E731
+    return (
+        f"https://www.aviasales.com/search/"
+        f"{origin}{ddmm(start)}{dest}{ddmm(end)}{max(1, passengers)}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # the shared, once-built agent bundle
 # ---------------------------------------------------------------------------
 
@@ -230,6 +303,7 @@ class WiringBundle:
     experience_agent: ExperienceAgent
     weather_agent: WeatherAgent
     airport_index: AirportIndex
+    flight_service: FlightService
     scout_k: int = DEFAULT_TOP_K
 
 
@@ -279,6 +353,7 @@ def build_bundle(settings: object, session_factory: sessionmaker) -> WiringBundl
         experience_agent=experience_agent,
         weather_agent=weather_agent,
         airport_index=AirportIndex.from_data_dir(),
+        flight_service=flight_service,
     )
     logger.info(
         "wiring: built agent bundle (fuel rows=%d, airports=%d)",
@@ -431,6 +506,34 @@ def build_agent_set(bundle: WiringBundle) -> AgentSet:
             end_date=end_date,
         )
 
+    def flight_details(
+        engine_input: object, dest: Destination, start_date: str, end_date: str
+    ) -> dict | None:
+        # Post-selection flight detail for the air card: resolve both real legs (outbound on
+        # the depart date, inbound on the return date), the origin/destination airports, and
+        # a real Aviasales booking deep link. Returns None when the airports can't be resolved.
+        origin = _origin_point(engine_input)
+        if origin is None:
+            return None
+        dest_point = GeoPoint(dest.latitude, dest.longitude)
+        o_air = bundle.airport_index.nearest_airport(origin)
+        d_air = bundle.airport_index.nearest_airport(dest_point)
+        if o_air is None or d_air is None:
+            return None
+        travelers = int(getattr(engine_input, "travelers", 1) or 1)
+        origin_city = getattr(engine_input, "origin_label", None) or o_air.name
+        return {
+            "origin": {"code": o_air.iata, "city": origin_city, "airport": o_air.name},
+            "destination": {"code": d_air.iata, "city": dest.city, "airport": d_air.name},
+            "outbound": _flight_leg(
+                bundle.flight_service, o_air, d_air, start_date, origin, dest_point
+            ),
+            "inbound": _flight_leg(
+                bundle.flight_service, d_air, o_air, end_date, dest_point, origin
+            ),
+            "booking_url": _aviasales_url(o_air.iata, d_air.iata, start_date, end_date, travelers),
+        }
+
     return AgentSet(
         scout=scout,
         transport=transport,
@@ -438,6 +541,7 @@ def build_agent_set(bundle: WiringBundle) -> AgentSet:
         experience=experience,
         weather=weather,
         weather_window=weather_window,
+        flight_details=flight_details,
     )
 
 

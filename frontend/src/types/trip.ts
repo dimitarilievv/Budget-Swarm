@@ -55,6 +55,28 @@ export interface CostBreakdown {
   activities: number;
 }
 
+export interface FlightEndpoint {
+  code: string;
+  city?: string | null;
+  airport?: string | null;
+}
+
+export interface FlightLeg {
+  date?: string | null; // ISO YYYY-MM-DD
+  depart_time?: string | null;
+  arrival_time?: string | null;
+  duration_min?: number | null;
+  stops?: number | null;
+}
+
+export interface FlightPlan {
+  origin: FlightEndpoint;
+  destination: FlightEndpoint;
+  outbound?: FlightLeg | null;
+  inbound?: FlightLeg | null;
+  booking_url?: string | null;
+}
+
 export interface PlanTransport {
   mode: TransportMode;
   cost?: number | null;
@@ -63,6 +85,8 @@ export interface PlanTransport {
   quality_flag: QualityFlag;
   /** Outbound departure clock time ("HH:MM") when the fare source provides one (air). */
   depart_time?: string | null;
+  /** Rich per-leg flight detail (air mode only) for the flight card. */
+  flight?: FlightPlan | null;
 }
 
 export interface PlanAccommodation {

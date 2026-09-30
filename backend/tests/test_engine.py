@@ -108,6 +108,7 @@ def _agents(**overrides) -> AgentSet:
         experience=overrides.get("experience", _experience),
         weather=overrides.get("weather", _weather),
         weather_window=overrides.get("weather_window"),
+        flight_details=overrides.get("flight_details"),
     )
 
 
@@ -146,6 +147,58 @@ def test_meta_has_degraded_sources_and_timing():
     assert isinstance(meta["elapsed_ms"], int) and meta["elapsed_ms"] >= 0
     assert meta["generated_at"] is not None
     assert meta["trip_id"] is None
+
+
+def test_flight_details_attached_for_air_mode():
+    # For air mode the engine calls the flight-details hook (both legs + booking link) and
+    # attaches its payload to the transport, and it validates against the wire schema.
+    def air_transport(_inp, dest):
+        return TransportOption(
+            mode=TransportMode.AIRPLANE, cost=180.0, duration_minutes=210, distance_km=1300.0
+        )
+
+    def fd(_inp, dest, start, end):
+        return {
+            "origin": {"code": "SKP", "city": "Skopje", "airport": "Skopje Airport"},
+            "destination": {"code": "IST", "city": dest.city, "airport": "Istanbul Airport"},
+            "outbound": {
+                "date": start,
+                "depart_time": "12:45",
+                "arrival_time": "14:30",
+                "duration_min": 105,
+                "stops": 0,
+            },
+            "inbound": {
+                "date": end,
+                "depart_time": "16:35",
+                "arrival_time": "18:45",
+                "duration_min": 130,
+                "stops": 1,
+            },
+            "booking_url": "https://www.aviasales.com/search/SKP0110IST0510x1",
+        }
+
+    result = TripPlanEngine(_agents(transport=air_transport, flight_details=fd)).generate_trip(
+        _engine_input(transport_mode=TransportMode.AIRPLANE)
+    )
+    TripResponse.model_validate(result)
+    f = result["chosen_plan"]["transport"]["flight"]
+    assert f["origin"]["code"] == "SKP" and f["destination"]["code"] == "IST"
+    assert f["outbound"]["depart_time"] == "12:45"
+    assert f["inbound"]["stops"] == 1
+    assert f["booking_url"].startswith("https://www.aviasales.com/search/")
+
+
+def test_flight_details_absent_for_non_air_modes():
+    calls = {"n": 0}
+
+    def fd(*_args):
+        calls["n"] += 1
+        return {}
+
+    result = TripPlanEngine(_agents(flight_details=fd)).generate_trip(_engine_input())  # car
+    assert result["chosen_plan"]["transport"]["flight"] is None
+    assert calls["n"] == 0  # hook not called for non-air modes
 
 
 def test_trip_window_uses_transport_departure_and_duration():

@@ -152,6 +152,52 @@ describe("ResultsPage", () => {
     expect(screen.getByText("1 Dec – 5 Dec 2026")).toBeInTheDocument();
   });
 
+  it("renders the full flight card for air mode with both legs and a booking link", () => {
+    const res = fixture();
+    res.chosen_plan.transport = {
+      mode: "airplane",
+      cost: 276,
+      duration_min: 270,
+      distance_km: 2094,
+      quality_flag: "real",
+      flight: {
+        origin: { code: "SKP", city: "Skopje", airport: "Skopje Airport" },
+        destination: {
+          code: "IST",
+          city: "Istanbul",
+          airport: "Istanbul Airport",
+        },
+        outbound: {
+          date: "2026-10-07",
+          depart_time: "12:45",
+          arrival_time: "14:30",
+          duration_min: 105,
+          stops: 0,
+        },
+        inbound: {
+          date: "2026-10-11",
+          depart_time: "16:35",
+          arrival_time: "18:45",
+          duration_min: 130,
+          stops: 1,
+        },
+        booking_url: "https://www.aviasales.com/search/SKP0710IST11101",
+      },
+    };
+    render(<ResultsPage response={res} />);
+    expect(screen.getByText(/Departure flight/i)).toBeInTheDocument();
+    expect(screen.getByText(/Return flight/i)).toBeInTheDocument();
+    expect(screen.getAllByText("SKP").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("IST").length).toBeGreaterThan(0);
+    expect(screen.getByText("12:45")).toBeInTheDocument();
+    expect(screen.getByText("18:45")).toBeInTheDocument();
+    const book = screen.getByRole("link", { name: /Reserve Flight/i });
+    expect(book).toHaveAttribute(
+      "href",
+      "https://www.aviasales.com/search/SKP0710IST11101",
+    );
+  });
+
   it("renders accommodation with name, nightly price, nights and rating", () => {
     render(<ResultsPage response={fixture()} />);
     const card = screen

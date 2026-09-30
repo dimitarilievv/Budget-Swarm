@@ -42,7 +42,7 @@ from ai_engine.core.pipeline import (
     gather_agent_outputs,
 )
 from ai_engine.core.planner import OptimalPlan, Planner, PlanRequest, RankedCandidate
-from ai_engine.domain import TransportOption
+from ai_engine.domain import TransportMode, TransportOption
 from ai_engine.providers.explanation import ExplanationService
 
 if TYPE_CHECKING:  # pragma: no cover - typing only; avoids a core -> agents import cycle
@@ -127,6 +127,9 @@ class TripPlanEngine:
         )
         explanation = explain_plan(plan, plan_request, self._explanation, currency=self._currency)
 
+        window = _trip_window(plan.transport, days, generated_at)
+        flight = self._flight_details(plan, engine_input, window)
+
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         logger.info(
             "engine: plan for %s/%s in %d ms (%d candidate(s), %d degraded source(s))",
@@ -140,9 +143,34 @@ class TripPlanEngine:
             plan,
             explanation.text,
             elapsed_ms,
-            duration_days=days,
+            window=window,
             generated_at=generated_at,
+            flight=flight,
         )
+
+    def _flight_details(
+        self, plan: OptimalPlan, engine_input: EngineInput, window: _TripWindow
+    ) -> dict[str, Any] | None:
+        """For air mode, fetch the display flight detail (both legs + booking link).
+
+        Delegates to the injected ``flight_details`` hook (the backend wires it over the real
+        flight provider) with the chosen destination and the derived travel dates. Never
+        raises — any failure simply yields no flight detail and the card degrades to the
+        generic transport summary.
+        """
+        hook = self._agents.flight_details
+        if hook is None or plan.transport.mode is not TransportMode.AIRPLANE:
+            return None
+        try:
+            return hook(
+                engine_input,
+                plan.destination,
+                window.start_date.isoformat(),
+                window.end_date.isoformat(),
+            )
+        except Exception as exc:  # noqa: BLE001 - flight detail is optional; degrade quietly
+            logger.warning("engine: flight-detail fetch failed (%s); no flight card", exc)
+            return None
 
     def _align_chosen_weather(
         self,
@@ -233,12 +261,12 @@ def _to_response_dict(
     explanation: str | None,
     elapsed_ms: int,
     *,
-    duration_days: int,
+    window: _TripWindow,
     generated_at: datetime,
+    flight: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    window = _trip_window(plan.transport, duration_days, generated_at)
     return {
-        "chosen_plan": _chosen_plan(plan, window),
+        "chosen_plan": _chosen_plan(plan, window, flight),
         "ranked_candidates": [_ranked(rc) for rc in plan.ranked_candidates],
         "explanation": explanation,
         "meta": {
@@ -303,7 +331,9 @@ def _parse_departure(departure_at: str | None, generated_at: datetime) -> tuple[
     return generated_at.date() + timedelta(days=_MIN_LEAD_DAYS), None
 
 
-def _chosen_plan(plan: OptimalPlan, window: _TripWindow) -> dict[str, Any]:
+def _chosen_plan(
+    plan: OptimalPlan, window: _TripWindow, flight: dict[str, Any] | None = None
+) -> dict[str, Any]:
     dest = plan.destination
     costs = plan.cost_breakdown
     return {
@@ -325,14 +355,16 @@ def _chosen_plan(plan: OptimalPlan, window: _TripWindow) -> dict[str, Any]:
             "accommodation": costs.accommodation or 0.0,
             "activities": costs.activities,
         },
-        "transport": _transport(plan, window),
+        "transport": _transport(plan, window, flight),
         "accommodation": _accommodation(plan),
         "itinerary": _itinerary(plan),
         "weather": _weather(plan),
     }
 
 
-def _transport(plan: OptimalPlan, window: _TripWindow) -> dict[str, Any]:
+def _transport(
+    plan: OptimalPlan, window: _TripWindow, flight: dict[str, Any] | None = None
+) -> dict[str, Any]:
     t = plan.transport
     return {
         "mode": t.mode.value,
@@ -342,6 +374,8 @@ def _transport(plan: OptimalPlan, window: _TripWindow) -> dict[str, Any]:
         "quality_flag": t.quality_flag.value,
         # The outbound departure clock time, when the fare source provides one (air).
         "depart_time": window.depart_time,
+        # Rich per-leg flight detail (both legs, airports, booking link), air mode only.
+        "flight": flight,
     }
 
 
