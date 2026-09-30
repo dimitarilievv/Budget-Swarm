@@ -235,17 +235,25 @@ def _flight_leg(
     Uses the live flight provider (Travelpayouts → distance estimate) for the exact date;
     the departure timestamp gives the clock time, and arrival is departure + duration.
     """
-    try:
-        result = flight_service.resolve(
+
+    def _resolve(depart_date: str | None):
+        return flight_service.resolve(
             FlightRequest(
                 origin=from_air.iata,
                 destination=to_air.iata,
                 origin_point=from_point,
                 destination_point=to_point,
-                depart_date=date_iso,
+                depart_date=depart_date,
             )
         )
+
+    try:
+        result = _resolve(date_iso)
         f = result.data
+        # If the dated query only yields an estimate (no real timestamp), retry the cheapest
+        # known fare so the leg still shows real times — like the outbound.
+        if f.departure_at is None:
+            f = _resolve(None).data
     except Exception as exc:  # noqa: BLE001 - a missing leg just yields no times
         logger.info("wiring: flight leg %s->%s failed (%s)", from_air.iata, to_air.iata, exc)
         return None
