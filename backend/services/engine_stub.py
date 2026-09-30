@@ -37,7 +37,9 @@ class StubTripEngine:
             request.origin_label,
             request.transport_mode,
         )
-        start = datetime.now(UTC).date()
+        # A few days out rather than today (a trip should not start immediately), mirroring
+        # the real engine's default lead time for a no-provider-date mode.
+        start = datetime.now(UTC).date() + timedelta(days=3)
         end = start + timedelta(days=max(0, request.duration_days - 1))
         return {
             "chosen_plan": {

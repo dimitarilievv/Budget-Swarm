@@ -250,6 +250,11 @@ def _to_response_dict(
     }
 
 
+# Lead time before a trip with no provider-supplied date (car/bus/train, or an estimated
+# flight) starts: departing "today" is not realistic, so default to a few days out.
+_MIN_LEAD_DAYS = 3
+
+
 @dataclass(frozen=True)
 class _TripWindow:
     """The concrete calendar span of the trip, derived for display (not user input)."""
@@ -266,9 +271,10 @@ def _trip_window(
 
     The app takes no travel dates as input; it books the *cheapest* option. So the start
     is taken from the transport's own indicative ``departure_at`` when the source provides
-    one (e.g. the Travelpayouts cheapest fare), otherwise it defaults to the generation
-    date. The end is ``duration_days`` on-the-ground days later (inclusive), so a 5-day
-    trip departing 1 Dec returns 5 Dec.
+    one (e.g. the Travelpayouts cheapest fare); otherwise (car/bus/train, or an estimated
+    flight) it defaults to a few days out (:data:`_MIN_LEAD_DAYS`), since starting today is
+    not realistic. The end is ``duration_days`` on-the-ground days later (inclusive), so a
+    5-day trip departing 1 Dec returns 5 Dec.
     """
     start, depart_time = _parse_departure(transport.departure_at, generated_at)
     end = start + timedelta(days=max(0, duration_days - 1))
@@ -279,7 +285,8 @@ def _parse_departure(departure_at: str | None, generated_at: datetime) -> tuple[
     """Parse an ISO ``departure_at`` into ``(date, "HH:MM" | None)``.
 
     Accepts a bare date (``2026-12-01``) or a date-time (``2026-12-01T10:20:00+03:00``).
-    Falls back to the generation date with no time when the value is absent or unparseable.
+    Falls back to a short lead time after the generation date (no time) when the value is
+    absent or unparseable, since a trip should not start today.
     """
     if departure_at:
         try:
@@ -291,9 +298,9 @@ def _parse_departure(departure_at: str | None, generated_at: datetime) -> tuple[
                 return date.fromisoformat(departure_at[:10]), None
             except ValueError:
                 logger.debug(
-                    "engine: unparseable departure_at %r; using generation date", departure_at
+                    "engine: unparseable departure_at %r; using default lead time", departure_at
                 )
-    return generated_at.date(), None
+    return generated_at.date() + timedelta(days=_MIN_LEAD_DAYS), None
 
 
 def _chosen_plan(plan: OptimalPlan, window: _TripWindow) -> dict[str, Any]:

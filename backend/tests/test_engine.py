@@ -206,27 +206,36 @@ def test_weather_is_realigned_to_the_trip_window():
 
 
 def test_weather_window_not_used_when_the_trip_starts_today():
-    # No future departure (car/bus): the fan-out forecast is already aligned, so the
-    # windowed re-fetch is skipped entirely.
+    # When the (real) departure date is today, the fan-out forecast already covers it, so
+    # the windowed re-fetch is skipped.
+    from datetime import UTC, datetime
+
+    today = datetime.now(UTC).date().isoformat()
     calls = {"n": 0}
+
+    def today_transport(_inp, dest):
+        return TransportOption(mode=TransportMode.CAR, cost=150.0, departure_at=today)
 
     def window_weather(_inp, dest, start, end):
         calls["n"] += 1
         return None
 
-    TripPlanEngine(_agents(weather_window=window_weather)).generate_trip(_engine_input())
+    TripPlanEngine(_agents(transport=today_transport, weather_window=window_weather)).generate_trip(
+        _engine_input()
+    )
     assert calls["n"] == 0
 
 
-def test_trip_window_defaults_to_today_without_a_departure():
-    # No departure timestamp (car/bus, or an estimated flight): the window starts today and
-    # no departure time is shown.
+def test_trip_window_defaults_to_a_lead_time_without_a_departure():
+    # No departure timestamp (car/bus, or an estimated flight): the window starts a few days
+    # out (not today, which is unrealistic) and no departure time is shown.
     from datetime import UTC, datetime
 
     result = TripPlanEngine(_agents()).generate_trip(_engine_input(duration_days=3))
     cp = result["chosen_plan"]
-    assert cp["start_date"] == datetime.now(UTC).date()
-    assert cp["end_date"] == cp["start_date"] + timedelta(days=2)
+    expected_start = datetime.now(UTC).date() + timedelta(days=3)
+    assert cp["start_date"] == expected_start
+    assert cp["end_date"] == expected_start + timedelta(days=2)
     assert cp["transport"]["depart_time"] is None
 
 
