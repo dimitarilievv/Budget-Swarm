@@ -93,7 +93,7 @@ from ai_engine.providers.weather import (
     open_meteo_http_transport,
 )
 from ai_engine.utils.airports import AirportIndex
-from ai_engine.utils.geo import GeoPoint
+from ai_engine.utils.geo import GeoPoint, haversine_km
 
 logger = logging.getLogger(__name__)
 
@@ -158,6 +158,38 @@ def _row_to_destination(row: object) -> Destination | None:
             exc,
         )
         return None
+
+
+# A candidate this close to the origin (km) is effectively the same city — you can't take a
+# trip to where you already are, so it is dropped from the destination list.
+_SAME_CITY_KM = 30.0
+
+
+def _norm_city(label: str | None) -> str:
+    """Normalise a city label for comparison: lower-cased, first comma-part, trimmed."""
+    if not label:
+        return ""
+    return label.split(",")[0].strip().lower()
+
+
+def _is_origin(
+    candidate: Destination, origin_point: GeoPoint | None, origin_label: str | None
+) -> bool:
+    """True when a candidate is the trip's own origin (same name, or within the same city).
+
+    Matches by normalised city name and, as a fallback that also catches native-language or
+    misspelled labels, by proximity to the resolved origin coordinates.
+    """
+    origin_city = _norm_city(origin_label)
+    if origin_city and _norm_city(candidate.city) == origin_city:
+        return True
+    if origin_point is not None:
+        try:
+            here = GeoPoint(candidate.latitude, candidate.longitude)
+        except ValueError:
+            return False
+        return haversine_km(origin_point, here) <= _SAME_CITY_KM
+    return False
 
 
 def load_domain_destinations(session_factory: sessionmaker) -> list[Destination]:
@@ -593,6 +625,17 @@ def build_agent_set(bundle: WiringBundle) -> AgentSet:
                 f"could not resolve trip origin {getattr(engine_input, 'origin_label', None)!r}"
             )
         candidates = load_domain_destinations(bundle.session_factory)
+        # You can't travel to where you already are: drop the origin city (by name or by being
+        # within the same-city radius of the resolved origin) from the candidate destinations.
+        origin_label = getattr(engine_input, "origin_label", None)
+        before = len(candidates)
+        candidates = [c for c in candidates if not _is_origin(c, origin, origin_label)]
+        if len(candidates) != before:
+            logger.info(
+                "wiring: excluded the origin (%s) from %d candidate destination(s)",
+                origin_label or origin,
+                before - len(candidates),
+            )
         if not candidates:
             return []
         request = ScoutRequest(

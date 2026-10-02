@@ -210,6 +210,44 @@ def test_scout_builds_request_and_selects(monkeypatch):
     assert k == 6
 
 
+def _city(name, country, cc, lat, lon):
+    return Destination(
+        city=name,
+        country=country,
+        latitude=lat,
+        longitude=lon,
+        country_code=cc,
+        features=DestinationFeatures(culture_score=0.9),
+    )
+
+
+def test_scout_excludes_the_origin_city_by_name(monkeypatch):
+    # Starting in Prague must not offer Prague as a destination.
+    prague = _city("Prague", "Czechia", "CZ", 50.0755, 14.4378)
+    vienna = _city("Vienna", "Austria", "AT", 48.2082, 16.3738)
+    monkeypatch.setattr(agent_wiring, "load_domain_destinations", lambda sf: [prague, vienna])
+    scout = _FakeScout()
+    agents = build_agent_set(_bundle(scout_agent=scout))
+    agents.scout(FakeEngineInput(origin_label="Prague", origin_lat=50.08, origin_lon=14.44))
+    _req, _prefs, received, _k = scout.called_with
+    names = {d.city for d in received}
+    assert "Prague" not in names and "Vienna" in names
+
+
+def test_scout_excludes_the_origin_city_by_proximity(monkeypatch):
+    # Even a differently-spelled origin label is excluded when its coords are the same city.
+    prague = _city("Prague", "Czechia", "CZ", 50.0755, 14.4378)
+    vienna = _city("Vienna", "Austria", "AT", 48.2082, 16.3738)
+    monkeypatch.setattr(agent_wiring, "load_domain_destinations", lambda sf: [prague, vienna])
+    scout = _FakeScout()
+    agents = build_agent_set(_bundle(scout_agent=scout))
+    # "Praha" (Czech name) won't name-match, but the coordinates are in Prague.
+    agents.scout(FakeEngineInput(origin_label="Praha", origin_lat=50.08, origin_lon=14.42))
+    _req, _prefs, received, _k = scout.called_with
+    names = {d.city for d in received}
+    assert "Prague" not in names and "Vienna" in names
+
+
 def test_transport_car_builds_car_request():
     ta = _FakeTransportAgent()
     agents = build_agent_set(_bundle(transport_agent=ta))
