@@ -29,7 +29,7 @@ function activeScreen(hasResult: boolean, view: ResultView): string {
 }
 
 function Shell() {
-  const { result, clear } = useTripResult();
+  const { result, request, clear } = useTripResult();
   const [view, setView] = useState<ResultView>("results");
   const mainRef = useRef<HTMLElement>(null);
 
@@ -75,7 +75,9 @@ function Shell() {
             ) : (
               <ResultsPage
                 response={result}
+                request={request}
                 onBack={clear}
+                onPlanAnother={clear}
                 onCompare={canCompare ? () => setView("compare") : undefined}
               />
             )}

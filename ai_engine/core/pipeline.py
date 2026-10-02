@@ -103,6 +103,16 @@ WeatherWindowFn = Callable[["EngineInput", Destination, str, str], WeatherProfil
 # return_date) -> a display-ready flight payload (both legs, airports, booking link) or None.
 # Used only for air mode after a destination is chosen; the fan-out itself is date-naive.
 FlightDetailsFn = Callable[["EngineInput", Destination, str, str], "dict[str, object] | None"]
+# Optional post-selection air-window resolver: (request, chosen destination, duration_days,
+# earliest_depart_date) -> a resolved combined-availability payload, or None to fall back to
+# the transport-derived window. Used only for air mode after a destination is chosen: it
+# searches candidate date windows for one where a REAL round-trip flight is available (both
+# legs) and the destination has accommodation, and returns the matched dates + the flight
+# card. The returned dict carries ``start_date``/``end_date`` (ISO), ``depart_time``,
+# ``quality`` ("real" only when both legs really fly those dates, else "estimated") and the
+# ``flight`` card payload. Preferred over :data:`FlightDetailsFn` when both are wired, because
+# it determines the trip dates rather than only decorating a pre-derived window.
+FlightAvailabilityFn = Callable[["EngineInput", Destination, int, str], "dict[str, object] | None"]
 
 # Default cap on simultaneous agent calls across the whole fan-out. The short list is
 # small (k ≈ 4-6), so this bounds ~4k potential calls to a rate-limit-friendly number.
@@ -133,6 +143,13 @@ class AgentSet:
     #: Optional post-selection flight detail for air mode (both legs + booking link). Not
     #: part of the parallel fan-out; the engine calls it once the destination is chosen.
     flight_details: FlightDetailsFn | None = None
+    #: Optional post-selection air-window resolver (combined transport + accommodation date
+    #: matching, air mode only). When wired, the engine calls it before deriving the trip
+    #: window so the dates come from a window where a real round-trip flight actually exists,
+    #: rather than from the fan-out's cheapest-known fare (which may be an estimate). Takes
+    #: precedence over ``flight_details`` for air mode; ``None`` keeps the transport-derived
+    #: window + ``flight_details`` decoration.
+    air_window: FlightAvailabilityFn | None = None
 
 
 async def gather_agent_outputs(

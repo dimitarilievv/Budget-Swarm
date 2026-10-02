@@ -64,7 +64,9 @@ const INTERESTS: { key: string; label: string; Icon: IconType }[] = [
 const DEFAULT_INTERESTS = ["culture", "food", "tourism"];
 
 interface TripInputFormProps {
-  onResult?: (response: TripResponse) => void;
+  /** Receives the plan and the request that produced it (the request carries budget,
+   * preferences and origin, which the Results page needs but the response omits). */
+  onResult?: (response: TripResponse, request: TripRequestPayload) => void;
   submit?: (payload: TripRequestPayload) => Promise<TripResponse>;
 }
 
@@ -159,7 +161,7 @@ export default function TripInputForm({
     setSubmitError(null);
     try {
       const response = await submit(payload);
-      onResult?.(response);
+      onResult?.(response, payload);
     } catch (err) {
       setSubmitError(
         err instanceof ApiError

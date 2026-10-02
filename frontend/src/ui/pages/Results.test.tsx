@@ -1,100 +1,146 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { vi } from "vitest";
 
-import type { TripResponse } from "@/types/trip";
+import type { TripRequestPayload, TripResponse } from "@/types/trip";
 import ResultsPage from "./Results";
 
-// Keep tests hermetic: the Results page enriches from Wikipedia, so stub the network call.
+// Keep tests hermetic: the hero fetches a city photo from Wikipedia, so stub the network call.
 vi.mock("@/api/wikipedia", () => ({
   fetchDestinationSummary: vi.fn(async () => null),
 }));
+
+function request(): TripRequestPayload {
+  return {
+    budget: 1000,
+    duration_days: 5,
+    travelers: 2,
+    transport_mode: "airplane",
+    preferences: { culture: 1, food: 0.6, tourism: 0.4 },
+    origin_label: "Skopje",
+  };
+}
 
 function fixture(): TripResponse {
   return {
     chosen_plan: {
       destination: {
         id: 7,
-        city: "Budapest",
-        country: "Hungary",
-        latitude: 47.4979,
-        longitude: 19.0402,
+        city: "Istanbul",
+        country: "Turkey",
+        latitude: 41.0082,
+        longitude: 28.9784,
       },
-      overall_score: 0.92,
-      total_cost: 842,
-      start_date: "2026-12-01",
-      end_date: "2026-12-05",
-      cost_breakdown: {
-        transport: 245,
-        accommodation: 320,
-        activities: 277,
-      },
+      overall_score: 0.85,
+      total_cost: 366,
+      start_date: "2026-10-22",
+      end_date: "2026-10-26",
+      cost_breakdown: { transport: 178, accommodation: 188, activities: 0 },
       transport: {
-        mode: "car",
-        cost: 245,
-        duration_min: 375,
-        distance_km: 640,
+        mode: "airplane",
+        cost: 178,
+        duration_min: 175,
+        distance_km: 1276,
         quality_flag: "real",
-        depart_time: "10:15",
+        flight: {
+          origin: { code: "SKP", city: "Skopje", airport: "Skopje Airport" },
+          destination: {
+            code: "SAW",
+            city: "Istanbul",
+            airport: "Istanbul Sabiha Gökçen",
+          },
+          outbound: {
+            date: "2026-10-22",
+            depart_time: "14:20",
+            arrival_time: "15:50",
+            duration_min: 90,
+            stops: 0,
+          },
+          inbound: {
+            date: "2026-10-26",
+            depart_time: "17:15",
+            arrival_time: "18:40",
+            duration_min: 85,
+            stops: 0,
+          },
+          booking_url: "https://www.aviasales.com/search/SKP2210SAW26102",
+        },
       },
       accommodation: {
-        name: "Riverview Boutique",
-        accom_type: "hotel",
-        price_per_night: 80,
-        rating: 4.6,
-        latitude: 47.5,
-        longitude: 19.05,
+        name: "Kadıköy Mona Lisa",
+        accom_type: "entire home",
+        price_per_night: 47,
+        rating: 4.8,
+        latitude: 40.99,
+        longitude: 29.03,
         quality_flag: "cached",
         listing_url: "https://www.airbnb.com/rooms/12345",
-        picture_url: "https://example.com/photo.jpg",
-        review_count: 312,
+        picture_url: "https://example.com/stay.jpg",
+        review_count: 32,
         location_score: 4.8,
-        neighbourhood: "District V",
-        amenities: ["Wi-Fi", "Kitchen", "AC"],
-        accommodates: 4,
+        neighbourhood: "Kadıköy",
+        amenities: ["Wi-Fi", "Kitchen", "AC", "Heating", "Washer"],
+        accommodates: 2,
       },
       itinerary: [
         {
           day_number: 1,
           activities: [
             {
-              name: "St. Stephen's Basilica",
-              category: "culture",
+              // Arrival day: starts 09:00, before the 15:50 landing → a timing conflict.
+              name: "The Hagia Sophia Grand Mosque",
+              category: "religion",
               indoor_outdoor: "indoor",
-              start_time: "10:00",
-              end_time: "11:30",
+              start_time: "09:00",
+              end_time: "11:00",
               was_rescheduled: false,
-              latitude: 47.5008,
-              longitude: 19.0537,
+              latitude: 41.0086,
+              longitude: 28.98,
             },
             {
-              name: "Danube river walk",
-              category: "nature",
-              indoor_outdoor: "outdoor",
-              start_time: "14:00",
-              end_time: "16:00",
-              was_rescheduled: true,
-              latitude: 47.4969,
-              longitude: 19.0489,
+              // Near-duplicate of the first stop → should be deduped away.
+              name: "Hagia Sophia Grand Mosque",
+              category: "religion",
+              indoor_outdoor: "indoor",
+              start_time: "11:00",
+              end_time: "13:00",
+              was_rescheduled: false,
+            },
+            {
+              name: "Istanbul Archaeology Museums",
+              category: "national_museums",
+              indoor_outdoor: "indoor",
+              start_time: "13:00",
+              end_time: "15:00",
+              was_rescheduled: false,
             },
           ],
         },
         {
           day_number: 2,
-          activities: [],
+          activities: [
+            {
+              name: "Basilica Cistern",
+              category: "historic",
+              indoor_outdoor: "outdoor",
+              start_time: "10:00",
+              end_time: "11:30",
+              was_rescheduled: false,
+            },
+          ],
         },
       ],
       weather: [
         {
-          forecast_date: "2026-09-12",
-          temp_min: 14,
+          forecast_date: "2026-10-22",
+          temp_min: 12,
           temp_max: 24,
           precip_prob: 10,
           conditions: "Sunny",
           weather_conflict: false,
         },
         {
-          forecast_date: "2026-09-13",
-          temp_min: 12,
+          forecast_date: "2026-10-23",
+          temp_min: 11,
           temp_max: 18,
           precip_prob: 80,
           conditions: "Rain",
@@ -102,255 +148,169 @@ function fixture(): TripResponse {
         },
       ],
     },
-    ranked_candidates: [],
-    explanation: "Best value among the candidates.",
+    ranked_candidates: [
+      { destination: { city: "Istanbul", country: "Turkey" }, feasible: true },
+      { destination: { city: "Vienna", country: "Austria" }, feasible: true },
+    ],
+    explanation: "Istanbul fits comfortably within your budget.",
     meta: { generated_at: "2026-09-10T00:00:00Z", degraded_sources: [] },
   };
 }
 
-describe("ResultsPage", () => {
-  it("renders the destination, score and estimated total", () => {
-    render(<ResultsPage response={fixture()} />);
+describe("ResultsPage (redesign)", () => {
+  it("renders the hero: city, match score, dates and the estimated total", () => {
+    render(<ResultsPage response={fixture()} request={request()} />);
     expect(
-      screen.getByRole("heading", { name: /Budapest, Hungary/i }),
+      screen.getByRole("heading", { name: /istanbul, turkey/i }),
     ).toBeInTheDocument();
-    expect(screen.getByText("92")).toBeInTheDocument(); // 0.92 -> /100
-    expect(screen.getAllByText(/€842/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/top match · 85\/100/i)).toBeInTheDocument();
+    expect(screen.getByText(/Next best: Vienna/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/€366/).length).toBeGreaterThan(0);
   });
 
-  it("shows the total cost with a per-category breakdown", () => {
-    render(<ResultsPage response={fixture()} />);
-    const card = screen
-      .getByRole("heading", { name: "Total cost" })
-      .closest("section") as HTMLElement;
-    const scoped = within(card);
-    expect(scoped.getByText("Transport")).toBeInTheDocument();
-    expect(scoped.getByText("Accommodation")).toBeInTheDocument();
-    expect(scoped.getByText("Activities")).toBeInTheDocument();
-    expect(scoped.getByText(/€245/)).toBeInTheDocument();
-    expect(scoped.getByText(/€320/)).toBeInTheDocument();
-    expect(scoped.getByText(/€277/)).toBeInTheDocument();
-    expect(scoped.getByText(/€842/)).toBeInTheDocument();
+  it("writes a budget-aware 'why' sentence from the request", () => {
+    render(<ResultsPage response={fixture()} request={request()} />);
+    expect(screen.getByText(/picks best/i)).toBeInTheDocument();
+    expect(screen.getByText(/€634 under/i)).toBeInTheDocument(); // the under-budget clause
+    // €634 left (1000 − 366) surfaces in the budget bar caption.
+    expect(screen.getByText(/€634 left/i)).toBeInTheDocument();
   });
 
-  it("renders transport details with mode, distance, cost and duration", () => {
-    render(<ResultsPage response={fixture()} />);
-    const card = screen
-      .getByRole("heading", { name: "Transport" })
-      .closest("section") as HTMLElement;
-    const scoped = within(card);
-    expect(scoped.getByText(/640 km/)).toBeInTheDocument();
-    expect(scoped.getByText(/€245/)).toBeInTheDocument();
-    expect(scoped.getByText(/6 h 15 min/)).toBeInTheDocument(); // 375 min
-    // The derived travel dates + departure time are shown, not just a price.
-    expect(scoped.getByText(/1 Dec, 10:15/)).toBeInTheDocument(); // departure
-    expect(scoped.getByText(/5 Dec/)).toBeInTheDocument(); // return
+  it("shows the estimated chip when a figure is not fully live", () => {
+    // Accommodation is 'cached' in the fixture, so the chip shows.
+    render(<ResultsPage response={fixture()} request={request()} />);
+    expect(
+      screen.getByText(/some figures estimated/i),
+    ).toBeInTheDocument();
   });
 
-  it("shows the trip date range in the header", () => {
-    render(<ResultsPage response={fixture()} />);
-    expect(screen.getByText("1 Dec – 5 Dec 2026")).toBeInTheDocument();
+  it("hides the estimated chip when everything is live and nothing degraded", () => {
+    const r = fixture();
+    r.chosen_plan.accommodation!.quality_flag = "real";
+    render(<ResultsPage response={r} request={request()} />);
+    expect(screen.queryByText(/some figures estimated/i)).not.toBeInTheDocument();
   });
 
-  it("renders the full flight card for air mode with both legs and a booking link", () => {
-    const res = fixture();
-    res.chosen_plan.transport = {
-      mode: "airplane",
-      cost: 276,
-      duration_min: 270,
-      distance_km: 2094,
-      quality_flag: "real",
-      flight: {
-        origin: { code: "SKP", city: "Skopje", airport: "Skopje Airport" },
-        destination: {
-          code: "IST",
-          city: "Istanbul",
-          airport: "Istanbul Airport",
-        },
-        outbound: {
-          date: "2026-10-07",
-          depart_time: "12:45",
-          arrival_time: "14:30",
-          duration_min: 105,
-          stops: 0,
-        },
-        inbound: {
-          date: "2026-10-11",
-          depart_time: "16:35",
-          arrival_time: "18:45",
-          duration_min: 130,
-          stops: 1,
-        },
-        booking_url: "https://www.aviasales.com/search/SKP0710IST11101",
-      },
-    };
-    render(<ResultsPage response={res} />);
-    expect(screen.getByText(/Departure flight/i)).toBeInTheDocument();
-    expect(screen.getByText(/Return flight/i)).toBeInTheDocument();
-    expect(screen.getAllByText("SKP").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("IST").length).toBeGreaterThan(0);
-    expect(screen.getByText("12:45")).toBeInTheDocument();
-    expect(screen.getByText("18:45")).toBeInTheDocument();
-    const book = screen.getByRole("link", { name: /Reserve Flight/i });
-    expect(book).toHaveAttribute(
+  it("summarises flights, stay and activities", () => {
+    render(<ResultsPage response={fixture()} request={request()} />);
+    expect(screen.getAllByText(/€178/).length).toBeGreaterThan(0); // flights
+    expect(screen.getAllByText(/€188/).length).toBeGreaterThan(0); // stay
+    expect(screen.getByText(/free sights/i)).toBeInTheDocument(); // activities €0
+  });
+
+  it("renders the flights card with both legs and a reserve link", () => {
+    render(<ResultsPage response={fixture()} request={request()} />);
+    expect(screen.getByText("14:20")).toBeInTheDocument();
+    expect(screen.getByText("18:40")).toBeInTheDocument();
+    const reserve = screen.getByRole("link", { name: /reserve flight/i });
+    expect(reserve).toHaveAttribute(
       "href",
-      "https://www.aviasales.com/search/SKP0710IST11101",
+      "https://www.aviasales.com/search/SKP2210SAW26102",
     );
   });
 
-  it("renders accommodation with name, nightly price, nights and rating", () => {
-    render(<ResultsPage response={fixture()} />);
-    const card = screen
-      .getByRole("heading", { name: "Accommodation" })
-      .closest("section") as HTMLElement;
-    const scoped = within(card);
-    expect(scoped.getByText("Riverview Boutique")).toBeInTheDocument();
-    expect(scoped.getByText(/€80/)).toBeInTheDocument(); // nightly price
-    // 320 accommodation spend / 80 per night = 4 nights.
-    expect(scoped.getByText(/4 nights/)).toBeInTheDocument();
-    expect(scoped.getByText(/★ 4.6/)).toBeInTheDocument();
-    // Check-in/check-out match the trip window (1 Dec – 5 Dec).
-    expect(scoped.getByText("Check-in")).toBeInTheDocument();
-    expect(scoped.getByText("Check-out")).toBeInTheDocument();
-    expect(scoped.getByText("1 Dec")).toBeInTheDocument();
-    expect(scoped.getByText("5 Dec")).toBeInTheDocument();
-  });
-
-  it("shows accommodation listing detail and the Airbnb link", () => {
-    render(<ResultsPage response={fixture()} />);
-    const card = screen
-      .getByRole("heading", { name: "Accommodation" })
-      .closest("section") as HTMLElement;
-    const scoped = within(card);
-    // Neighbourhood, review count, amenities and location score come from the listing.
-    expect(scoped.getByText(/District V/)).toBeInTheDocument();
-    expect(scoped.getByText(/Sleeps 4 guests/)).toBeInTheDocument();
-    expect(scoped.getByText(/\(312 reviews\)/)).toBeInTheDocument();
-    expect(scoped.getByText("Wi-Fi")).toBeInTheDocument();
-    expect(scoped.getByText(/Excellent location/)).toBeInTheDocument();
-    // The "View on Airbnb" button links to the real listing.
-    const link = scoped.getByRole("link", { name: /View on Airbnb/i });
+  it("renders the stay with amenities (+N), nights total and an Airbnb link", () => {
+    render(<ResultsPage response={fixture()} request={request()} />);
+    expect(screen.getByText("Kadıköy Mona Lisa")).toBeInTheDocument();
+    expect(screen.getByText("Wi-Fi")).toBeInTheDocument();
+    expect(screen.getByText("+1")).toBeInTheDocument(); // 5 amenities → 4 shown + "+1"
+    expect(screen.getByText(/× 4 nights/i)).toBeInTheDocument(); // 188 / 47 = 4
+    expect(screen.getByText(/★ 4.8/)).toBeInTheDocument();
+    const link = screen.getByRole("link", { name: /view on airbnb/i });
     expect(link).toHaveAttribute("href", "https://www.airbnb.com/rooms/12345");
-    // The card carries no map of its own — it links to the trip map below instead.
+  });
+
+  it("builds a step-by-step journey with fly-out, days and fly-home", () => {
+    render(<ResultsPage response={fixture()} request={request()} />);
+    expect(screen.getByText("Your trip, step by step")).toBeInTheDocument();
     expect(
-      scoped.getByRole("button", { name: /Show on map/i }),
+      screen.getByRole("button", { name: /fly out/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /fly home/i })).toBeInTheDocument();
+    // Day 1 is selected by default → its stops show.
+    expect(
+      screen.getByRole("button", { name: /day 1/i }),
     ).toBeInTheDocument();
   });
 
-  it("shows the itinerary per day with indoor/outdoor and rescheduled markers", () => {
-    render(<ResultsPage response={fixture()} />);
-    expect(screen.getByRole("heading", { name: "Day 1" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Day 2" })).toBeInTheDocument();
-    // Indoor/outdoor tags.
-    expect(screen.getByText("Indoor")).toBeInTheDocument();
-    expect(screen.getByText("Outdoor")).toBeInTheDocument();
-    // The rescheduled activity carries a marker.
-    expect(screen.getByText(/rescheduled/i)).toBeInTheDocument();
-    // An empty day is shown as free.
-    expect(screen.getByText(/free day/i)).toBeInTheDocument();
-  });
-
-  it("renders a weather forecast with temperatures and precipitation", () => {
-    render(<ResultsPage response={fixture()} />);
-    const card = screen
-      .getByRole("heading", { name: /Weather · 2-day forecast/i })
-      .closest("section") as HTMLElement;
-    const scoped = within(card);
-    // Each day shows its high and low temperature separately.
-    expect(scoped.getByText("24°")).toBeInTheDocument(); // day 1 high
-    expect(scoped.getByText("18°")).toBeInTheDocument(); // day 2 high
-    expect(scoped.getByText("12°")).toBeInTheDocument(); // day 2 low
-    // The rainy day surfaces its precipitation chance (percentage, not *100).
-    expect(scoped.getByText("80%")).toBeInTheDocument();
-  });
-
-  it("renders the explanation as 'Why {city}?'", () => {
-    render(<ResultsPage response={fixture()} />);
-    expect(screen.getByText(/why budapest\?/i)).toBeInTheDocument();
+  it("dedupes near-identical stops and cleans category labels", () => {
+    render(<ResultsPage response={fixture()} request={request()} />);
+    // "The Hagia Sophia Grand Mosque" + "Hagia Sophia Grand Mosque" collapse to one row.
     expect(
-      screen.getByText(/best value among the candidates/i),
+      screen.getAllByText(/Hagia Sophia Grand Mosque/).length,
+    ).toBe(1);
+    // national_museums → "Museum" (shown in the stop's "duration · category" line).
+    expect(screen.getByText(/· Museum/)).toBeInTheDocument();
+  });
+
+  it("notes the arrival time on day 1 instead of warning about conflicts", () => {
+    render(<ResultsPage response={fixture()} request={request()} />);
+    // The engine schedules stops after arrival, so day 1 shows an informative arrival note,
+    // not a "move them" warning or a "Check timing" flag.
+    expect(screen.getByText(/you land at SAW at 15:50/i)).toBeInTheDocument();
+    expect(screen.queryByText(/check timing/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/move them/i)).not.toBeInTheDocument();
+  });
+
+  it("shows the flight detail when a flight step is clicked", () => {
+    render(<ResultsPage response={fixture()} request={request()} />);
+    fireEvent.click(screen.getByRole("button", { name: /fly home/i }));
+    expect(screen.getByText(/return flights total/i)).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: /reserve flights/i }),
     ).toBeInTheDocument();
   });
 
-  it("calls onBack from the header and the primary action", () => {
+  it("renders the weather with temperatures and precipitation", () => {
+    render(<ResultsPage response={fixture()} request={request()} />);
+    expect(screen.getByText("24°")).toBeInTheDocument();
+    expect(screen.getByText(/80% rain/i)).toBeInTheDocument();
+  });
+
+  it("shows an honest note instead of an empty weather card", () => {
+    const r = fixture();
+    r.chosen_plan.weather = [];
+    render(<ResultsPage response={r} request={request()} />);
+    expect(screen.getByText(/isn't available this far ahead/i)).toBeInTheDocument();
+    expect(screen.queryByText(/no forecast available/i)).not.toBeInTheDocument();
+  });
+
+  it("calls onBack and onPlanAnother from their buttons", () => {
     const onBack = vi.fn();
-    render(<ResultsPage response={fixture()} onBack={onBack} />);
+    const onPlanAnother = vi.fn();
+    render(
+      <ResultsPage
+        response={fixture()}
+        request={request()}
+        onBack={onBack}
+        onPlanAnother={onPlanAnother}
+      />,
+    );
     fireEvent.click(screen.getByRole("button", { name: /back to planning/i }));
     fireEvent.click(screen.getByRole("button", { name: /plan another trip/i }));
-    expect(onBack).toHaveBeenCalledTimes(2);
+    expect(onBack).toHaveBeenCalledTimes(1);
+    expect(onPlanAnother).toHaveBeenCalledTimes(1);
+  });
+
+  it("works without a request (degrades the budget-dependent bits)", () => {
+    render(<ResultsPage response={fixture()} />);
+    // Still renders the hero and total; no "under your budget" clause without a budget.
+    expect(
+      screen.getByRole("heading", { name: /istanbul, turkey/i }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/under your/i)).not.toBeInTheDocument();
   });
 
   it("degrades gracefully when transport and accommodation are absent", () => {
     const r = fixture();
     r.chosen_plan.transport = null;
     r.chosen_plan.accommodation = null;
-    render(<ResultsPage response={r} />);
+    render(<ResultsPage response={r} request={request()} />);
     expect(
       screen.getByText(/no transport details available/i),
     ).toBeInTheDocument();
     expect(
       screen.getByText(/no accommodation details available/i),
     ).toBeInTheDocument();
-  });
-
-  it("shows a fallback explanation when none is provided", () => {
-    const r = fixture();
-    r.explanation = null;
-    render(<ResultsPage response={r} />);
-    // The section still renders (heading present) with a generic rationale.
-    expect(screen.getByText(/why budapest\?/i)).toBeInTheDocument();
-    expect(screen.getByText(/scored highest/i)).toBeInTheDocument();
-  });
-
-  it("maps the destination, accommodation and located activities in the legend", () => {
-    render(<ResultsPage response={fixture()} />);
-    const card = screen
-      .getByRole("heading", { name: "Trip map" })
-      .closest("section") as HTMLElement;
-    const scoped = within(card);
-    expect(scoped.getByText("City centre")).toBeInTheDocument();
-    expect(scoped.getByText("Accommodation")).toBeInTheDocument();
-    // Activities carry POI coordinates in the fixture, so they appear in the legend.
-    expect(scoped.getByText("Activities")).toBeInTheDocument();
-  });
-
-  it("omits activities from the map legend when they have no coordinates", () => {
-    const r = fixture();
-    for (const day of r.chosen_plan.itinerary) {
-      for (const activity of day.activities) {
-        activity.latitude = null;
-        activity.longitude = null;
-      }
-    }
-    render(<ResultsPage response={r} />);
-    const card = screen
-      .getByRole("heading", { name: "Trip map" })
-      .closest("section") as HTMLElement;
-    expect(within(card).queryByText("Activities")).not.toBeInTheDocument();
-  });
-
-  it("labels transport and accommodation with their data-quality flag", () => {
-    render(<ResultsPage response={fixture()} />);
-    // transport quality_flag: "real" -> "Live"; accommodation: "cached" -> "Cached".
-    expect(screen.getByText("Live")).toBeInTheDocument();
-    expect(screen.getByText("Cached")).toBeInTheDocument();
-  });
-
-  it("surfaces degraded sources with a readable notice", () => {
-    const r = fixture();
-    r.meta.degraded_sources = ["engine:stub", "transport:estimated"];
-    render(<ResultsPage response={r} />);
-    const notice = screen.getByLabelText("Data quality notice");
-    const scoped = within(notice);
-    expect(scoped.getByText(/estimated or cached/i)).toBeInTheDocument();
-    expect(scoped.getByText(/placeholder data/i)).toBeInTheDocument(); // engine:stub
-    expect(scoped.getByText(/Transport — estimated/i)).toBeInTheDocument();
-  });
-
-  it("does not render the data-quality notice when no sources are degraded", () => {
-    render(<ResultsPage response={fixture()} />); // fixture has degraded_sources: []
-    expect(
-      screen.queryByLabelText("Data quality notice"),
-    ).not.toBeInTheDocument();
   });
 });

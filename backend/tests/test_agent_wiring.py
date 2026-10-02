@@ -266,3 +266,157 @@ def test_experience_filters_to_positive_preferences():
     inp = FakeEngineInput(preferences={"nature": 0.9, "food": 0.0})
     agents.experience(inp, _dest())
     assert exp.calls[0]["categories"] == ["nature"]  # food (weight 0) excluded
+
+
+# --- combined transport + accommodation date matching (air mode) ------------
+
+from datetime import date as _date  # noqa: E402
+
+from services.agent_wiring import (  # noqa: E402
+    _cheapest_known_departure,
+    _real_dated_leg,
+    _search_air_window,
+)
+
+from ai_engine.providers.flight import Flight, FlightRequest  # noqa: E402
+
+
+class _FakeAirport:
+    def __init__(self, iata):
+        self.iata = iata
+        self.name = f"{iata} Airport"
+
+
+def _tp_flight(o, d, depart_at):
+    """A real Travelpayouts fare departing at a given ISO timestamp/date."""
+    return Flight(
+        price=99.0,
+        currency="eur",
+        origin=o,
+        destination=d,
+        provider="travelpayouts",
+        duration_min=120,
+        transfers=0,
+        departure_at=depart_at,
+    )
+
+
+def _estimate_flight(o, d):
+    """A distance-estimate fare — no real timestamp; must never count as an available flight."""
+    return Flight(
+        price=120.0, currency="eur", origin=o, destination=d, provider="distance-estimate"
+    )
+
+
+class _FakeFlightService:
+    """Return configured fares by ``(origin, destination, depart_date)``; else an estimate.
+
+    Mirrors the real service: an uncovered pair/date degrades to the distance estimate rather
+    than raising, so the search must reject estimates itself.
+    """
+
+    def __init__(self, fares):
+        self.fares = fares
+        self.calls = []
+
+    def resolve(self, request: FlightRequest):
+        self.calls.append((request.origin, request.destination, request.depart_date))
+        flight = self.fares.get((request.origin, request.destination, request.depart_date))
+        if flight is None:
+            flight = _estimate_flight(request.origin, request.destination)
+
+        class _R:
+            data = flight
+
+        return _R()
+
+
+_SKP = _FakeAirport("SKP")
+_BUD = _FakeAirport("BUD")
+_P = GeoPoint(41.99, 21.42)
+_Q = GeoPoint(47.49, 19.04)
+
+
+def test_real_dated_leg_rejects_an_estimate():
+    svc = _FakeFlightService({})  # every query degrades to an estimate
+    assert _real_dated_leg(svc, _SKP, _BUD, _date(2026, 11, 10), _P, _Q) is None
+
+
+def test_real_dated_leg_rejects_a_fare_on_a_different_day():
+    # TP has a fare for the pair, but it departs 11-12, not the requested 11-10.
+    svc = _FakeFlightService({("SKP", "BUD", "2026-11-10"): _tp_flight("SKP", "BUD", "2026-11-12")})
+    assert _real_dated_leg(svc, _SKP, _BUD, _date(2026, 11, 10), _P, _Q) is None
+
+
+def test_real_dated_leg_accepts_a_fare_on_the_exact_day():
+    svc = _FakeFlightService(
+        {("SKP", "BUD", "2026-11-10"): _tp_flight("SKP", "BUD", "2026-11-10T08:15:00+02:00")}
+    )
+    leg = _real_dated_leg(svc, _SKP, _BUD, _date(2026, 11, 10), _P, _Q)
+    assert leg is not None
+    assert leg["date"] == "2026-11-10"
+    assert leg["depart_time"] == "08:15"
+
+
+def test_search_air_window_matches_a_real_round_trip():
+    # Cheapest-known outbound seeds the search at 11-10; both legs price for real on the
+    # matching 5-day window (out 11-10, back 11-14).
+    fares = {
+        ("SKP", "BUD", None): _tp_flight("SKP", "BUD", "2026-11-10T08:15:00+02:00"),
+        ("SKP", "BUD", "2026-11-10"): _tp_flight("SKP", "BUD", "2026-11-10T08:15:00+02:00"),
+        ("BUD", "SKP", "2026-11-14"): _tp_flight("BUD", "SKP", "2026-11-14T19:40:00+02:00"),
+    }
+    svc = _FakeFlightService(fares)
+    start, end, outbound, inbound, quality = _search_air_window(
+        svc, _SKP, _BUD, _P, _Q, duration_days=5, earliest=_date(2026, 11, 1)
+    )
+    assert quality == "real"
+    assert (start, end) == (_date(2026, 11, 10), _date(2026, 11, 14))
+    assert outbound["depart_time"] == "08:15" and inbound["depart_time"] == "19:40"
+
+
+def test_search_air_window_degrades_to_estimated_when_no_real_window():
+    # No TP fares at all: the search must not fabricate a real window; it degrades to an
+    # estimated window anchored on the earliest sensible departure.
+    svc = _FakeFlightService({})
+    start, end, _outbound, _inbound, quality = _search_air_window(
+        svc, _SKP, _BUD, _P, _Q, duration_days=4, earliest=_date(2026, 11, 1)
+    )
+    assert quality == "estimated"
+    assert start == _date(2026, 11, 1)
+    assert end == _date(2026, 11, 4)
+
+
+def test_search_air_window_short_circuits_an_uncovered_route():
+    # A route with no Travelpayouts coverage must NOT walk the offset grid firing a dated
+    # query per candidate (which, when each 4xx'd and retried, stalled the whole request).
+    # After the cheapest-known probe shows no coverage, only the estimated-window legs are
+    # fetched — a small, bounded number of calls.
+    svc = _FakeFlightService({})
+    _s, _e, _o, _i, quality = _search_air_window(
+        svc, _SKP, _BUD, _P, _Q, duration_days=4, earliest=_date(2026, 11, 1)
+    )
+    assert quality == "estimated"
+    # 1 cheapest-known probe + 2 legs × up to 2 calls each = at most 5; the grid is skipped.
+    assert len(svc.calls) <= 5
+    # No dated probe was fired for any offset-grid departure date (11-08 / 11-15).
+    assert not any(c[2] in {"2026-11-08", "2026-11-15"} for c in svc.calls)
+
+
+def test_search_air_window_requires_both_legs_real():
+    # Outbound is real but the return leg is only an estimate -> not a valid combined window.
+    fares = {
+        ("SKP", "BUD", None): _tp_flight("SKP", "BUD", "2026-11-10T08:15:00+02:00"),
+        ("SKP", "BUD", "2026-11-10"): _tp_flight("SKP", "BUD", "2026-11-10T08:15:00+02:00"),
+        # no ("BUD","SKP", "2026-11-13") entry -> return degrades to an estimate
+    }
+    svc = _FakeFlightService(fares)
+    _s, _e, _o, _i, quality = _search_air_window(
+        svc, _SKP, _BUD, _P, _Q, duration_days=4, earliest=_date(2026, 11, 1)
+    )
+    assert quality == "estimated"  # one real leg is not enough
+
+
+def test_cheapest_known_departure_ignores_estimates():
+    svc = _FakeFlightService({})  # cheapest-known degrades to an estimate
+    assert _cheapest_known_departure(svc, _SKP, _BUD, _P, _Q) is None

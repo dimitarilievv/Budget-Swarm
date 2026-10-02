@@ -13,6 +13,9 @@ export interface MapMarker {
   lon: number;
   label: string;
   kind: MarkerKind;
+  /** When set, the pin shows this number (an itinerary stop's position) instead of a plain dot,
+   * and the map can spotlight it by number on hover. */
+  number?: number;
 }
 
 /** Marker colours, shared with map legends so a pin and its legend swatch always match. */

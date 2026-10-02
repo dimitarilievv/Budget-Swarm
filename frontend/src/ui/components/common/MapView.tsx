@@ -3,14 +3,18 @@
  * OpenStreetMap tiles.
  *
  * It only ever renders markers it is given actual latitude/longitude for (destination centre,
- * accommodation) — it never invents positions — so a caller with sparse data gets an honest,
- * sparse map. The map is initialised lazily in an effect and every Leaflet call is guarded, so
- * it degrades to an empty (but valid) container under jsdom / SSR instead of throwing.
+ * accommodation, located itinerary stops) — it never invents positions — so a caller with
+ * sparse data gets an honest, sparse map. The map is initialised lazily in an effect and every
+ * Leaflet call is guarded, so it degrades to an empty (but valid) container under jsdom / SSR
+ * instead of throwing.
  *
- * A caller can ask the map to spotlight one marker (e.g. the accommodation's "Show on map"):
- * pass a `focus` with the target coordinates and a changing `nonce`. The map keeps every
- * marker in view (re-fits the full set) and just opens the requested marker's popup to pin
- * it — the other markers are not hidden. The `nonce` makes repeated clicks re-trigger it.
+ * A marker carrying a `number` renders as a numbered pin (an itinerary stop), so the pins stay
+ * in sync with a stop list. `highlightNumber` spotlights the matching pin (enlarge + open its
+ * popup) without rebuilding the map, so hovering a row in the list highlights its pin smoothly.
+ *
+ * A caller can also ask the map to spotlight one marker by coordinate (e.g. the accommodation's
+ * "Show on map"): pass a `focus` with the target coordinates and a changing `nonce`. The map
+ * keeps every marker in view (re-fits the full set) and just opens the requested marker's popup.
  */
 import { useEffect, useRef } from "react";
 import L from "leaflet";
@@ -24,6 +28,20 @@ function pin(color: string): L.DivIcon {
     iconSize: [16, 16],
     iconAnchor: [8, 8],
     popupAnchor: [0, -8],
+  });
+}
+
+/** A numbered pin for an itinerary stop; `hot` enlarges + rings it for the hover highlight. */
+function numberedPin(color: string, n: number, hot = false): L.DivIcon {
+  const size = hot ? 32 : 26;
+  const ring = hot ? "box-shadow:0 0 0 6px rgba(15,148,136,.25),0 2px 6px rgba(15,23,42,.35);" : "box-shadow:0 1px 4px rgba(15,23,42,.45);";
+  const bg = hot ? "#0b7a70" : color;
+  return L.divIcon({
+    className: "",
+    html: `<span style="display:grid;place-items:center;width:${size}px;height:${size}px;border-radius:9999px;background:${bg};color:#fff;font:700 ${hot ? 13 : 11}px system-ui,sans-serif;border:2px solid #fff;${ring}">${n}</span>`,
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
+    popupAnchor: [0, -size / 2],
   });
 }
 
@@ -43,6 +61,8 @@ interface MapViewProps {
   singleZoom?: number;
   /** When set, recenter on these coordinates and open the matching marker's popup. */
   focus?: MapFocus | null;
+  /** Spotlight the numbered pin with this number (e.g. the hovered stop row), or clear it. */
+  highlightNumber?: number | null;
 }
 
 const _key = (lat: number, lon: number) =>
@@ -54,10 +74,14 @@ export default function MapView({
   ariaLabel,
   singleZoom = 13,
   focus = null,
+  highlightNumber = null,
 }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | undefined>(undefined);
   const markerByKey = useRef<Map<string, L.Marker>>(new Map());
+  const markerByNumber = useRef<Map<number, { marker: L.Marker; color: string }>>(
+    new Map(),
+  );
   const pointsRef = useRef<L.LatLngTuple[]>([]);
 
   useEffect(() => {
@@ -66,6 +90,7 @@ export default function MapView({
 
     let map: L.Map | undefined;
     const byKey = new Map<string, L.Marker>();
+    const byNumber = new Map<number, { marker: L.Marker; color: string }>();
     const points: L.LatLngTuple[] = [];
     try {
       map = L.map(el, {
@@ -79,13 +104,14 @@ export default function MapView({
       }).addTo(map);
 
       for (const m of markers) {
-        const marker = L.marker([m.lat, m.lon], {
-          icon: pin(MARKER_COLOR[m.kind]),
-          title: m.label,
-        })
+        const color = MARKER_COLOR[m.kind];
+        const icon =
+          m.number != null ? numberedPin(color, m.number) : pin(color);
+        const marker = L.marker([m.lat, m.lon], { icon, title: m.label })
           .addTo(map)
           .bindPopup(m.label);
         byKey.set(_key(m.lat, m.lon), marker);
+        if (m.number != null) byNumber.set(m.number, { marker, color });
         points.push([m.lat, m.lon]);
       }
 
@@ -100,6 +126,7 @@ export default function MapView({
 
     mapRef.current = map;
     markerByKey.current = byKey;
+    markerByNumber.current = byNumber;
     pointsRef.current = points;
 
     return () => {
@@ -110,6 +137,7 @@ export default function MapView({
       }
       mapRef.current = undefined;
       markerByKey.current = new Map();
+      markerByNumber.current = new Map();
       pointsRef.current = [];
     };
   }, [markers, singleZoom]);
@@ -132,6 +160,25 @@ export default function MapView({
       /* map not ready (jsdom / hidden) — nothing to spotlight */
     }
   }, [focus, singleZoom]);
+
+  // Hover highlight: enlarge the matching numbered pin and reset the others, without a rebuild.
+  useEffect(() => {
+    if (markerByNumber.current.size === 0) return;
+    try {
+      for (const [n, { marker, color }] of markerByNumber.current) {
+        const hot = n === highlightNumber;
+        marker.setIcon(numberedPin(color, n, hot));
+        if (hot) {
+          marker.openPopup();
+          marker.setZIndexOffset(1000);
+        } else {
+          marker.setZIndexOffset(0);
+        }
+      }
+    } catch {
+      /* map not ready (jsdom / hidden) */
+    }
+  }, [highlightNumber]);
 
   return (
     <div

@@ -73,6 +73,7 @@ from ai_engine.providers.attraction import (
     overpass_http_transport,
 )
 from ai_engine.providers.flight import (
+    Flight,
     FlightRequest,
     FlightService,
     TravelpayoutsProvider,
@@ -257,6 +258,15 @@ def _flight_leg(
     except Exception as exc:  # noqa: BLE001 - a missing leg just yields no times
         logger.info("wiring: flight leg %s->%s failed (%s)", from_air.iata, to_air.iata, exc)
         return None
+    return _leg_payload(f, date_iso)
+
+
+def _leg_payload(f: Flight, date_iso: str) -> dict:
+    """Shape a resolved :class:`Flight` into the UI leg dict (times, duration, stops).
+
+    ``depart_time``/``arrival_time`` are derived from the fare's ``departure_at`` timestamp
+    (arrival = departure + duration); an estimate with no timestamp simply has no clock times.
+    """
     depart_time: str | None = None
     arrival_time: str | None = None
     if f.departure_at:
@@ -274,6 +284,194 @@ def _flight_leg(
         "duration_min": int(f.duration_min) if f.duration_min is not None else None,
         "stops": int(f.transfers) if f.transfers is not None else None,
     }
+
+
+# Candidate departure offsets (days after the earliest sensible departure) probed for a
+# real round trip in the combined-availability search. Travelpayouts caches only a short
+# forward window per city-pair, so the cheapest-known fare's own date (the seed) is the best
+# real shot; these are a few extra near-term probes tried only when the route has real
+# coverage. Kept short on purpose — a route with no coverage is short-circuited before the
+# grid runs (see :func:`_search_air_window`), so the post-selection search stays fast.
+_AIR_SEARCH_OFFSET_DAYS = (0, 7, 14)
+
+
+def _real_dated_leg(
+    flight_service: FlightService,
+    from_air,
+    to_air,
+    target: date,
+    from_point: GeoPoint,
+    to_point: GeoPoint,
+) -> dict | None:
+    """Resolve one leg **only if a real fare departs on ``target``**, else ``None``.
+
+    Unlike :func:`_flight_leg` (which retries the cheapest-known fare so the card always
+    shows times), this is strict: it accepts the leg only when Travelpayouts returns a real
+    fare whose ``departure_at`` falls on the requested date. A distance estimate, a missing
+    timestamp, or a fare on a different day all count as "no real flight for this date" — so
+    the availability search never treats an estimate as a confirmed flight.
+    """
+    try:
+        result = flight_service.resolve(
+            FlightRequest(
+                origin=from_air.iata,
+                destination=to_air.iata,
+                origin_point=from_point,
+                destination_point=to_point,
+                depart_date=target.isoformat(),
+            )
+        )
+        f = result.data
+    except Exception as exc:  # noqa: BLE001 - a failed probe is just "no flight this date"
+        logger.info(
+            "wiring: dated leg %s->%s on %s failed (%s)", from_air.iata, to_air.iata, target, exc
+        )
+        return None
+    if f.provider != TravelpayoutsProvider.name or not f.departure_at:
+        return None  # distance estimate / no timestamp -> not a real, dated flight
+    try:
+        departs = datetime.fromisoformat(f.departure_at).date()
+    except ValueError:
+        return None
+    if departs != target:
+        return None  # the cheapest fare TP has for this pair departs another day, not this one
+    return _leg_payload(f, target.isoformat())
+
+
+def _cheapest_known_departure(
+    flight_service: FlightService,
+    from_air,
+    to_air,
+    from_point: GeoPoint,
+    to_point: GeoPoint,
+) -> date | None:
+    """The date of the cheapest-known **real** fare for a pair (``None`` if only an estimate).
+
+    Used to seed the search with the fare Travelpayouts is most likely to actually have, so
+    a covered route matches on its first probe instead of walking the whole offset grid.
+    """
+    try:
+        f = flight_service.resolve(
+            FlightRequest(
+                origin=from_air.iata,
+                destination=to_air.iata,
+                origin_point=from_point,
+                destination_point=to_point,
+            )
+        ).data
+    except Exception as exc:  # noqa: BLE001 - degrade to "no seed date"
+        logger.info("wiring: cheapest-known %s->%s failed (%s)", from_air.iata, to_air.iata, exc)
+        return None
+    if f.provider != TravelpayoutsProvider.name or not f.departure_at:
+        return None
+    try:
+        return datetime.fromisoformat(f.departure_at).date()
+    except ValueError:
+        return None
+
+
+def _search_air_window(
+    flight_service: FlightService,
+    o_air,
+    d_air,
+    o_point: GeoPoint,
+    d_point: GeoPoint,
+    *,
+    duration_days: int,
+    earliest: date,
+) -> tuple[date, date, dict | None, dict | None, str]:
+    """Find a date window where a **real** round trip exists; else degrade honestly.
+
+    Runs a **cheapest-known probe first** (one call): if Travelpayouts has no real fare for
+    this pair at all — an uncovered route or an unsupported IATA code (e.g. a 4xx) — dated
+    queries for specific days cannot do better, so the offset grid is skipped and the window
+    degrades to ``estimated`` immediately. This keeps the search fast (a couple of calls)
+    instead of hammering the API with dozens of doomed, retried requests, which is what
+    previously stalled air-mode requests until the client timed out.
+
+    When the route *is* covered, it probes the seed date (the cheapest fare's own date) and a
+    few near-term offsets, requiring a real outbound on the departure date **and** a real
+    inbound on the matching return date (``duration_days`` on the ground). The first window
+    that prices both legs for real wins (``quality="real"``); otherwise it degrades to a
+    best-effort window anchored on the seed, flagged ``estimated`` — never claiming a real
+    flight it could not find.
+
+    Returns ``(start, end, outbound_leg, inbound_leg, quality)``.
+    """
+    span = max(0, duration_days - 1)
+    seed = _cheapest_known_departure(flight_service, o_air, d_air, o_point, d_point)
+
+    if seed is None:
+        # No real Travelpayouts coverage for this pair (only an estimate, or a 4xx for an
+        # unsupported code): don't walk the grid — degrade straight to an estimated window.
+        logger.info(
+            "wiring: no Travelpayouts coverage for %s<->%s; estimated window from %s",
+            o_air.iata,
+            d_air.iata,
+            earliest,
+        )
+        return _estimated_window(
+            flight_service, o_air, d_air, o_point, d_point, span=span, anchor=earliest
+        )
+
+    candidates: list[date] = [seed] if seed >= earliest else []
+    candidates.extend(earliest + timedelta(days=off) for off in _AIR_SEARCH_OFFSET_DAYS)
+
+    seen: set[date] = set()
+    for depart in candidates:
+        if depart in seen:
+            continue
+        seen.add(depart)
+        outbound = _real_dated_leg(flight_service, o_air, d_air, depart, o_point, d_point)
+        if outbound is None:
+            continue
+        ret = depart + timedelta(days=span)
+        inbound = _real_dated_leg(flight_service, d_air, o_air, ret, d_point, o_point)
+        if inbound is None:
+            continue
+        logger.info(
+            "wiring: matched real round-trip window %s..%s (%s<->%s)",
+            depart,
+            ret,
+            o_air.iata,
+            d_air.iata,
+        )
+        return depart, ret, outbound, inbound, "real"
+
+    # Covered route but no both-legs-real window among the probes: degrade, anchored on the
+    # seed (a real outbound date) when it is not too soon, else the minimum lead time.
+    anchor = seed if seed >= earliest else earliest
+    logger.info(
+        "wiring: no real round-trip window among probes for %s<->%s; estimated from %s",
+        o_air.iata,
+        d_air.iata,
+        anchor,
+    )
+    return _estimated_window(
+        flight_service, o_air, d_air, o_point, d_point, span=span, anchor=anchor
+    )
+
+
+def _estimated_window(
+    flight_service: FlightService,
+    o_air,
+    d_air,
+    o_point: GeoPoint,
+    d_point: GeoPoint,
+    *,
+    span: int,
+    anchor: date,
+) -> tuple[date, date, dict | None, dict | None, str]:
+    """Build a best-effort ``estimated`` window anchored on ``anchor``.
+
+    The legs are resolved with :func:`_flight_leg` (which shows real times when any are
+    available, else none). Flagged ``estimated`` because a real both-legs window on the exact
+    dates could not be confirmed.
+    """
+    ret = anchor + timedelta(days=span)
+    outbound = _flight_leg(flight_service, o_air, d_air, anchor.isoformat(), o_point, d_point)
+    inbound = _flight_leg(flight_service, d_air, o_air, ret.isoformat(), d_point, o_point)
+    return anchor, ret, outbound, inbound, "estimated"
 
 
 def _aviasales_url(
@@ -514,12 +712,17 @@ def build_agent_set(bundle: WiringBundle) -> AgentSet:
             end_date=end_date,
         )
 
-    def flight_details(
-        engine_input: object, dest: Destination, start_date: str, end_date: str
+    def air_window(
+        engine_input: object, dest: Destination, duration_days: int, earliest_iso: str
     ) -> dict | None:
-        # Post-selection flight detail for the air card: resolve both real legs (outbound on
-        # the depart date, inbound on the return date), the origin/destination airports, and
-        # a real Aviasales booking deep link. Returns None when the airports can't be resolved.
+        # Combined transport + accommodation date matching for air mode (post-selection):
+        # search candidate windows for one where a REAL round-trip flight exists (both legs on
+        # the exact dates) and the destination has accommodation, and return the matched dates
+        # + the flight card. The chosen destination already satisfies the optimizer's hard
+        # accommodation requirement, and the Inside Airbnb dataset carries no per-date calendar
+        # (availability is date-independent — a city with listings is bookable for any window),
+        # so the search only has to vary the flight dates. Returns None when the airports can't
+        # be resolved, so the engine degrades to the transport-derived window.
         origin = _origin_point(engine_input)
         if origin is None:
             return None
@@ -528,18 +731,36 @@ def build_agent_set(bundle: WiringBundle) -> AgentSet:
         d_air = bundle.airport_index.nearest_airport(dest_point)
         if o_air is None or d_air is None:
             return None
+        try:
+            earliest = date.fromisoformat(earliest_iso)
+        except ValueError:
+            earliest = datetime.now().date()
         travelers = int(getattr(engine_input, "travelers", 1) or 1)
         origin_city = getattr(engine_input, "origin_label", None) or o_air.name
+
+        start, end, outbound, inbound, quality = _search_air_window(
+            bundle.flight_service,
+            o_air,
+            d_air,
+            origin,
+            dest_point,
+            duration_days=duration_days,
+            earliest=earliest,
+        )
         return {
-            "origin": {"code": o_air.iata, "city": origin_city, "airport": o_air.name},
-            "destination": {"code": d_air.iata, "city": dest.city, "airport": d_air.name},
-            "outbound": _flight_leg(
-                bundle.flight_service, o_air, d_air, start_date, origin, dest_point
-            ),
-            "inbound": _flight_leg(
-                bundle.flight_service, d_air, o_air, end_date, dest_point, origin
-            ),
-            "booking_url": _aviasales_url(o_air.iata, d_air.iata, start_date, end_date, travelers),
+            "start_date": start.isoformat(),
+            "end_date": end.isoformat(),
+            "depart_time": (outbound or {}).get("depart_time"),
+            "quality": quality,
+            "flight": {
+                "origin": {"code": o_air.iata, "city": origin_city, "airport": o_air.name},
+                "destination": {"code": d_air.iata, "city": dest.city, "airport": d_air.name},
+                "outbound": outbound,
+                "inbound": inbound,
+                "booking_url": _aviasales_url(
+                    o_air.iata, d_air.iata, start.isoformat(), end.isoformat(), travelers
+                ),
+            },
         }
 
     return AgentSet(
@@ -549,7 +770,7 @@ def build_agent_set(bundle: WiringBundle) -> AgentSet:
         experience=experience,
         weather=weather,
         weather_window=weather_window,
-        flight_details=flight_details,
+        air_window=air_window,
     )
 
 
