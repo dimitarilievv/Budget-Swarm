@@ -191,11 +191,13 @@ describe("ResultsPage (redesign)", () => {
     expect(screen.queryByText(/some figures estimated/i)).not.toBeInTheDocument();
   });
 
-  it("summarises flights, stay and activities", () => {
+  it("summarises flights and stay, omitting the activities tile when free", () => {
     render(<ResultsPage response={fixture()} request={request()} />);
     expect(screen.getAllByText(/€178/).length).toBeGreaterThan(0); // flights
     expect(screen.getAllByText(/€188/).length).toBeGreaterThan(0); // stay
-    expect(screen.getByText(/free sights/i)).toBeInTheDocument(); // activities €0
+    // Activities are free sights (€0), so the summary tile is omitted entirely.
+    expect(screen.queryByText("Activities")).not.toBeInTheDocument();
+    expect(screen.queryByText(/free sights/i)).not.toBeInTheDocument();
   });
 
   it("renders the flights card with both legs and a reserve link", () => {

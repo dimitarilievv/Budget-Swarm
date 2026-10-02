@@ -492,8 +492,15 @@ export default function ResultsPage({
           />
         </div>
 
-        {/* Summary strip */}
-        <div className="grid grid-cols-2 gap-3 min-[900px]:grid-cols-[1.6fr_1fr_1fr_1fr]">
+        {/* Summary strip — the Activities tile only appears when activities actually cost
+            something; free sights total €0, so we omit the tile rather than show "€0". */}
+        <div
+          className={`grid grid-cols-2 gap-3 ${
+            costs.activities > 0
+              ? "min-[900px]:grid-cols-[1.6fr_1fr_1fr_1fr]"
+              : "min-[900px]:grid-cols-[1.6fr_1fr_1fr]"
+          }`}
+        >
           <div
             style={{ ...CARD, borderRadius: 16, padding: "18px 20px" }}
             className="col-span-2 flex flex-col gap-2.5 min-[900px]:col-span-1"
@@ -540,16 +547,14 @@ export default function ResultsPage({
                 : "No stay"
             }
           />
-          <Stat
-            color={C.amber}
-            label="Activities"
-            value={euro(costs.activities)}
-            sub={
-              costs.activities === 0
-                ? `${sightCount} free sights`
-                : `${sightCount} sights`
-            }
-          />
+          {costs.activities > 0 && (
+            <Stat
+              color={C.amber}
+              label="Activities"
+              value={euro(costs.activities)}
+              sub={`${sightCount} sights`}
+            />
+          )}
         </div>
 
         {/* Weather */}
