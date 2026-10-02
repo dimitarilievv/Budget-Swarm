@@ -24,10 +24,11 @@ import type {
   TripRequestPayload,
   TripResponse,
 } from "@/types/trip";
-import MapView from "@/ui/components/common/MapView";
+import MapView, { type MapFocus } from "@/ui/components/common/MapView";
 import type { MapMarker } from "@/ui/components/common/mapMarkers";
 import {
   IconArrowRight,
+  IconLocation,
   IconBus,
   IconCar,
   IconPlane,
@@ -385,6 +386,22 @@ export default function ResultsPage({
 
   const photo = useCityPhoto(`${destination.city}`);
 
+  // Journey selection + a "show the stay on the map" spotlight are lifted here so the stay card's
+  // "Show on map" button can jump to the journey's day map and open the accommodation pin.
+  const [journeySel, setJourneySel] = useState<Selection>(0);
+  const [stayFocus, setStayFocus] = useState<MapFocus | null>(null);
+
+  const showAccommodationOnMap = () => {
+    const a = plan.accommodation;
+    if (a?.latitude != null && a.longitude != null) {
+      setJourneySel(0); // ensure a day view (with its map) is showing, not a flight step
+      setStayFocus({ lat: a.latitude, lon: a.longitude, nonce: Date.now() });
+    }
+    document
+      .getElementById(JOURNEY_ID)
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
   return (
     <div
       style={{
@@ -539,11 +556,21 @@ export default function ResultsPage({
         {/* Flights + stay */}
         <div className="grid gap-4 min-[900px]:grid-cols-2">
           <TransportSummaryCard transport={plan.transport} cost={costs.transport} />
-          <StayCard accommodation={plan.accommodation} nights={nights} />
+          <StayCard
+            accommodation={plan.accommodation}
+            nights={nights}
+            onShowOnMap={showAccommodationOnMap}
+          />
         </div>
 
         {/* Journey */}
-        <Journey plan={plan} days={days} />
+        <Journey
+          plan={plan}
+          days={days}
+          sel={journeySel}
+          onSelect={setJourneySel}
+          focus={stayFocus}
+        />
 
         {/* Footer actions */}
         <div className="flex flex-wrap items-center justify-between gap-3 px-1 pt-1">
@@ -1060,9 +1087,11 @@ function stopsLabel(stops?: number | null): string {
 function StayCard({
   accommodation,
   nights,
+  onShowOnMap,
 }: {
   accommodation?: PlanAccommodation | null;
   nights: number;
+  onShowOnMap?: () => void;
 }) {
   if (!accommodation) {
     return (
@@ -1078,6 +1107,7 @@ function StayCard({
   const amenities = a.amenities ?? [];
   const total = a.price_per_night * nights;
   const live = a.quality_flag === "real";
+  const hasCoords = a.latitude != null && a.longitude != null;
 
   return (
     <div
@@ -1168,16 +1198,28 @@ function StayCard({
               {euro(a.price_per_night)} × {nights} nights
             </div>
           </div>
-          {a.listing_url && (
-            <a
-              href={a.listing_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={btnStyle(C.airbnb)}
-            >
-              View on Airbnb <IconArrowRight className="h-4 w-4" />
-            </a>
-          )}
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {hasCoords && onShowOnMap && (
+              <button
+                type="button"
+                onClick={onShowOnMap}
+                style={btnStyle("#fff", C.ink, `1px solid ${C.line}`)}
+              >
+                <IconLocation className="h-4 w-4 text-teal-600" />
+                Show on map
+              </button>
+            )}
+            {a.listing_url && (
+              <a
+                href={a.listing_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={btnStyle(C.teal)}
+              >
+                Reserve accommodation <IconArrowRight className="h-4 w-4" />
+              </a>
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -1190,8 +1232,23 @@ function StayCard({
 
 type Selection = number | "out" | "back";
 
-function Journey({ plan, days }: { plan: ChosenPlan; days: DayModel[] }) {
-  const [sel, setSel] = useState<Selection>(days.length ? 0 : "out");
+/** DOM id of the journey section, so the stay card's "Show on map" can scroll to its day map. */
+const JOURNEY_ID = "trip-journey";
+
+function Journey({
+  plan,
+  days,
+  sel,
+  onSelect,
+  focus,
+}: {
+  plan: ChosenPlan;
+  days: DayModel[];
+  sel: Selection;
+  onSelect: (s: Selection) => void;
+  focus?: MapFocus | null;
+}) {
+  const setSel = onSelect;
   const [hov, setHov] = useState<number | null>(null);
   const transport = plan.transport;
   const flight = transport?.flight ?? null;
@@ -1231,7 +1288,7 @@ function Journey({ plan, days }: { plan: ChosenPlan; days: DayModel[] }) {
   const day = isDay ? days[sel] : null;
 
   return (
-    <div className="flex flex-col gap-4">
+    <div id={JOURNEY_ID} className="flex flex-col gap-4 scroll-mt-4">
       <span style={{ fontSize: 18, fontWeight: 700 }}>
         Your trip, step by step
       </span>
@@ -1318,6 +1375,7 @@ function Journey({ plan, days }: { plan: ChosenPlan; days: DayModel[] }) {
           index={sel as number}
           hov={hov}
           setHov={setHov}
+          focus={focus}
         />
       ) : (
         <FlightDetail
@@ -1335,12 +1393,14 @@ function DayView({
   index,
   hov,
   setHov,
+  focus,
 }: {
   plan: ChosenPlan;
   day: DayModel;
   index: number;
   hov: number | null;
   setHov: (n: number | null) => void;
+  focus?: MapFocus | null;
 }) {
   const markers = useMemo(() => dayMarkers(plan, day), [plan, day]);
   return (
@@ -1452,6 +1512,7 @@ function DayView({
         <MapView
           markers={markers}
           highlightNumber={hov}
+          focus={focus}
           ariaLabel={`Map of day ${index + 1} stops in ${plan.destination.city}`}
           className="h-[320px] w-full overflow-hidden rounded-2xl ring-1 ring-slate-200 min-[900px]:h-full"
         />

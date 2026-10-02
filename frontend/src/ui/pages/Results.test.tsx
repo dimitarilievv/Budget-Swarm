@@ -209,15 +209,20 @@ describe("ResultsPage (redesign)", () => {
     );
   });
 
-  it("renders the stay with amenities (+N), nights total and an Airbnb link", () => {
+  it("renders the stay with amenities (+N), nights total, reserve + map buttons", () => {
     render(<ResultsPage response={fixture()} request={request()} />);
     expect(screen.getByText("Kadıköy Mona Lisa")).toBeInTheDocument();
     expect(screen.getByText("Wi-Fi")).toBeInTheDocument();
     expect(screen.getByText("+1")).toBeInTheDocument(); // 5 amenities → 4 shown + "+1"
     expect(screen.getByText(/× 4 nights/i)).toBeInTheDocument(); // 188 / 47 = 4
     expect(screen.getByText(/★ 4.8/)).toBeInTheDocument();
-    const link = screen.getByRole("link", { name: /view on airbnb/i });
+    // The booking button is now "Reserve accommodation" (still the real Airbnb listing link).
+    const link = screen.getByRole("link", { name: /reserve accommodation/i });
     expect(link).toHaveAttribute("href", "https://www.airbnb.com/rooms/12345");
+    // The stay has coordinates, so it offers a "Show on map" button.
+    expect(
+      screen.getByRole("button", { name: /show on map/i }),
+    ).toBeInTheDocument();
   });
 
   it("builds a step-by-step journey with fly-out, days and fly-home", () => {
