@@ -207,6 +207,8 @@ class ItineraryActivity(BaseModel):
     # map each activity. Optional: an activity without a located POI is simply not plotted.
     latitude: float | None = None
     longitude: float | None = None
+    # OSM opening-hours string where the POI is tagged (sparse); None when unknown.
+    opening_hours: str | None = None
 
 
 class ItineraryDay(BaseModel):

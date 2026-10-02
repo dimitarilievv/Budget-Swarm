@@ -418,6 +418,7 @@ def test_itinerary_schedules_around_arrival_and_departure():
                 indoor_outdoor=_io("indoor"),
                 latitude=None,
                 longitude=None,
+                opening_hours=None,
             ),
         )
 

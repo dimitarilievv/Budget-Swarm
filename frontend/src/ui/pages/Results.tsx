@@ -210,6 +210,7 @@ interface Stop {
   lat: number | null;
   lon: number | null;
   rescheduled: boolean;
+  hours: string | null;
 }
 
 function toStops(activities: ItineraryActivity[]): Stop[] {
@@ -230,6 +231,7 @@ function toStops(activities: ItineraryActivity[]): Stop[] {
       lat: a.latitude ?? null,
       lon: a.longitude ?? null,
       rescheduled: a.was_rescheduled,
+      hours: a.opening_hours ?? null,
     });
   }
   return stops;
@@ -1508,6 +1510,15 @@ function DayView({
                   <div style={{ fontSize: 12, color: C.muted }}>
                     {[dur, it.category].filter(Boolean).join(" · ")}
                   </div>
+                  {it.hours && (
+                    <div
+                      className="truncate"
+                      style={{ fontSize: 11, color: C.muted }}
+                      title={`Opening hours: ${it.hours}`}
+                    >
+                      🕒 {it.hours}
+                    </div>
+                  )}
                 </div>
                 <span
                   style={{

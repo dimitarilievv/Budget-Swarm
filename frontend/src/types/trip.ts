@@ -117,6 +117,8 @@ export interface ItineraryActivity {
   /** POI coordinates (from the Attraction). Optional — an unlocated activity isn't mapped. */
   latitude?: number | null;
   longitude?: number | null;
+  /** OSM opening-hours string where the POI is tagged (sparse); null when unknown. */
+  opening_hours?: string | null;
 }
 
 export interface ItineraryDay {

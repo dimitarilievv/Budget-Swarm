@@ -200,6 +200,7 @@ class ExperienceAgent:
             longitude=poi.longitude,
             indoor_outdoor=classify_activity(tokens, hint=poi.indoor_outdoor),
             est_duration_minutes=estimate_duration_minutes(tokens),
+            opening_hours=getattr(poi, "opening_hours", None),
             description=self._enrich(poi) if enrich else None,
             quality_flag=quality,
         )

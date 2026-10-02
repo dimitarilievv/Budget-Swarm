@@ -669,6 +669,8 @@ def _itinerary(plan: OptimalPlan, bounds: _ScheduleBounds | None = None) -> list
                 # (an activity without a located POI is simply not plotted).
                 "latitude": item.activity.latitude,
                 "longitude": item.activity.longitude,
+                # OSM opening hours where the POI is tagged (sparse; None otherwise).
+                "opening_hours": item.activity.opening_hours,
             }
             for (item, start_min, end_min, _shifted) in adjusted
         ]

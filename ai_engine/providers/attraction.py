@@ -111,6 +111,7 @@ class Activity:
     popularity: int | None = None  # OTM `rate` (1–7) where available
     source_id: str | None = None  # OTM xid or OSM type/id
     wikidata: str | None = None  # carried for BS-065 enrichment
+    opening_hours: str | None = None  # OSM `opening_hours` tag where present (sparse)
 
 
 AttractionTransport = Callable[[AttractionRequest], Any]
@@ -266,6 +267,9 @@ class OverpassProvider(AttractionProvider):
                         f"{el.get('type')}/{el.get('id')}" if el.get("id") is not None else None
                     ),
                     wikidata=tags.get("wikidata"),
+                    # OSM opening_hours (e.g. "Tu-Su 09:00-17:00") where the POI is tagged; many
+                    # are not, so this is honestly sparse — shown only when present.
+                    opening_hours=(tags.get("opening_hours") or "").strip() or None,
                 )
             )
         if not activities:
