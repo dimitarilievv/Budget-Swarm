@@ -551,7 +551,7 @@ export default function ResultsPage({
         </div>
 
         {/* Weather */}
-        <WeatherStrip weather={plan.weather} />
+        <WeatherStrip weather={plan.weather} startDate={plan.start_date} />
 
         {/* Flights + stay */}
         <div className="grid gap-4 min-[900px]:grid-cols-2">
@@ -811,8 +811,22 @@ function weatherColor(day: PlanWeatherDay): string {
   return "#f5b301";
 }
 
-function WeatherStrip({ weather }: { weather: PlanWeatherDay[] }) {
+// The live forecast only reaches ~16 days out; beyond that the backend serves typical
+// conditions averaged from recent years, which the UI labels honestly.
+const FORECAST_HORIZON_DAYS = 14;
+
+function WeatherStrip({
+  weather,
+  startDate,
+}: {
+  weather: PlanWeatherDay[];
+  startDate?: string | null;
+}) {
   const hasForecast = weather.length > 0;
+  const daysOut = startDate
+    ? Math.ceil((new Date(startDate).getTime() - Date.now()) / 86400000)
+    : null;
+  const typical = daysOut != null && daysOut > FORECAST_HORIZON_DAYS;
   return (
     <div
       style={{ ...CARD, padding: "18px 22px" }}
@@ -821,10 +835,33 @@ function WeatherStrip({ weather }: { weather: PlanWeatherDay[] }) {
       <div className="flex flex-col gap-1.5">
         <span style={{ fontSize: 15, fontWeight: 700 }}>Weather</span>
         {hasForecast ? (
-          <LiveBadge text="Live forecast" />
+          typical ? (
+            <>
+              <span
+                style={{
+                  alignSelf: "start",
+                  padding: "3px 9px",
+                  borderRadius: 7,
+                  background: C.warnBg,
+                  color: C.warnInk,
+                  fontSize: 11,
+                  fontWeight: 600,
+                }}
+              >
+                Typical conditions
+              </span>
+              <span style={{ fontSize: 12, color: C.muted, lineHeight: 1.45 }}>
+                Your trip is too far ahead for a live forecast — these are typical
+                conditions for the dates, averaged from recent years, so the actual
+                weather can differ.
+              </span>
+            </>
+          ) : (
+            <LiveBadge text="Live forecast" />
+          )
         ) : (
           <span style={{ fontSize: 12, color: C.muted, lineHeight: 1.45 }}>
-            A live forecast isn't available this far ahead yet — check again
+            A live forecast isn't available for these dates yet — check again
             closer to departure.
           </span>
         )}

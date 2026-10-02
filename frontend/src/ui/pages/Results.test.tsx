@@ -276,8 +276,33 @@ describe("ResultsPage (redesign)", () => {
     const r = fixture();
     r.chosen_plan.weather = [];
     render(<ResultsPage response={r} request={request()} />);
-    expect(screen.getByText(/isn't available this far ahead/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/isn't available for these dates yet/i),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/no forecast available/i)).not.toBeInTheDocument();
+  });
+
+  it("labels far-future weather as typical conditions with a caveat", () => {
+    const r = fixture();
+    // 30 days out — beyond the live-forecast horizon.
+    r.chosen_plan.start_date = new Date(Date.now() + 30 * 86400000)
+      .toISOString()
+      .slice(0, 10);
+    render(<ResultsPage response={r} request={request()} />);
+    // "Typical conditions" appears on both the badge and the caveat.
+    expect(screen.getAllByText(/typical conditions/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/averaged from recent years/i)).toBeInTheDocument();
+    // The days still render (temperatures present), just labelled as typical.
+    expect(screen.getByText("24°")).toBeInTheDocument();
+  });
+
+  it("labels near-term weather as a live forecast", () => {
+    const r = fixture();
+    r.chosen_plan.start_date = new Date(Date.now() + 5 * 86400000)
+      .toISOString()
+      .slice(0, 10);
+    render(<ResultsPage response={r} request={request()} />);
+    expect(screen.getByText(/live forecast/i)).toBeInTheDocument();
   });
 
   it("calls onBack and onPlanAnother from their buttons", () => {

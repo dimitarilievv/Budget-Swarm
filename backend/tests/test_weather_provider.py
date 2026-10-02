@@ -225,3 +225,84 @@ def test_open_meteo_transport_maps_5xx_to_unavailable():
     with pytest.raises(ProviderUnavailable):
         transport(REQ)
     client.close()
+
+
+# --- climatology fallback (far-future windows) ------------------------------
+
+from datetime import date  # noqa: E402
+
+from ai_engine.providers.weather import (  # noqa: E402
+    ClimatologyProvider,
+    open_meteo_archive_transport,
+)
+
+
+def _archive_body(days):
+    """A fake Open-Meteo archive body: list of (iso, tmax, tmin, precip, wind, code)."""
+    return {
+        "daily": {
+            "time": [d[0] for d in days],
+            "temperature_2m_max": [d[1] for d in days],
+            "temperature_2m_min": [d[2] for d in days],
+            "precipitation_sum": [d[3] for d in days],
+            "windspeed_10m_max": [d[4] for d in days],
+            "weathercode": [d[5] for d in days],
+        }
+    }
+
+
+def test_climatology_averages_recent_years_into_typical_days():
+    # Two historical years for 22–23 Oct; the provider averages them onto the future window.
+    body = _archive_body(
+        [
+            ("2024-10-22", 20.0, 12.0, 0.0, 10.0, 1),  # dry
+            ("2024-10-23", 18.0, 11.0, 5.0, 12.0, 63),  # rain
+            ("2025-10-22", 22.0, 14.0, 2.0, 8.0, 2),  # dry-ish
+            ("2025-10-23", 16.0, 10.0, 8.0, 15.0, 63),  # rain
+        ]
+    )
+    provider = ClimatologyProvider(lambda req: body)
+    req = WeatherRequest(
+        center=THESSALONIKI,
+        destination="Istanbul",
+        start_date="2026-10-22",
+        end_date="2026-10-23",
+    )
+    profiles = provider.fetch(req).data
+    assert [p.date for p in profiles] == ["2026-10-22", "2026-10-23"]
+    # 22 Oct: avg max (20+22)/2 = 21; no year hit ≥1mm rain on the 22nd? 2025 had 2mm → 50%.
+    assert profiles[0].temp_max == 21.0
+    assert profiles[0].precip_prob == 50  # 1 of 2 years ≥ 1mm
+    # 23 Oct: both years rained → 100% and a wet, conflicting day.
+    assert profiles[1].precip_prob == 100
+    assert profiles[1].weather_conflict is True
+
+
+def test_weather_service_falls_back_to_climatology_for_far_future():
+    def forecast_fails(_req):
+        raise ProviderUnavailable("beyond the forecast horizon")
+
+    climo = ClimatologyProvider(
+        lambda req: _archive_body([("2024-10-22", 19.0, 12.0, 0.0, 9.0, 1)])
+    )
+    service = WeatherService(primary=OpenMeteoProvider(forecast_fails), climatology=climo)
+    req = WeatherRequest(center=THESSALONIKI, start_date="2026-10-22", end_date="2026-10-22")
+    result = service.resolve(req)
+    assert result.provider == "climatology"
+    assert result.quality_flag == QUALITY_ESTIMATED
+    assert len(result.data) == 1 and result.data[0].date == "2026-10-22"
+
+
+def test_archive_transport_requests_recent_years_window():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["request"] = request
+        return httpx.Response(200, json=_archive_body([("2020-10-22", 20.0, 12.0, 0.0, 9.0, 1)]))
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    transport = open_meteo_archive_transport(client=client, years=5, now=lambda: date(2026, 1, 1))
+    transport(WeatherRequest(center=THESSALONIKI, start_date="2026-10-22", end_date="2026-10-26"))
+    params = captured["request"].url.params
+    assert params["start_date"] == "2021-10-22"  # 2026 − 5 years
+    assert params["end_date"] == "2025-10-26"  # last full year

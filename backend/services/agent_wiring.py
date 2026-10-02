@@ -86,8 +86,10 @@ from ai_engine.providers.route import (
     ors_http_transport,
 )
 from ai_engine.providers.weather import (
+    ClimatologyProvider,
     OpenMeteoProvider,
     WeatherService,
+    open_meteo_archive_transport,
     open_meteo_http_transport,
 )
 from ai_engine.utils.airports import AirportIndex
@@ -549,7 +551,12 @@ def build_bundle(settings: object, session_factory: sessionmaker) -> WiringBundl
     experience_agent = ExperienceAgent(attraction_service)
 
     weather_agent = WeatherAgent(
-        WeatherService(primary=OpenMeteoProvider(open_meteo_http_transport()))
+        WeatherService(
+            primary=OpenMeteoProvider(open_meteo_http_transport()),
+            # Trips further out than the ~16-day forecast fall back to typical conditions
+            # averaged from recent years' real observations (flagged estimated in the UI).
+            climatology=ClimatologyProvider(open_meteo_archive_transport()),
+        )
     )
 
     bundle = WiringBundle(
