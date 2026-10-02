@@ -296,6 +296,9 @@ class TripPlanEngine:
                     nights=nights,
                     duration_days=duration_days,
                     preferences=engine_input.preferences,
+                    # The travel window is known here, so the re-plan can skip venues closed
+                    # on each day's weekday (opening hours respected where tagged).
+                    start_weekday=window.start_date.weekday(),
                 )
             )
         except Exception as exc:  # noqa: BLE001 - never let refinement break a valid plan

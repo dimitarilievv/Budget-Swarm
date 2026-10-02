@@ -63,6 +63,12 @@ _TAKE_BASE_VALUE = 1
 # One HH:MM-HH:MM clock range (hyphen or en/em dash), anywhere in an OSM-style string.
 _TIME_RANGE = re.compile(r"(\d{1,2}):(\d{2})\s*[-–—]\s*(\d{1,2}):(\d{2})")
 
+# Weekday tokens (0=Monday … 6=Sunday), matching the OSM opening_hours day selectors.
+_WEEKDAY_INDEX = {"mo": 0, "tu": 1, "we": 2, "th": 3, "fr": 4, "sa": 5, "su": 6}
+_WDAY_RANGE = re.compile(r"(mo|tu|we|th|fr|sa|su)\s*[-–—]\s*(mo|tu|we|th|fr|sa|su)")
+_WDAY_SINGLE = re.compile(r"\b(mo|tu|we|th|fr|sa|su)\b")
+_CLOSED = re.compile(r"\b(off|closed)\b")
+
 
 def parse_opening_hours(text: str | None) -> tuple[tuple[int, int], ...] | None:
     """Parse opening hours into the open ``(open_minute, close_minute)`` windows, or ``None``.
@@ -93,6 +99,73 @@ def parse_opening_hours(text: str | None) -> tuple[tuple[int, int], ...] | None:
         logger.debug("scheduler: no parseable opening hours in %r; leaving unconstrained", text)
         return None
     return tuple(sorted(ranges))
+
+
+def _weekdays_in_selector(rule: str) -> set[int] | None:
+    """The weekday indices a rule's day selector covers, or ``None`` when it has none.
+
+    Expands ranges cyclically (``Mo-Fr`` → 0–4, ``Sa-Su`` → 5–6) and lists (``Mo,We``),
+    so a rule with no weekday token applies to every day (``None``).
+    """
+    days: set[int] = set()
+    found = False
+    for m in _WDAY_RANGE.finditer(rule):
+        found = True
+        start, end = _WEEKDAY_INDEX[m.group(1)], _WEEKDAY_INDEX[m.group(2)]
+        d = start
+        for _ in range(7):
+            days.add(d)
+            if d == end:
+                break
+            d = (d + 1) % 7
+    for m in _WDAY_SINGLE.finditer(_WDAY_RANGE.sub(" ", rule)):
+        found = True
+        days.add(_WEEKDAY_INDEX[m.group(1)])
+    return days if found else None
+
+
+def opening_windows_for_weekday(
+    text: str | None, weekday: int
+) -> tuple[tuple[int, int], ...] | None:
+    """Open ``(open, close)`` windows for a given ``weekday`` (0=Mon…6=Sun).
+
+    Extends :func:`parse_opening_hours` with OSM **day-of-week** rules so a venue closed on
+    a weekday is not scheduled that day. Returns ``None`` when nothing weekday-relevant is
+    parseable (leave the activity unconstrained — "respected where available"), an **empty
+    tuple** when the venue is explicitly closed that weekday (or that day is omitted while
+    other days are listed), or the open windows otherwise. Rules are ``;``-separated; a
+    later rule that matches the day overrides an earlier one (so ``24/7; Mo off`` closes
+    Monday). Day-of-week only — month/week/holiday selectors are ignored.
+    """
+    if not text or not text.strip():
+        return None
+    saw_usable = False  # any rule carried times or an explicit closure
+    saw_dayscoped_open = False  # a weekday-scoped opening rule exists (→ omitted days closed)
+    state: tuple[tuple[int, int], ...] | None = None  # last rule matching this weekday wins
+    for rule in text.lower().split(";"):
+        rule = rule.strip()
+        if not rule:
+            continue
+        if "24/7" in rule or "24/365" in rule:
+            times: tuple[tuple[int, int], ...] = ((0, _MINUTES_PER_DAY),)
+        else:
+            times = parse_opening_hours(rule) or ()
+        is_closed = not times and bool(_CLOSED.search(rule))
+        if not times and not is_closed:
+            continue  # no schedulable information (e.g. a stray comment)
+        saw_usable = True
+        wdays = _weekdays_in_selector(rule)
+        if wdays is not None and times:
+            saw_dayscoped_open = True
+        if wdays is None or weekday in wdays:
+            state = () if is_closed else times
+    if not saw_usable:
+        return None
+    if state is not None:
+        return state
+    # The weekday was named by no rule: closed when other days were explicitly opened,
+    # otherwise unknown (leave unconstrained).
+    return () if saw_dayscoped_open else None
 
 
 @dataclass(frozen=True)
@@ -213,12 +286,18 @@ class ActivityScheduler:
         *,
         weights: Sequence[float] | None = None,
         weather_conflicts: Sequence[bool] | None = None,
+        start_weekday: int | None = None,
     ) -> Schedule:
         """Select and place activities across ``days`` under the scheduling constraints.
 
         ``weights`` (optional) is the per-activity value used to prefer the most
         worthwhile activities when time is scarce; omitted means every activity is
         equally valuable (maximize how many are done).
+
+        ``start_weekday`` (optional, 0=Mon…6=Sun) is the weekday of day 0; when given, each
+        activity's opening hours are read **per weekday**, so a venue closed on a day's
+        weekday is not placed there (it moves to an open day, or drops if none fits). ``None``
+        keeps the weekday-agnostic behaviour (clock hours only).
 
         ``weather_conflicts`` (optional) is one flag per day (aligned to the day index,
         length ``days``) marking a day unfit for outdoor activities (WeatherAgent's
@@ -255,7 +334,12 @@ class ActivityScheduler:
         # Weather-naive baseline: what the plan would be ignoring the forecast. This is
         # the reference the reschedule is measured against (technical-doc §12).
         base_status, base_place = self._solve_once(
-            activities, days, weights, forbidden_outdoor_days=frozenset(), hint=None
+            activities,
+            days,
+            weights,
+            forbidden_outdoor_days=frozenset(),
+            hint=None,
+            start_weekday=start_weekday,
         )
 
         if not weather_active:
@@ -266,7 +350,12 @@ class ActivityScheduler:
         # Reshuffle: forbid outdoor activities on conflict days and re-solve, warm-started
         # from the baseline so unaffected items stay put and only the forced moves change.
         status, place = self._solve_once(
-            activities, days, weights, forbidden_outdoor_days=conflict_days, hint=base_place
+            activities,
+            days,
+            weights,
+            forbidden_outdoor_days=conflict_days,
+            hint=base_place,
+            start_weekday=start_weekday,
         )
         base_days = {ai: day for ai, (day, _s, _e) in base_place.items()}
         logger.info("scheduler: replanned around %d weather-conflict day(s)", len(conflict_days))
@@ -280,6 +369,7 @@ class ActivityScheduler:
         *,
         forbidden_outdoor_days: frozenset[int],
         hint: dict[int, tuple[int, int, int]] | None,
+        start_weekday: int | None = None,
     ) -> tuple[SolveStatus, dict[int, tuple[int, int, int]]]:
         """Build and solve one scheduling model; return the status and placement map.
 
@@ -306,29 +396,36 @@ class ActivityScheduler:
             take[ai] = take_var
             is_outdoor = activity.indoor_outdoor == IndoorOutdoor.OUTDOOR
 
-            # The open windows this activity's duration can actually fit into today,
-            # from its opening hours (possibly several — a lunch-break split).
-            windows = self._activity_windows(activity, dur)
-            if dur > budget or not windows:
-                # Cannot be placed on any day (too long, or no open window fits it).
+            # The open windows this activity's duration can fit into, computed **per day**
+            # (weekday-aware when start_weekday is known): a venue closed on a day's weekday
+            # has no window there, so it cannot be placed that day.
+            per_day_windows = [
+                self._windows_for_day(activity, dur, d, start_weekday) for d in range(days)
+            ]
+            if dur > budget or not any(per_day_windows):
+                # Cannot be placed on any day (too long, or no open window on any day).
                 model.Add(take_var == 0)
                 logger.debug(
-                    "scheduler: %r cannot be placed (dur=%d, windows=%s, budget=%d)",
+                    "scheduler: %r cannot be placed (dur=%d, budget=%d, no open window)",
                     activity.name,
                     dur,
-                    windows,
                     budget,
                 )
                 continue
 
-            lo = min(w[0] for w in windows)
-            hi = max(w[1] for w in windows)
             day_presence = []
             for d in range(days):
+                windows = per_day_windows[d]
                 pres = model.NewBoolVar(f"pres_{ai}_{d}")
-                # Weather constraint: an outdoor activity may not sit on a conflict day.
-                if is_outdoor and d in forbidden_outdoor_days:
+                # Forbidden when the venue is shut that weekday (no window), or — for an
+                # outdoor activity — the day is a weather conflict.
+                if not windows or (is_outdoor and d in forbidden_outdoor_days):
                     model.Add(pres == 0)
+                    presence[(ai, d)] = pres
+                    day_presence.append(pres)
+                    continue
+                lo = min(w[0] for w in windows)
+                hi = max(w[1] for w in windows)
                 start = model.NewIntVar(lo, hi - dur, f"start_{ai}_{d}")
                 end = model.NewIntVar(lo + dur, hi, f"end_{ai}_{d}")
                 interval = model.NewOptionalIntervalVar(start, dur, end, pres, f"iv_{ai}_{d}")
@@ -392,7 +489,8 @@ class ActivityScheduler:
         # Warm start from a prior placement so a re-solve keeps unaffected items put.
         if hint:
             for ai, (day, start_minute, _end) in hint.items():
-                if (ai, day) in presence:
+                # Only hint a day the activity can actually be placed on (open that weekday).
+                if (ai, day) in presence and (ai, day) in starts:
                     model.AddHint(presence[(ai, day)], 1)
                     model.AddHint(starts[(ai, day)], start_minute)
                     model.AddHint(take[ai], 1)
@@ -437,6 +535,26 @@ class ActivityScheduler:
         policy = self._policy
         parsed = parse_opening_hours(activity.opening_hours)
         raw = parsed if parsed is not None else ((policy.day_start_minute, policy.day_end_minute),)
+        clipped = ((max(policy.day_start_minute, o), min(policy.day_end_minute, c)) for o, c in raw)
+        return [(lo, hi) for lo, hi in clipped if hi - lo >= dur]
+
+    def _windows_for_day(
+        self, activity: Activity, dur: int, day_index: int, start_weekday: int | None
+    ) -> list[tuple[int, int]]:
+        """The open windows for this activity on day ``day_index`` that can fit ``dur``.
+
+        Weekday-agnostic (clock hours only) when ``start_weekday`` is ``None``; otherwise
+        the activity's opening hours are read for that day's actual weekday, so a venue
+        closed that weekday yields no window (``[]``) and cannot be placed there.
+        """
+        if start_weekday is None:
+            return self._activity_windows(activity, dur)
+        policy = self._policy
+        weekday = (start_weekday + day_index) % 7
+        parsed = opening_windows_for_weekday(activity.opening_hours, weekday)
+        if parsed is not None and len(parsed) == 0:
+            return []  # explicitly closed this weekday
+        raw = parsed if parsed else ((policy.day_start_minute, policy.day_end_minute),)
         clipped = ((max(policy.day_start_minute, o), min(policy.day_end_minute, c)) for o, c in raw)
         return [(lo, hi) for lo, hi in clipped if hi - lo >= dur]
 

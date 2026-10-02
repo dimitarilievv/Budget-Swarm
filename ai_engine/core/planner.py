@@ -132,6 +132,10 @@ class PlanRequest:
     quality_penalty_weight: float = _DEFAULT_QUALITY_PENALTY_WEIGHT
     transport_share_soft_cap: float | None = None
     scheduling_policy: SchedulingPolicy | None = None
+    #: Weekday of the trip's first day (0=Mon…6=Sun), when the travel window is known.
+    #: Lets the scheduler skip a venue on a day its opening hours mark closed. ``None``
+    #: keeps weekday-agnostic scheduling (clock hours only).
+    start_weekday: int | None = None
 
     def __post_init__(self) -> None:
         if self.budget < 0:
@@ -355,7 +359,11 @@ class Planner:
         conflicts = _aligned_conflicts(chosen.weather, days)
         weights = activity_values(chosen.activities, request.preferences)
         schedule = scheduler.schedule(
-            chosen.activities, days, weights=weights, weather_conflicts=conflicts
+            chosen.activities,
+            days,
+            weights=weights,
+            weather_conflicts=conflicts,
+            start_weekday=request.start_weekday,
         )
 
         # 4. Extract the optimal plan with the plan's *realized* cost and experience —
