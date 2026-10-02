@@ -27,6 +27,7 @@ from api.routes import get_trip_engine, get_trip_persister, get_trip_store
 from db.repositories import DestinationRepository
 from db.session import get_engine, ping
 from errors import NoPlanAvailableError as ApiNoPlanAvailableError
+from errors import ValidationError as ApiValidationError
 from fastapi import FastAPI
 from sqlalchemy.orm import sessionmaker
 
@@ -50,10 +51,20 @@ class TranslatingTripEngine:
         self._engine = engine
 
     def generate_trip(self, request: object) -> object:
-        from ai_engine.core.planner import NoPlanAvailableError as EngineNoPlanAvailableError
+        from ai_engine.core.planner import (
+            NoPlanAvailableError as EngineNoPlanAvailableError,
+        )
+        from ai_engine.core.planner import (
+            OriginUnresolvedError as EngineOriginUnresolvedError,
+        )
 
         try:
             return self._engine.generate_trip(request)
+        except EngineOriginUnresolvedError as exc:
+            # An unresolvable start is bad input, not an infeasible trip → 422 on the origin
+            # field so the client can correct it in place (checked first: it subclasses the
+            # generic no-plan error below).
+            raise ApiValidationError(str(exc), field="origin_label") from exc
         except EngineNoPlanAvailableError as exc:
             raise ApiNoPlanAvailableError(str(exc)) from exc
 

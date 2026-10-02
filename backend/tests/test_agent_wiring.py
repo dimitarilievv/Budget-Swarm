@@ -25,7 +25,7 @@ from ai_engine.agents.transport_agent import (
     FlightTripRequest,
     PublicTransportTripRequest,
 )
-from ai_engine.core.planner import NoPlanAvailableError
+from ai_engine.core.planner import NoPlanAvailableError, OriginUnresolvedError
 from ai_engine.domain import (
     Destination,
     DestinationFeatures,
@@ -188,11 +188,15 @@ def test_origin_point_none_when_unresolvable(monkeypatch):
 # --- AgentSet callables -----------------------------------------------------
 
 
-def test_scout_raises_no_plan_without_origin(monkeypatch):
+def test_scout_raises_origin_unresolved_for_a_bad_start(monkeypatch):
+    # An origin that can't be geocoded (unknown/misspelled city) is a bad-input signal, not a
+    # generic no-plan — the message names the offending label.
     monkeypatch.setattr(agent_wiring, "_geocode_latlon", lambda label: None)
     agents = build_agent_set(_bundle())
-    with pytest.raises(NoPlanAvailableError):
-        agents.scout(FakeEngineInput())
+    with pytest.raises(OriginUnresolvedError) as excinfo:
+        agents.scout(FakeEngineInput(origin_label="Zzqxville"))
+    assert "Zzqxville" in str(excinfo.value)
+    assert isinstance(excinfo.value, NoPlanAvailableError)  # still a no-plan subclass
 
 
 def test_scout_builds_request_and_selects(monkeypatch):

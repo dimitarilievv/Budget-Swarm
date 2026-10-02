@@ -101,6 +101,15 @@ class NoPlanAvailableError(Exception):
     """
 
 
+class OriginUnresolvedError(NoPlanAvailableError):
+    """The trip's origin could not be resolved to a real location (bad/unknown city).
+
+    A subclass of :class:`NoPlanAvailableError` so any generic no-plan handling still catches
+    it, but distinct so the backend can map it to a precise ``422`` field error (bad input)
+    rather than the ``503`` "no plan within constraints" outcome.
+    """
+
+
 @dataclass(frozen=True)
 class PlanRequest:
     """Everything the planner needs to score, solve, and schedule one request.

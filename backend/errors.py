@@ -92,6 +92,18 @@ class NoPlanAvailableError(AppError):
     status_code = status.HTTP_503_SERVICE_UNAVAILABLE
 
 
+class ValidationError(AppError):
+    """A request value failed a semantic check beyond the schema (→ 422).
+
+    Used for checks the Pydantic schema can't express — e.g. an origin city that exists as a
+    non-empty string but can't be resolved to a real location — so the client gets a precise,
+    field-tagged message instead of a generic failure.
+    """
+
+    code = VALIDATION_ERROR
+    status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
+
+
 def _validation_field(loc: tuple) -> str | None:
     """Derive the offending field name from a Pydantic error ``loc``.
 

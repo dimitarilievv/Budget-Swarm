@@ -78,6 +78,21 @@ def test_translating_engine_converts_engine_no_plan_to_api_error():
         TranslatingTripEngine(_RaisingEngine()).generate_trip(object())
 
 
+def test_translating_engine_maps_origin_unresolved_to_validation_error():
+    from ai_engine.core.planner import OriginUnresolvedError
+    from errors import ValidationError as ApiValidationError
+
+    class _BadOrigin:
+        def generate_trip(self, request):
+            raise OriginUnresolvedError("We couldn't find a starting location called 'Zzz'.")
+
+    # A bad start is a 422 field error (origin_label), not a 503 no-plan.
+    with pytest.raises(ApiValidationError) as excinfo:
+        TranslatingTripEngine(_BadOrigin()).generate_trip(object())
+    assert excinfo.value.field == "origin_label"
+    assert excinfo.value.status_code == 422
+
+
 def test_translating_engine_passes_through_results_and_other_errors():
     class _OkEngine:
         def generate_trip(self, request):

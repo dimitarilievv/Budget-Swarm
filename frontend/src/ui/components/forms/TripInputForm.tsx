@@ -163,14 +163,17 @@ export default function TripInputForm({
       const response = await submit(payload);
       onResult?.(response, payload);
     } catch (err) {
-      setSubmitError(
+      const apiErr =
         err instanceof ApiError
           ? err
-          : new ApiError(
-              "INTERNAL_ERROR",
-              "Something went wrong. Please try again.",
-            ),
-      );
+          : new ApiError("INTERNAL_ERROR", "Something went wrong. Please try again.");
+      // A field validation error (e.g. an unresolvable start city) belongs inline on the
+      // form so the user can fix it in place, not on the full-screen error state.
+      if (apiErr.code === "VALIDATION_ERROR" && apiErr.field === "origin_label") {
+        setErrors((prev) => ({ ...prev, origin: apiErr.message }));
+        return;
+      }
+      setSubmitError(apiErr);
     } finally {
       setSubmitting(false);
     }

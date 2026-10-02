@@ -56,7 +56,7 @@ from ai_engine.agents.transport_agent import (
 from ai_engine.agents.weather_agent import WeatherAgent
 from ai_engine.core.engine import TripPlanEngine
 from ai_engine.core.pipeline import AgentSet
-from ai_engine.core.planner import NoPlanAvailableError
+from ai_engine.core.planner import OriginUnresolvedError
 from ai_engine.domain import (
     Accommodation,
     Activity,
@@ -619,10 +619,13 @@ def build_agent_set(bundle: WiringBundle) -> AgentSet:
     def scout(engine_input: object) -> Sequence[Destination]:
         origin = _origin_point(engine_input)
         if origin is None:
-            # Without an origin the coarse distance/cost estimate is meaningless; fail
-            # as "no plan" (→ 503) rather than ranking on a fabricated location.
-            raise NoPlanAvailableError(
-                f"could not resolve trip origin {getattr(engine_input, 'origin_label', None)!r}"
+            # The origin couldn't be resolved to a real place (unknown/misspelled city, or the
+            # geocoder was unreachable). Signal it as a bad-input error (→ 422) with a helpful
+            # message, not a generic "no plan" — the user needs to fix the start, not the budget.
+            label = getattr(engine_input, "origin_label", None)
+            raise OriginUnresolvedError(
+                f"We couldn't find a starting location called {label!r}. "
+                "Check the spelling, or use your current location."
             )
         candidates = load_domain_destinations(bundle.session_factory)
         # You can't travel to where you already are: drop the origin city (by name or by being
