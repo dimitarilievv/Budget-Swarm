@@ -174,6 +174,23 @@ describe("ComparisonPage (city cards)", () => {
     expect(screen.queryByText(/under budget/i)).not.toBeInTheDocument();
   });
 
+  it("shows only the top 5 destinations by score", () => {
+    const many = fixture(
+      Array.from({ length: 8 }, (_, i) =>
+        candidate({
+          city: `City${i}`,
+          country: "X",
+          overall_score: 0.9 - i * 0.1, // City0 highest … City7 lowest
+        }),
+      ),
+    );
+    render(<ComparisonPage response={many} request={request()} />);
+    expect(screen.getAllByText(/^#\d$/)).toHaveLength(5); // five ranked cards
+    expect(screen.getByTestId("city-City0")).toBeInTheDocument(); // top
+    expect(screen.getByTestId("city-City4")).toBeInTheDocument(); // 5th
+    expect(screen.queryByTestId("city-City5")).not.toBeInTheDocument(); // 6th dropped
+  });
+
   it("shows an empty state when there are no candidates", () => {
     render(<ComparisonPage response={fixture([])} request={request()} />);
     expect(

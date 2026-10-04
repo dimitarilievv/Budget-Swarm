@@ -34,6 +34,10 @@ const C = {
 };
 const HATCH = "repeating-linear-gradient(135deg,#f0d9a0 0 4px,#fff6e0 4px 8px)";
 
+// Compare shows only the strongest options so the row stays scannable (and the cards don't
+// shrink below a readable width); the rest of the ranking isn't useful to eyeball here.
+const MAX_COMPARE_CITIES = 5;
+
 const pct = (v?: number | null): number =>
   v == null ? 0 : Math.round(Math.max(0, Math.min(1, v)) * 100);
 
@@ -86,9 +90,9 @@ export default function ComparisonPage({
 
   const cities = useMemo(
     () =>
-      [...response.ranked_candidates].sort(
-        (a, b) => (b.overall_score ?? 0) - (a.overall_score ?? 0),
-      ),
+      [...response.ranked_candidates]
+        .sort((a, b) => (b.overall_score ?? 0) - (a.overall_score ?? 0))
+        .slice(0, MAX_COMPARE_CITIES),
     [response.ranked_candidates],
   );
   // The recommended card is the destination we actually planned (falls back to the top score).
