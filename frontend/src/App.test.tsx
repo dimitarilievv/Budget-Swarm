@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { vi } from "vitest";
 
 import App from "./App";
@@ -42,7 +42,7 @@ describe("App", () => {
       screen.getByRole("heading", { name: /tell us your budget/i }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /budget\s*swarm/i }),
+      screen.getByRole("button", { name: /budgetswarm home/i }),
     ).toBeVisible();
   });
 
@@ -53,14 +53,13 @@ describe("App", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders the navigation bar", () => {
+  it("renders the home header nav", () => {
     render(<App />);
-    expect(
-      screen.getByRole("button", { name: /plan trip/i }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /profile/i }),
-    ).toBeInTheDocument();
+    // The home page's sticky header (banner) has anchor nav links and a Profile pill.
+    const header = within(screen.getByRole("banner"));
+    expect(header.getByRole("link", { name: /plan trip/i })).toBeInTheDocument();
+    expect(header.getByRole("link", { name: /how it works/i })).toBeInTheDocument();
+    expect(header.getByRole("button", { name: /profile/i })).toBeInTheDocument();
   });
 
   it("navigates Home → Results → Compare → back after generating a trip", async () => {

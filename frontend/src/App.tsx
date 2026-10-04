@@ -54,11 +54,15 @@ function Shell() {
       >
         Skip to content
       </a>
-      <Navbar
-        onHome={clear}
-        onCompare={canCompare ? () => setView("compare") : undefined}
-        compareActive={view === "compare"}
-      />
+      {/* The shared chrome wraps the Results/Compare views; the Home page brings its own
+          sticky anchor header + teal footer, so it renders full-bleed without them. */}
+      {result && (
+        <Navbar
+          onHome={clear}
+          onCompare={canCompare ? () => setView("compare") : undefined}
+          compareActive={view === "compare"}
+        />
+      )}
       <main
         id="main"
         ref={mainRef}
@@ -88,7 +92,7 @@ function Shell() {
           <Home />
         )}
       </main>
-      <Footer />
+      {result && <Footer />}
     </div>
   );
 }
