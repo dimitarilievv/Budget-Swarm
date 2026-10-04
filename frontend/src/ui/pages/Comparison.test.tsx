@@ -1,23 +1,24 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { vi } from "vitest";
 
-import type { RankedCandidate, TripResponse } from "@/types/trip";
+import type {
+  RankedCandidate,
+  TripRequestPayload,
+  TripResponse,
+} from "@/types/trip";
 import ComparisonPage from "./Comparison";
 
 function candidate(
-  over: Partial<RankedCandidate> & {
-    city: string;
-    country: string;
-  },
+  over: Partial<RankedCandidate> & { city: string; country: string },
 ): RankedCandidate {
   const { city, country, ...rest } = over;
   return {
     destination: { city, country },
-    total_cost: 800,
+    total_cost: 390,
     overall_score: 0.8,
     transport_cost: 150,
     accommodation_cost: 240,
-    experience_score: 0.8,
+    experience_score: 1.0,
     weather_score: 0.7,
     preference_score: 0.9,
     feasible: true,
@@ -36,8 +37,10 @@ function fixture(candidates: RankedCandidate[]): TripResponse {
         longitude: 19.0402,
       },
       overall_score: 0.92,
-      total_cost: 780,
-      cost_breakdown: { transport: 151, accommodation: 240, activities: 389 },
+      total_cost: 391,
+      start_date: "2026-10-22",
+      end_date: "2026-10-26",
+      cost_breakdown: { transport: 151, accommodation: 240, activities: 0 },
       transport: null,
       accommodation: null,
       itinerary: [],
@@ -49,113 +52,141 @@ function fixture(candidates: RankedCandidate[]): TripResponse {
   };
 }
 
-function threeCandidates(): TripResponse {
+function request(): TripRequestPayload {
+  return {
+    budget: 1000,
+    duration_days: 5,
+    travelers: 2,
+    transport_mode: "airplane",
+    preferences: { culture: 1 },
+    origin_label: "Skopje",
+  };
+}
+
+function threeCities(): TripResponse {
   return fixture([
     candidate({
       city: "Budapest",
       country: "Hungary",
-      total_cost: 780,
       overall_score: 0.92,
       transport_cost: 151,
       accommodation_cost: 240,
-      experience_score: 0.88,
+      preference_score: 0.88,
       weather_score: 0.75,
-      preference_score: 0.92,
-      feasible: true,
     }),
-    candidate({
-      city: "Prague",
-      country: "Czechia",
-      total_cost: 900,
-      overall_score: 0.85,
-      feasible: true,
-    }),
+    candidate({ city: "Prague", country: "Czechia", overall_score: 0.85 }),
+    // Sofia has no stay price and is over budget.
     candidate({
       city: "Sofia",
       country: "Bulgaria",
-      total_cost: 1200,
       overall_score: 0.6,
+      transport_cost: 200,
+      accommodation_cost: null,
       feasible: false,
     }),
   ]);
 }
 
-describe("ComparisonPage", () => {
-  it("renders every documented column", () => {
-    render(<ComparisonPage response={threeCandidates()} />);
-    for (const label of [
-      "Total cost",
-      "Overall score",
-      "Transport cost",
-      "Accommodation cost",
-      "Experience score",
-      "Weather score",
-      "Preference score",
-      "Feasible within budget",
-    ]) {
-      expect(screen.getByText(label)).toBeInTheDocument();
+describe("ComparisonPage (city cards)", () => {
+  it("renders a card per candidate, sorted by score", () => {
+    render(<ComparisonPage response={threeCities()} request={request()} />);
+    for (const city of ["Budapest", "Prague", "Sofia"]) {
+      expect(screen.getByTestId(`city-${city}`)).toBeInTheDocument();
     }
+    // Ranks run #1..#3 in score order.
+    expect(within(screen.getByTestId("city-Budapest")).getByText("#1")).toBeInTheDocument();
+    expect(within(screen.getByTestId("city-Sofia")).getByText("#3")).toBeInTheDocument();
   });
 
-  it("renders each candidate destination", () => {
-    render(<ComparisonPage response={threeCandidates()} />);
-    expect(screen.getByTestId("candidate-Budapest")).toBeInTheDocument();
-    expect(screen.getByTestId("candidate-Prague")).toBeInTheDocument();
-    expect(screen.getByTestId("candidate-Sofia")).toBeInTheDocument();
+  it("marks exactly one Recommended card (the chosen destination)", () => {
+    render(<ComparisonPage response={threeCities()} request={request()} />);
+    expect(screen.getAllByText(/Recommended/i)).toHaveLength(1);
+    expect(
+      within(screen.getByTestId("city-Budapest")).getByText(/Recommended/i),
+    ).toBeInTheDocument();
   });
 
-  it("flags infeasible candidates instead of hiding them", () => {
-    render(<ComparisonPage response={threeCandidates()} />);
-    // Sofia is over budget: shown, and marked "No".
-    const sofia = within(screen.getByTestId("candidate-Sofia"));
-    expect(sofia.getByText("No")).toBeInTheDocument();
-    // The two feasible candidates read "Yes".
-    expect(screen.getAllByText("Yes")).toHaveLength(2);
+  it("shows the score ×100 and the factor rows (no Experience row)", () => {
+    render(<ComparisonPage response={threeCities()} request={request()} />);
+    const buda = within(screen.getByTestId("city-Budapest"));
+    expect(buda.getByText("92")).toBeInTheDocument(); // 0.92 -> 92
+    expect(buda.getByText("Transport")).toBeInTheDocument();
+    expect(buda.getByText("Stay")).toBeInTheDocument();
+    expect(buda.getByText("Preferences")).toBeInTheDocument();
+    expect(buda.getByText("Weather")).toBeInTheDocument();
+    // Experience is intentionally omitted (same for every city).
+    expect(screen.queryByText("Experience")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Experience score/i)).not.toBeInTheDocument();
   });
 
-  it("highlights the chosen destination with a single Recommended badge", () => {
-    render(<ComparisonPage response={threeCandidates()} />);
-    const badges = screen.getAllByText(/Recommended/i);
-    expect(badges).toHaveLength(1);
-    // The badge sits in the Budapest (chosen) column.
-    const budapest = within(screen.getByTestId("candidate-Budapest"));
-    expect(budapest.getByText(/Recommended/i)).toBeInTheDocument();
+  it("shows the budget-aware total and under/over-budget note", () => {
+    render(<ComparisonPage response={threeCities()} request={request()} />);
+    const buda = within(screen.getByTestId("city-Budapest"));
+    expect(buda.getByText("€391")).toBeInTheDocument(); // 151 + 240
+    expect(buda.getByText(/€609 under budget/i)).toBeInTheDocument(); // 1000 - 391
   });
 
-  it("shows factor scores and the /100 overall score", () => {
-    render(<ComparisonPage response={threeCandidates()} />);
-    const budapest = within(screen.getByTestId("candidate-Budapest"));
-    expect(budapest.getByText("92")).toBeInTheDocument(); // overall 0.92 -> 92
-    expect(budapest.getByText("0.88")).toBeInTheDocument(); // experience score
-    expect(budapest.getByText(/€780/)).toBeInTheDocument(); // total cost
-    expect(budapest.getByText(/€151/)).toBeInTheDocument(); // transport cost
+  it("handles a missing stay price without fabricating a total", () => {
+    render(<ComparisonPage response={threeCities()} request={request()} />);
+    const sofia = within(screen.getByTestId("city-Sofia"));
+    expect(sofia.getByText("€200+")).toBeInTheDocument(); // transport only, "+"
+    expect(sofia.getByText(/stay price missing/i)).toBeInTheDocument();
+    expect(sofia.getByText("Not found")).toBeInTheDocument(); // Stay row
+    expect(sofia.getByText("Find a stay")).toBeInTheDocument(); // button
   });
 
-  it("renders an em dash for missing values", () => {
-    const r = fixture([
-      candidate({
-        city: "Riga",
-        country: "Latvia",
-        overall_score: null,
-        transport_cost: null,
+  it("labels buttons by state", () => {
+    render(<ComparisonPage response={threeCities()} request={request()} />);
+    expect(
+      within(screen.getByTestId("city-Budapest")).getByRole("button", {
+        name: "View trip",
       }),
-    ]);
-    render(<ComparisonPage response={r} />);
-    const riga = within(screen.getByTestId("candidate-Riga"));
-    expect(riga.getAllByText("—").length).toBeGreaterThan(0);
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("city-Prague")).getByRole("button", {
+        name: "Plan this",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("calls onAction with the city and label", () => {
+    const onAction = vi.fn();
+    render(
+      <ComparisonPage
+        response={threeCities()}
+        request={request()}
+        onAction={onAction}
+      />,
+    );
+    fireEvent.click(
+      within(screen.getByTestId("city-Prague")).getByRole("button", {
+        name: "Plan this",
+      }),
+    );
+    expect(onAction).toHaveBeenCalledTimes(1);
+    expect(onAction.mock.calls[0][0].city).toBe("Prague");
+    expect(onAction.mock.calls[0][1]).toBe("Plan this");
+  });
+
+  it("works without a request (no budget line, no under/over note)", () => {
+    render(<ComparisonPage response={threeCities()} />);
+    expect(screen.getByTestId("city-Budapest")).toBeInTheDocument();
+    expect(screen.queryByText(/under budget/i)).not.toBeInTheDocument();
   });
 
   it("shows an empty state when there are no candidates", () => {
-    render(<ComparisonPage response={fixture([])} />);
+    render(<ComparisonPage response={fixture([])} request={request()} />);
     expect(
       screen.getByText(/no candidate destinations to compare/i),
     ).toBeInTheDocument();
   });
 
-  it("calls onBack from the back button", () => {
+  it("calls onBack from the back link", () => {
     const onBack = vi.fn();
-    render(<ComparisonPage response={threeCandidates()} onBack={onBack} />);
-    fireEvent.click(screen.getByRole("button", { name: /back to results/i }));
+    render(
+      <ComparisonPage response={threeCities()} request={request()} onBack={onBack} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /back to budapest/i }));
     expect(onBack).toHaveBeenCalledTimes(1);
   });
 });

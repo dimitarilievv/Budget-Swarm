@@ -70,7 +70,9 @@ function Shell() {
             {view === "compare" ? (
               <ComparisonPage
                 response={result}
+                request={request}
                 onBack={() => setView("results")}
+                onAction={() => setView("results")}
               />
             ) : (
               <ResultsPage

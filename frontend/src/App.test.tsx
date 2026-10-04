@@ -87,11 +87,11 @@ describe("App", () => {
       screen.getByRole("button", { name: /compare destinations/i }),
     );
     expect(
-      screen.getByRole("heading", { name: /top destination comparisons/i }),
+      screen.getByRole("heading", { name: /compare destinations/i }),
     ).toBeInTheDocument();
 
-    // And back to the results.
-    fireEvent.click(screen.getByRole("button", { name: /back to results/i }));
+    // And back to the results (the compare page's back link names the recommended city).
+    fireEvent.click(screen.getByRole("button", { name: /back to/i }));
     expect(
       screen.getByRole("heading", { name: /budapest, hungary/i }),
     ).toBeInTheDocument();
