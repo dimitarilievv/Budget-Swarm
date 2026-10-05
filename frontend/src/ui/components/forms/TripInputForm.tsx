@@ -215,14 +215,14 @@ export default function TripInputForm({
   }
 
   return (
-    <form onSubmit={handleSubmit} noValidate className="space-y-3.5 text-left">
+    <form onSubmit={handleSubmit} noValidate className="space-y-3 text-left">
       <OriginInput value={origin} onChange={setOrigin} />
       {errors.origin && (
         <p className="text-xs text-amber-600">{errors.origin}</p>
       )}
 
       {/* Budget · Duration · Travelers */}
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-2.5 sm:grid-cols-3">
         <div>
           <label
             htmlFor={ids.budget}
@@ -285,12 +285,12 @@ export default function TripInputForm({
           >
             Travelers
           </label>
-          <div className="mt-1.5 flex items-center rounded-lg border border-slate-200 bg-white shadow-sm">
+          <div className="mt-1 flex items-center rounded-lg border border-slate-200 bg-white shadow-sm">
             <button
               type="button"
               aria-label="Fewer travelers"
               onClick={() => setTravelers((n) => Math.max(1, n - 1))}
-              className="px-3.5 py-2.5 text-lg text-slate-500 hover:text-teal-600"
+              className="px-3.5 py-2 text-base text-slate-500 hover:text-teal-600"
             >
               −
             </button>
@@ -301,13 +301,13 @@ export default function TripInputForm({
               value={travelers}
               aria-invalid={Boolean(errors.travelers)}
               onChange={(e) => setTravelers(Number(e.target.value))}
-              className="w-full border-x border-slate-100 py-2.5 text-center text-[15px] font-medium text-slate-900 focus:outline-none"
+              className="w-full border-x border-slate-100 py-2 text-center text-sm font-medium text-slate-900 focus:outline-none"
             />
             <button
               type="button"
               aria-label="More travelers"
               onClick={() => setTravelers((n) => n + 1)}
-              className="px-3.5 py-2.5 text-lg text-slate-500 hover:text-teal-600"
+              className="px-3.5 py-2 text-base text-slate-500 hover:text-teal-600"
             >
               +
             </button>
@@ -394,7 +394,7 @@ export default function TripInputForm({
                 type="button"
                 aria-pressed={active}
                 onClick={() => toggleInterest(it.key)}
-                className={`rounded-full border px-4 py-2 text-sm font-medium transition ${
+                className={`rounded-full border px-3 py-1.5 text-sm font-medium transition ${
                   active
                     ? "border-teal-500 bg-teal-50 text-teal-700"
                     : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"

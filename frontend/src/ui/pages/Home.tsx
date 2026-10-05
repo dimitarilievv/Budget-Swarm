@@ -246,8 +246,8 @@ function Hero({ onResult }: { onResult: Parameters<typeof TripInputForm>[0]["onR
       style={{ background: "linear-gradient(160deg,#f3f6ea 0%,#eaf6f3 45%,#dff3f0 100%)", scrollMarginTop: 60 }}
     >
       <div
-        style={{ maxWidth: 1200, margin: "0 auto", padding: "40px 32px 56px" }}
-        className="grid items-center gap-8 lg:gap-12 lg:grid-cols-[1fr_1.35fr]"
+        style={{ maxWidth: 1200, margin: "0 auto", padding: "32px 32px 48px" }}
+        className="grid items-center gap-8 lg:gap-14 lg:grid-cols-[1fr_minmax(0,440px)]"
       >
         <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
           <span
@@ -310,15 +310,15 @@ function Hero({ onResult }: { onResult: Parameters<typeof TripInputForm>[0]["onR
         <div
           style={{
             background: "#fff",
-            borderRadius: 22,
+            borderRadius: 20,
             boxShadow: "0 24px 48px -24px rgba(15,80,72,.25)",
-            padding: 20,
+            padding: 18,
             borderTop: `4px solid ${C.teal}`,
           }}
         >
-          <div style={{ marginBottom: 12 }}>
-            <div style={{ fontSize: 19, fontWeight: 800 }}>Plan your trip</div>
-            <div style={{ fontSize: 13, color: C.muted }}>About 30 seconds. We'll do the rest.</div>
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 18, fontWeight: 800 }}>Plan your trip</div>
+            <div style={{ fontSize: 12, color: C.muted }}>About 30 seconds. We'll do the rest.</div>
           </div>
           <TripInputForm onResult={onResult} />
         </div>

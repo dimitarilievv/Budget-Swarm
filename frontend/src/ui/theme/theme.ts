@@ -18,4 +18,4 @@ export const BRAND = {
 
 /** The standard text/number input style, shared by every form field. */
 export const INPUT_CLASS =
-  "mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3.5 py-2.5 text-[15px] font-medium text-slate-900 shadow-sm focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20";
+  "mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-900 shadow-sm focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20";
