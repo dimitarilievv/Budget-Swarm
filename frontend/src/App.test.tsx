@@ -79,9 +79,14 @@ describe("App", () => {
       screen.getByRole("button", { name: /generate optimized plan/i }),
     );
 
-    // Results page appears.
+    // Results page appears. Allow for the ~800ms "Your trip is ready!" beat (and coverage
+    // instrumentation slowing the run) before the searching card hands off to Results.
     expect(
-      await screen.findByRole("heading", { name: /budapest, hungary/i }),
+      await screen.findByRole(
+        "heading",
+        { name: /budapest, hungary/i },
+        { timeout: 3000 },
+      ),
     ).toBeInTheDocument();
 
     // The Navbar "Compare" item is enabled once there are candidates.

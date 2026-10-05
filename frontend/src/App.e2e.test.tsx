@@ -164,11 +164,16 @@ describe("input → results E2E (mocked backend)", () => {
       await screen.findByText(/something went wrong/i),
     ).toBeInTheDocument();
 
-    // Fix the backend and retry — the same request is re-sent.
+    // Fix the backend and retry — the same request is re-sent. Allow for the ~800ms
+    // "Your trip is ready!" beat (and coverage slowing the run) before Results appears.
     mockGenerate.mockResolvedValue(planFixture());
     fireEvent.click(screen.getByRole("button", { name: /try again/i }));
     expect(
-      await screen.findByRole("heading", { name: /budapest, hungary/i }),
+      await screen.findByRole(
+        "heading",
+        { name: /budapest, hungary/i },
+        { timeout: 3000 },
+      ),
     ).toBeInTheDocument();
     expect(mockGenerate).toHaveBeenCalledTimes(2);
   });

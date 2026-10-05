@@ -10,7 +10,6 @@ import {
   IconBriefcase,
   IconCompare,
   IconSearch,
-  IconSwarm,
   IconUser,
 } from "@/ui/components/common/Icons";
 
@@ -63,9 +62,12 @@ export default function Navbar({
           onClick={onHome}
           className="flex items-center gap-2.5 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40"
         >
-          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-teal-600 text-white shadow-sm">
-            <IconSwarm className="h-5 w-5" />
-          </span>
+          <img
+            src="/logo.svg"
+            alt=""
+            aria-hidden="true"
+            className="h-9 w-9 rounded-xl shadow-sm"
+          />
           <span className="text-[17px] font-bold tracking-tight text-slate-900">
             Budget<span className="text-teal-600">Swarm</span>
           </span>

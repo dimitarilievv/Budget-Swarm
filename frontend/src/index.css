@@ -14,6 +14,14 @@ html {
   text-rendering: optimizeLegibility;
 }
 
+/* Glide to in-page sections when a nav/anchor link is clicked. Sections set their own
+   scroll-margin-top so they clear the sticky header. Disabled under reduced motion. */
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
 /* Soft mint ground. The body carries the base tint and #root layers two faint
    teal/amber radials over it, so the light interface never reads as blank white. */
 body {
