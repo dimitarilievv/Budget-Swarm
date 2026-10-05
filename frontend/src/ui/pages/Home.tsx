@@ -323,20 +323,14 @@ function Header() {
             gap: 10,
           }}
         >
-          <span
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: 9,
-              background: C.teal,
-              color: "#fff",
-              display: "grid",
-              placeItems: "center",
-              fontWeight: 800,
-            }}
-          >
-            B
-          </span>
+          <img
+            src="/logo.svg"
+            alt=""
+            aria-hidden="true"
+            width={32}
+            height={32}
+            style={{ borderRadius: 9, display: "block" }}
+          />
           <span style={{ fontWeight: 700, fontSize: 17 }}>
             Budget<span style={{ color: C.teal }}>Swarm</span>
           </span>
