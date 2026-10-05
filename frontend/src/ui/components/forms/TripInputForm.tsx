@@ -215,7 +215,7 @@ export default function TripInputForm({
   }
 
   return (
-    <form onSubmit={handleSubmit} noValidate className="space-y-6 text-left">
+    <form onSubmit={handleSubmit} noValidate className="space-y-3.5 text-left">
       <OriginInput value={origin} onChange={setOrigin} />
       {errors.origin && (
         <p className="text-xs text-amber-600">{errors.origin}</p>
@@ -335,13 +335,13 @@ export default function TripInputForm({
                 type="button"
                 aria-pressed={active}
                 onClick={() => setTransportMode(m.value)}
-                className={`flex flex-col items-center gap-1.5 rounded-xl border px-3 py-3 text-sm font-medium transition ${
+                className={`flex items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-sm font-medium transition ${
                   active
                     ? "border-teal-500 bg-teal-50 text-teal-700 ring-1 ring-teal-500/40"
                     : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
                 }`}
               >
-                <m.Icon className="h-5 w-5" />
+                <m.Icon className="h-4 w-4" />
                 {m.label}
               </button>
             );
@@ -413,7 +413,7 @@ export default function TripInputForm({
       {/* CTA */}
       <button
         type="submit"
-        className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-teal-600 to-teal-500 px-4 py-3.5 text-base font-semibold text-white shadow-sm transition hover:from-teal-700 hover:to-teal-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40"
+        className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-teal-600 to-teal-500 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:from-teal-700 hover:to-teal-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40"
       >
         Generate Optimized Plan
         <IconArrowRight className="h-5 w-5" />
