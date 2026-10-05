@@ -382,24 +382,9 @@ function Hero({
           </a>
         </div>
 
-        {/* The real planner — all form logic, validation, geolocation, API call. */}
-        <div
-          style={{
-            background: "#fff",
-            borderRadius: 20,
-            boxShadow: "0 24px 48px -24px rgba(15,80,72,.25)",
-            padding: 18,
-            borderTop: `4px solid ${C.teal}`,
-          }}
-        >
-          <div style={{ marginBottom: 10 }}>
-            <div style={{ fontSize: 18, fontWeight: 800 }}>Plan your trip</div>
-            <div style={{ fontSize: 12, color: C.muted }}>
-              About 30 seconds. We'll do the rest.
-            </div>
-          </div>
-          <TripInputForm onResult={onResult} />
-        </div>
+        {/* The real planner — all form logic, validation, geolocation, API call. It owns its
+            own card chrome, and swaps to the searching card while a plan is generating. */}
+        <TripInputForm onResult={onResult} />
       </div>
     </section>
   );

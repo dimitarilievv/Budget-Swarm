@@ -106,9 +106,14 @@ describe("input → results E2E (mocked backend)", () => {
 
     fillAndSubmit("Skopje");
 
-    // Lands on Results, rendered from the mocked plan.
+    // Lands on Results, rendered from the mocked plan. The searching card lingers on
+    // "Your trip is ready!" for ~800ms before navigating, so allow a little extra time.
     expect(
-      await screen.findByRole("heading", { name: /budapest, hungary/i }),
+      await screen.findByRole(
+        "heading",
+        { name: /budapest, hungary/i },
+        { timeout: 3000 },
+      ),
     ).toBeInTheDocument();
     // The redesigned hero shows the match pill and a budget-aware "why" sentence (the LLM
     // explanation card was removed); the total and the day-1 stop render from the plan.
@@ -140,8 +145,13 @@ describe("input → results E2E (mocked backend)", () => {
     expect(await screen.findByText(/agents are on it/i)).toBeInTheDocument();
 
     resolve(planFixture());
+    // ~800ms "Your trip is ready!" beat precedes navigation to Results.
     expect(
-      await screen.findByRole("heading", { name: /budapest, hungary/i }),
+      await screen.findByRole(
+        "heading",
+        { name: /budapest, hungary/i },
+        { timeout: 3000 },
+      ),
     ).toBeInTheDocument();
   });
 
