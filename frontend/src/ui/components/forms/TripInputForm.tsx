@@ -7,11 +7,13 @@
  * TripRequestPayload to POST /api/generate-trip. `submit` is injectable for tests.
  */
 import {
+  useEffect,
   useId,
   useRef,
   useState,
   type ComponentType,
   type FormEvent,
+  type ReactNode,
   type SVGProps,
 } from "react";
 
@@ -23,9 +25,9 @@ import type {
   TripResponse,
 } from "@/types/trip";
 import ErrorState from "@/ui/components/common/ErrorState";
-import LoadingState from "@/ui/components/common/LoadingState";
 import NoTripFound from "@/ui/components/common/NoTripFound";
 import OriginInput, { type OriginValue } from "./OriginInput";
+import SearchingCard from "./SearchingCard";
 import {
   IconArrowRight,
   IconBus,
@@ -78,6 +80,40 @@ type Errors = Partial<
   >
 >;
 
+/** How long the "Your trip is ready!" state lingers before we navigate to the results. */
+const READY_DELAY_MS = 800;
+
+/**
+ * The planner's card chrome and header, shared by the form and the error/no-trip states.
+ * The searching state ({@link SearchingCard}) brings its own chrome instead.
+ */
+function FormCard({ children }: { children: ReactNode }) {
+  return (
+    <div
+      style={{
+        width: "100%",
+        boxSizing: "border-box",
+        background: "#fff",
+        borderRadius: 20,
+        boxShadow: "0 24px 48px -24px rgba(15,80,72,.25)",
+        padding: 18,
+        borderTop: "4px solid #0f9488",
+        fontFamily: "'Plus Jakarta Sans',system-ui,sans-serif",
+      }}
+    >
+      <div style={{ marginBottom: 10 }}>
+        <div style={{ fontSize: 18, fontWeight: 800, color: "#12201e" }}>
+          Plan your trip
+        </div>
+        <div style={{ fontSize: 12, color: "#5d6b69" }}>
+          About 30 seconds. We'll do the rest.
+        </div>
+      </div>
+      {children}
+    </div>
+  );
+}
+
 export default function TripInputForm({
   onResult,
   submit = generateTrip,
@@ -104,9 +140,20 @@ export default function TripInputForm({
   });
 
   const [errors, setErrors] = useState<Errors>({});
-  const [submitting, setSubmitting] = useState(false);
+  // "form" shows the inputs; "searching" and "ready" show the SearchingCard (the latter with
+  // the plan already in hand, briefly, before we navigate).
+  const [phase, setPhase] = useState<"form" | "searching" | "ready">("form");
   const [submitError, setSubmitError] = useState<ApiError | null>(null);
   const lastPayload = useRef<TripRequestPayload | null>(null);
+  // Bumped on every submit/cancel so a resolving request from a cancelled run is ignored.
+  const runToken = useRef(0);
+  const readyTimer = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (readyTimer.current != null) window.clearTimeout(readyTimer.current);
+    };
+  }, []);
 
   const isCar = transportMode === "car";
 
@@ -153,25 +200,37 @@ export default function TripInputForm({
 
   async function runSubmit(payload: TripRequestPayload) {
     lastPayload.current = payload;
-    setSubmitting(true);
+    const token = ++runToken.current;
+    setPhase("searching");
     setSubmitError(null);
     try {
       const response = await submit(payload);
-      onResult?.(response, payload);
+      if (token !== runToken.current) return; // a newer run or a cancel superseded this one
+      // Show "Your trip is ready!" for a beat, then hand the plan up (App swaps to Results).
+      setPhase("ready");
+      readyTimer.current = window.setTimeout(() => {
+        if (token === runToken.current) onResult?.(response, payload);
+      }, READY_DELAY_MS);
     } catch (err) {
+      if (token !== runToken.current) return;
       const apiErr =
         err instanceof ApiError
           ? err
-          : new ApiError("INTERNAL_ERROR", "Something went wrong. Please try again.");
+          : new ApiError(
+              "INTERNAL_ERROR",
+              "Something went wrong. Please try again.",
+            );
+      setPhase("form");
       // A field validation error (e.g. an unresolvable start city) belongs inline on the
       // form so the user can fix it in place, not on the full-screen error state.
-      if (apiErr.code === "VALIDATION_ERROR" && apiErr.field === "origin_label") {
+      if (
+        apiErr.code === "VALIDATION_ERROR" &&
+        apiErr.field === "origin_label"
+      ) {
         setErrors((prev) => ({ ...prev, origin: apiErr.message }));
         return;
       }
       setSubmitError(apiErr);
-    } finally {
-      setSubmitting(false);
     }
   }
 
@@ -187,237 +246,266 @@ export default function TripInputForm({
     if (lastPayload.current) void runSubmit(lastPayload.current);
   }
 
+  // "Edit" on the SearchingCard: abandon the in-flight request (its result is ignored via the
+  // run token) and return to the form with every field as the user left it.
+  function cancel() {
+    runToken.current++;
+    if (readyTimer.current != null) window.clearTimeout(readyTimer.current);
+    setPhase("form");
+  }
+
+  const days = Number(durationDays);
+  const summary =
+    `From ${origin.originLabel.trim() || "your location"} · ` +
+    `€${(Number(budget) || 0).toLocaleString("en-US")} · ` +
+    `${days || 0} ${days === 1 ? "day" : "days"} · ` +
+    `${travelers} ${travelers === 1 ? "traveler" : "travelers"}`;
+
   // Hide the native number spinners so the €/days suffix is the only right-side element and
   // reads cleanly, centred in the field.
   const numberField = `${INPUT_CLASS} [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none`;
 
-  // While a request is in flight, show the agent-progress screen; on failure, the error
-  // state with a retry affordance. Form state persists behind both (same component).
-  if (submitting) return <LoadingState />;
+  // While a request is in flight (or just resolved) show the searching card in place of the
+  // form; on failure, the error state with a retry affordance. Form state persists behind all
+  // of them (same component), so "Edit" returns the inputs untouched.
+  if (phase !== "form")
+    return (
+      <SearchingCard
+        progress={phase === "ready" ? 1 : undefined}
+        summary={summary}
+        onEdit={cancel}
+      />
+    );
   if (submitError) {
     // A no-plan result is an outcome, not a failure: guide the user to adjust their inputs
     // rather than offering a retry of the identical (and equally infeasible) request.
     if (submitError.code === "NO_PLAN_AVAILABLE")
       return (
-        <NoTripFound
-          budget={parseFloat(budget)}
-          message={submitError.message}
-          onAdjust={() => setSubmitError(null)}
-        />
+        <FormCard>
+          <NoTripFound
+            budget={parseFloat(budget)}
+            message={submitError.message}
+            onAdjust={() => setSubmitError(null)}
+          />
+        </FormCard>
       );
     return (
-      <ErrorState
-        error={submitError}
-        onRetry={retry}
-        onEdit={() => setSubmitError(null)}
-      />
+      <FormCard>
+        <ErrorState
+          error={submitError}
+          onRetry={retry}
+          onEdit={() => setSubmitError(null)}
+        />
+      </FormCard>
     );
   }
 
   return (
-    <form onSubmit={handleSubmit} noValidate className="space-y-3 text-left">
-      <OriginInput value={origin} onChange={setOrigin} />
-      {errors.origin && (
-        <p className="text-xs text-amber-600">{errors.origin}</p>
-      )}
-
-      {/* Budget · Duration · Travelers */}
-      <div className="grid gap-2.5 sm:grid-cols-3">
-        <div>
-          <label
-            htmlFor={ids.budget}
-            className="text-sm font-semibold text-slate-800"
-          >
-            Budget (total)
-          </label>
-          <div className="relative">
-            <input
-              id={ids.budget}
-              type="number"
-              inputMode="decimal"
-              min="1"
-              value={budget}
-              aria-invalid={Boolean(errors.budget)}
-              onChange={(e) => setBudget(e.target.value)}
-              className={`${numberField} pr-9`}
-            />
-            <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-sm text-slate-400">
-              €
-            </span>
-          </div>
-          {errors.budget && (
-            <p className="mt-1 text-xs text-amber-600">{errors.budget}</p>
-          )}
-        </div>
-
-        <div>
-          <label
-            htmlFor={ids.duration}
-            className="text-sm font-semibold text-slate-800"
-          >
-            Trip duration
-          </label>
-          <div className="relative">
-            <input
-              id={ids.duration}
-              type="number"
-              min="1"
-              value={durationDays}
-              aria-invalid={Boolean(errors.duration_days)}
-              onChange={(e) => setDurationDays(e.target.value)}
-              className={`${numberField} pr-14`}
-            />
-            <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-sm text-slate-400">
-              days
-            </span>
-          </div>
-          {errors.duration_days && (
-            <p className="mt-1 text-xs text-amber-600">
-              {errors.duration_days}
-            </p>
-          )}
-        </div>
-
-        <div>
-          <label
-            htmlFor={ids.travelers}
-            className="text-sm font-semibold text-slate-800"
-          >
-            Travelers
-          </label>
-          <div className="mt-1 flex items-center rounded-lg border border-slate-200 bg-white shadow-sm">
-            <button
-              type="button"
-              aria-label="Fewer travelers"
-              onClick={() => setTravelers((n) => Math.max(1, n - 1))}
-              className="px-3.5 py-2 text-base text-slate-500 hover:text-teal-600"
-            >
-              −
-            </button>
-            <input
-              id={ids.travelers}
-              type="number"
-              min="1"
-              value={travelers}
-              aria-invalid={Boolean(errors.travelers)}
-              onChange={(e) => setTravelers(Number(e.target.value))}
-              className="w-full border-x border-slate-100 py-2 text-center text-sm font-medium text-slate-900 focus:outline-none"
-            />
-            <button
-              type="button"
-              aria-label="More travelers"
-              onClick={() => setTravelers((n) => n + 1)}
-              className="px-3.5 py-2 text-base text-slate-500 hover:text-teal-600"
-            >
-              +
-            </button>
-          </div>
-          {errors.travelers && (
-            <p className="mt-1 text-xs text-amber-600">{errors.travelers}</p>
-          )}
-        </div>
-      </div>
-
-      {/* Transport mode — segmented cards */}
-      <div>
-        <span className="text-sm font-semibold text-slate-800">
-          Transport mode{" "}
-          <span className="font-normal text-slate-400">
-            (from your location)
-          </span>
-        </span>
-        <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
-          {TRANSPORT_MODES.map((m) => {
-            const active = transportMode === m.value;
-            return (
-              <button
-                key={m.value}
-                type="button"
-                aria-pressed={active}
-                onClick={() => setTransportMode(m.value)}
-                className={`flex items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-sm font-medium transition ${
-                  active
-                    ? "border-teal-500 bg-teal-50 text-teal-700 ring-1 ring-teal-500/40"
-                    : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
-                }`}
-              >
-                <m.Icon className="h-4 w-4" />
-                {m.label}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Conditional: vehicle consumption for car */}
-      {isCar && (
-        <div>
-          <label
-            htmlFor={ids.fuel}
-            className="text-sm font-semibold text-slate-800"
-          >
-            Vehicle consumption{" "}
-            <span className="font-normal text-slate-400">(L/100 km)</span>
-          </label>
-          <input
-            id={ids.fuel}
-            type="number"
-            min="0.1"
-            step="0.1"
-            value={vehicleConsumption}
-            aria-invalid={Boolean(errors.vehicle_consumption)}
-            onChange={(e) => setVehicleConsumption(e.target.value)}
-            className={numberField}
-          />
-          {errors.vehicle_consumption && (
-            <p className="mt-1 text-xs text-amber-600">
-              {errors.vehicle_consumption}
-            </p>
-          )}
-        </div>
-      )}
-
-      {/* Interests — chips */}
-      <div>
-        <span className="text-sm font-semibold text-slate-800">
-          Interests{" "}
-          <span className="font-normal text-slate-400">
-            (pick your favorites)
-          </span>
-        </span>
-        <div className="mt-2 flex flex-wrap gap-2">
-          {INTERESTS.map((it) => {
-            const active = interests.has(it.key);
-            return (
-              <button
-                key={it.key}
-                type="button"
-                aria-pressed={active}
-                onClick={() => toggleInterest(it.key)}
-                className={`rounded-full border px-3 py-1.5 text-sm font-medium transition ${
-                  active
-                    ? "border-teal-500 bg-teal-50 text-teal-700"
-                    : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
-                }`}
-              >
-                {it.label}
-              </button>
-            );
-          })}
-        </div>
-        {errors.preferences && (
-          <p className="mt-1 text-xs text-amber-600">{errors.preferences}</p>
+    <FormCard>
+      <form onSubmit={handleSubmit} noValidate className="space-y-3 text-left">
+        <OriginInput value={origin} onChange={setOrigin} />
+        {errors.origin && (
+          <p className="text-xs text-amber-600">{errors.origin}</p>
         )}
-      </div>
 
-      {/* CTA */}
-      <button
-        type="submit"
-        className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-teal-600 to-teal-500 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:from-teal-700 hover:to-teal-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40"
-      >
-        Generate Optimized Plan
-        <IconArrowRight className="h-5 w-5" />
-      </button>
-    </form>
+        {/* Budget · Duration · Travelers */}
+        <div className="grid gap-2.5 sm:grid-cols-3">
+          <div>
+            <label
+              htmlFor={ids.budget}
+              className="text-sm font-semibold text-slate-800"
+            >
+              Budget (total)
+            </label>
+            <div className="relative">
+              <input
+                id={ids.budget}
+                type="number"
+                inputMode="decimal"
+                min="1"
+                value={budget}
+                aria-invalid={Boolean(errors.budget)}
+                onChange={(e) => setBudget(e.target.value)}
+                className={`${numberField} pr-9`}
+              />
+              <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-sm text-slate-400">
+                €
+              </span>
+            </div>
+            {errors.budget && (
+              <p className="mt-1 text-xs text-amber-600">{errors.budget}</p>
+            )}
+          </div>
+
+          <div>
+            <label
+              htmlFor={ids.duration}
+              className="text-sm font-semibold text-slate-800"
+            >
+              Trip duration
+            </label>
+            <div className="relative">
+              <input
+                id={ids.duration}
+                type="number"
+                min="1"
+                value={durationDays}
+                aria-invalid={Boolean(errors.duration_days)}
+                onChange={(e) => setDurationDays(e.target.value)}
+                className={`${numberField} pr-14`}
+              />
+              <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-sm text-slate-400">
+                days
+              </span>
+            </div>
+            {errors.duration_days && (
+              <p className="mt-1 text-xs text-amber-600">
+                {errors.duration_days}
+              </p>
+            )}
+          </div>
+
+          <div>
+            <label
+              htmlFor={ids.travelers}
+              className="text-sm font-semibold text-slate-800"
+            >
+              Travelers
+            </label>
+            <div className="mt-1 flex items-center rounded-lg border border-slate-200 bg-white shadow-sm">
+              <button
+                type="button"
+                aria-label="Fewer travelers"
+                onClick={() => setTravelers((n) => Math.max(1, n - 1))}
+                className="px-3.5 py-2 text-base text-slate-500 hover:text-teal-600"
+              >
+                −
+              </button>
+              <input
+                id={ids.travelers}
+                type="number"
+                min="1"
+                value={travelers}
+                aria-invalid={Boolean(errors.travelers)}
+                onChange={(e) => setTravelers(Number(e.target.value))}
+                className="w-full border-x border-slate-100 py-2 text-center text-sm font-medium text-slate-900 focus:outline-none"
+              />
+              <button
+                type="button"
+                aria-label="More travelers"
+                onClick={() => setTravelers((n) => n + 1)}
+                className="px-3.5 py-2 text-base text-slate-500 hover:text-teal-600"
+              >
+                +
+              </button>
+            </div>
+            {errors.travelers && (
+              <p className="mt-1 text-xs text-amber-600">{errors.travelers}</p>
+            )}
+          </div>
+        </div>
+
+        {/* Transport mode — segmented cards */}
+        <div>
+          <span className="text-sm font-semibold text-slate-800">
+            Transport mode{" "}
+            <span className="font-normal text-slate-400">
+              (from your location)
+            </span>
+          </span>
+          <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {TRANSPORT_MODES.map((m) => {
+              const active = transportMode === m.value;
+              return (
+                <button
+                  key={m.value}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => setTransportMode(m.value)}
+                  className={`flex items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-sm font-medium transition ${
+                    active
+                      ? "border-teal-500 bg-teal-50 text-teal-700 ring-1 ring-teal-500/40"
+                      : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
+                  }`}
+                >
+                  <m.Icon className="h-4 w-4" />
+                  {m.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Conditional: vehicle consumption for car */}
+        {isCar && (
+          <div>
+            <label
+              htmlFor={ids.fuel}
+              className="text-sm font-semibold text-slate-800"
+            >
+              Vehicle consumption{" "}
+              <span className="font-normal text-slate-400">(L/100 km)</span>
+            </label>
+            <input
+              id={ids.fuel}
+              type="number"
+              min="0.1"
+              step="0.1"
+              value={vehicleConsumption}
+              aria-invalid={Boolean(errors.vehicle_consumption)}
+              onChange={(e) => setVehicleConsumption(e.target.value)}
+              className={numberField}
+            />
+            {errors.vehicle_consumption && (
+              <p className="mt-1 text-xs text-amber-600">
+                {errors.vehicle_consumption}
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* Interests — chips */}
+        <div>
+          <span className="text-sm font-semibold text-slate-800">
+            Interests{" "}
+            <span className="font-normal text-slate-400">
+              (pick your favorites)
+            </span>
+          </span>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {INTERESTS.map((it) => {
+              const active = interests.has(it.key);
+              return (
+                <button
+                  key={it.key}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => toggleInterest(it.key)}
+                  className={`rounded-full border px-3 py-1.5 text-sm font-medium transition ${
+                    active
+                      ? "border-teal-500 bg-teal-50 text-teal-700"
+                      : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
+                  }`}
+                >
+                  {it.label}
+                </button>
+              );
+            })}
+          </div>
+          {errors.preferences && (
+            <p className="mt-1 text-xs text-amber-600">{errors.preferences}</p>
+          )}
+        </div>
+
+        {/* CTA */}
+        <button
+          type="submit"
+          className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-teal-600 to-teal-500 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:from-teal-700 hover:to-teal-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40"
+        >
+          Generate Optimized Plan
+          <IconArrowRight className="h-5 w-5" />
+        </button>
+      </form>
+    </FormCard>
   );
 }

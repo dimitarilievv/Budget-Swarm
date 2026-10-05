@@ -143,8 +143,11 @@ describe("TripInputForm", () => {
     });
     expect(payload.preferences).not.toHaveProperty("nightlife");
 
-    // The plan is handed up to the parent (App renders the Results page from it).
-    await waitFor(() => expect(onResult).toHaveBeenCalledTimes(1));
+    // The plan is handed up to the parent (App renders the Results page from it). The
+    // searching card holds on "Your trip is ready!" for ~800ms first, so allow extra time.
+    await waitFor(() => expect(onResult).toHaveBeenCalledTimes(1), {
+      timeout: 3000,
+    });
     expect(onResult.mock.calls[0][0].chosen_plan.destination.city).toBe(
       "Budapest",
     );
