@@ -49,14 +49,20 @@ function euro(value: number): string {
   }).format(value);
 }
 
-function sameDestination(a: CandidateDestination, b: CandidateDestination): boolean {
+function sameDestination(
+  a: CandidateDestination,
+  b: CandidateDestination,
+): boolean {
   return (
     a.city.trim().toLowerCase() === b.city.trim().toLowerCase() &&
     a.country.trim().toLowerCase() === b.country.trim().toLowerCase()
   );
 }
 
-function formatDateRange(start?: string | null, end?: string | null): string | null {
+function formatDateRange(
+  start?: string | null,
+  end?: string | null,
+): string | null {
   if (!start && !end) return null;
   const fmt = (iso: string) => {
     const d = new Date(iso);
@@ -114,7 +120,8 @@ export default function ComparisonPage({
     response.chosen_plan.start_date,
     response.chosen_plan.end_date,
   );
-  const recommendedCity = cities[recommendedIndex]?.destination.city ?? chosen.city;
+  const recommendedCity =
+    cities[recommendedIndex]?.destination.city ?? chosen.city;
 
   const subline = [
     dates,
@@ -127,7 +134,10 @@ export default function ComparisonPage({
   return (
     <div
       className="animate-enter"
-      style={{ color: C.ink, fontFamily: "'Plus Jakarta Sans',system-ui,sans-serif" }}
+      style={{
+        color: C.ink,
+        fontFamily: "'Plus Jakarta Sans',system-ui,sans-serif",
+      }}
     >
       <div className="flex flex-col gap-6">
         {/* Header */}
@@ -137,12 +147,24 @@ export default function ComparisonPage({
               <button
                 type="button"
                 onClick={onBack}
-                style={{ all: "unset", cursor: "pointer", fontSize: 13, color: C.muted }}
+                style={{
+                  all: "unset",
+                  cursor: "pointer",
+                  fontSize: 13,
+                  color: C.muted,
+                }}
               >
                 ← Back to {recommendedCity}
               </button>
             )}
-            <h1 style={{ margin: 0, fontSize: 34, letterSpacing: "-.03em", fontWeight: 800 }}>
+            <h1
+              style={{
+                margin: 0,
+                fontSize: 34,
+                letterSpacing: "-.03em",
+                fontWeight: 800,
+              }}
+            >
               Compare destinations
             </h1>
             {subline && (
@@ -176,7 +198,9 @@ export default function ComparisonPage({
           <>
             <div
               className="grid items-stretch gap-3.5 pt-1"
-              style={{ gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))" }}
+              style={{
+                gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))",
+              }}
             >
               {cities.map((city, i) => (
                 <CityCard
@@ -246,7 +270,11 @@ function CityCard({
   const cta = recommended ? "View trip" : fits ? "Plan this" : "Find a stay";
 
   const rows: [string, string, boolean][] = [
-    ["Transport", transport != null ? euro(transport) : "Not found", transport == null],
+    [
+      "Transport",
+      transport != null ? euro(transport) : "Not found",
+      transport == null,
+    ],
     ["Stay", stay != null ? euro(stay) : "Not found", stay == null],
     ["Preferences", String(pct(city.preference_score)), false],
     ["Weather", String(pct(city.weather_score)), false],
@@ -254,7 +282,11 @@ function CityCard({
 
   const score = pct(city.overall_score);
   const budgetLabel =
-    budget == null ? null : budget >= 1000 ? `${budget / 1000}k` : String(budget);
+    budget == null
+      ? null
+      : budget >= 1000
+        ? `${budget / 1000}k`
+        : String(budget);
 
   return (
     <div
@@ -281,7 +313,9 @@ function CityCard({
         className="flex items-center justify-between"
         style={{ minHeight: 20 }}
       >
-        <span style={{ fontSize: 12, fontWeight: 700, color: C.muted }}>#{rank}</span>
+        <span style={{ fontSize: 12, fontWeight: 700, color: C.muted }}>
+          #{rank}
+        </span>
         {recommended && (
           <span
             style={{
@@ -301,8 +335,12 @@ function CityCard({
       <div className="flex flex-col items-center gap-2.5">
         <ScoreRing value={score} active={active} />
         <div className="text-center">
-          <div style={{ fontSize: 20, fontWeight: 800 }}>{city.destination.city}</div>
-          <div style={{ fontSize: 12, color: C.muted }}>{city.destination.country}</div>
+          <div style={{ fontSize: 20, fontWeight: 800 }}>
+            {city.destination.city}
+          </div>
+          <div style={{ fontSize: 12, color: C.muted }}>
+            {city.destination.country}
+          </div>
         </div>
       </div>
 
@@ -316,7 +354,9 @@ function CityCard({
             {total != null ? euro(total) : `${euro(transport ?? 0)}+`}
           </span>
           {budgetLabel && (
-            <span style={{ fontSize: 11, color: C.muted, whiteSpace: "nowrap" }}>
+            <span
+              style={{ fontSize: 11, color: C.muted, whiteSpace: "nowrap" }}
+            >
               of €{budgetLabel}
             </span>
           )}
@@ -343,7 +383,11 @@ function CityCard({
           />
         </div>
         <span
-          style={{ fontSize: 12, fontWeight: 600, color: fits ? C.okInk : C.warnInk }}
+          style={{
+            fontSize: 12,
+            fontWeight: 600,
+            color: fits ? C.okInk : C.warnInk,
+          }}
         >
           {note}
         </span>
@@ -362,7 +406,9 @@ function CityCard({
             }}
           >
             <span style={{ color: C.muted }}>{label}</span>
-            <span style={{ fontWeight: 700, color: missing ? C.warnInk : C.ink }}>
+            <span
+              style={{ fontWeight: 700, color: missing ? C.warnInk : C.ink }}
+            >
               {value}
             </span>
           </div>
@@ -410,9 +456,16 @@ function ScoreRing({ value, active }: { value: number; active: boolean }) {
         className="flex flex-col items-center justify-center"
         style={{ width: 66, height: 66, borderRadius: 33, background: "#fff" }}
       >
-        <span style={{ fontSize: 22, fontWeight: 800, lineHeight: 1 }}>{value}</span>
+        <span style={{ fontSize: 22, fontWeight: 800, lineHeight: 1 }}>
+          {value}
+        </span>
         <span
-          style={{ fontSize: 9, color: C.muted, fontWeight: 600, letterSpacing: ".04em" }}
+          style={{
+            fontSize: 9,
+            color: C.muted,
+            fontWeight: 600,
+            letterSpacing: ".04em",
+          }}
         >
           MATCH
         </span>
@@ -431,7 +484,10 @@ function LegendDot({
   label: string;
 }) {
   return (
-    <span className="flex items-center gap-1.5" style={{ whiteSpace: "nowrap" }}>
+    <span
+      className="flex items-center gap-1.5"
+      style={{ whiteSpace: "nowrap" }}
+    >
       <span
         style={{
           width: hatch ? 12 : 8,

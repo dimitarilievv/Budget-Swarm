@@ -14,7 +14,10 @@ export interface TripContextValue {
   /** The request that produced {@link result} — carries budget, preferences and origin, which
    * the response omits but the Results page needs for the hero and the budget bar. */
   request: TripRequestPayload | null;
-  setResult: (result: TripResponse | null, request?: TripRequestPayload | null) => void;
+  setResult: (
+    result: TripResponse | null,
+    request?: TripRequestPayload | null,
+  ) => void;
   clear: () => void;
 }
 

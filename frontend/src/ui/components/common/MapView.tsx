@@ -34,7 +34,9 @@ function pin(color: string): L.DivIcon {
 /** A numbered pin for an itinerary stop; `hot` enlarges + rings it for the hover highlight. */
 function numberedPin(color: string, n: number, hot = false): L.DivIcon {
   const size = hot ? 32 : 26;
-  const ring = hot ? "box-shadow:0 0 0 6px rgba(15,148,136,.25),0 2px 6px rgba(15,23,42,.35);" : "box-shadow:0 1px 4px rgba(15,23,42,.45);";
+  const ring = hot
+    ? "box-shadow:0 0 0 6px rgba(15,148,136,.25),0 2px 6px rgba(15,23,42,.35);"
+    : "box-shadow:0 1px 4px rgba(15,23,42,.45);";
   const bg = hot ? "#0b7a70" : color;
   return L.divIcon({
     className: "",
@@ -79,9 +81,9 @@ export default function MapView({
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | undefined>(undefined);
   const markerByKey = useRef<Map<string, L.Marker>>(new Map());
-  const markerByNumber = useRef<Map<number, { marker: L.Marker; color: string }>>(
-    new Map(),
-  );
+  const markerByNumber = useRef<
+    Map<number, { marker: L.Marker; color: string }>
+  >(new Map());
   const pointsRef = useRef<L.LatLngTuple[]>([]);
 
   useEffect(() => {

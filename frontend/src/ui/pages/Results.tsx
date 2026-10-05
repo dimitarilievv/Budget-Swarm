@@ -515,7 +515,9 @@ export default function ResultsPage({
                 </span>
               )}
             </div>
-            <div style={{ fontSize: 34, fontWeight: 800, letterSpacing: "-.02em" }}>
+            <div
+              style={{ fontSize: 34, fontWeight: 800, letterSpacing: "-.02em" }}
+            >
               ≈ {euro(total)}
             </div>
             <BudgetBar costs={costs} budget={budget} total={total} />
@@ -562,7 +564,10 @@ export default function ResultsPage({
 
         {/* Flights + stay */}
         <div className="grid gap-4 min-[900px]:grid-cols-2">
-          <TransportSummaryCard transport={plan.transport} cost={costs.transport} />
+          <TransportSummaryCard
+            transport={plan.transport}
+            cost={costs.transport}
+          />
           <StayCard
             accommodation={plan.accommodation}
             nights={nights}
@@ -634,8 +639,7 @@ function WhySentence({
   if (budget != null && left != null && left >= 0) {
     parts.push(
       <>
-        stays{" "}
-        <b style={{ color: C.tealDark }}>{euro(left)} under</b> your{" "}
+        stays <b style={{ color: C.tealDark }}>{euro(left)} under</b> your{" "}
         {euro(budget)} budget
       </>,
     );
@@ -811,7 +815,10 @@ function transportSub(transport?: PlanTransport | null): string {
 
 function weatherColor(day: PlanWeatherDay): string {
   const text = (day.conditions ?? "").toLowerCase();
-  if (/rain|drizzle|shower|storm|thunder/.test(text) || (day.precip_prob ?? 0) >= 50)
+  if (
+    /rain|drizzle|shower|storm|thunder/.test(text) ||
+    (day.precip_prob ?? 0) >= 50
+  )
     return "#6aa8d8";
   if (/cloud|overcast|fog|mist/.test(text) || (day.precip_prob ?? 0) >= 25)
     return "#c9d3d1";
@@ -858,9 +865,9 @@ function WeatherStrip({
                 Typical conditions
               </span>
               <span style={{ fontSize: 12, color: C.muted, lineHeight: 1.45 }}>
-                Your trip is too far ahead for a live forecast — these are typical
-                conditions for the dates, averaged from recent years, so the actual
-                weather can differ.
+                Your trip is too far ahead for a live forecast — these are
+                typical conditions for the dates, averaged from recent years, so
+                the actual weather can differ.
               </span>
             </>
           ) : (
@@ -892,7 +899,8 @@ function WeatherStrip({
                   <span
                     style={{ fontSize: 12, fontWeight: 600, color: C.muted }}
                   >
-                    D{i + 1} · {weekday(w.forecast_date) || dayMonth(w.forecast_date)}
+                    D{i + 1} ·{" "}
+                    {weekday(w.forecast_date) || dayMonth(w.forecast_date)}
                   </span>
                   <Dot color={weatherColor(w)} size={10} />
                 </div>
@@ -1094,10 +1102,7 @@ function TransportSummaryCard({
           <Icon className="h-6 w-6" />
         </span>
         <div>
-          <div
-            style={{ fontSize: 18, fontWeight: 700 }}
-            className="capitalize"
-          >
+          <div style={{ fontSize: 18, fontWeight: 700 }} className="capitalize">
             {transport.mode}
           </div>
           {transport.distance_km != null && (
@@ -1454,9 +1459,7 @@ function DayView({
     >
       <div className="flex flex-col gap-1">
         <div className="flex items-baseline justify-between pb-2">
-          <span style={{ fontSize: 20, fontWeight: 800 }}>
-            Day {index + 1}
-          </span>
+          <span style={{ fontSize: 20, fontWeight: 800 }}>Day {index + 1}</span>
           <span style={{ fontSize: 13, color: C.muted }}>
             {day.stops.length} {day.stops.length === 1 ? "stop" : "stops"}
           </span>
@@ -1572,7 +1575,12 @@ function DayView({
       ) : (
         <div
           className="flex items-center justify-center rounded-2xl"
-          style={{ background: C.soft, color: C.muted, fontSize: 13, minHeight: 320 }}
+          style={{
+            background: C.soft,
+            color: C.muted,
+            fontSize: 13,
+            minHeight: 320,
+          }}
         >
           No mapped stops for this day.
         </div>
@@ -1626,7 +1634,13 @@ function FlightDetail({
       >
         <span
           className="flex items-center justify-center"
-          style={{ width: 48, height: 48, borderRadius: 14, background: C.tealTint, color: C.tealDark }}
+          style={{
+            width: 48,
+            height: 48,
+            borderRadius: 14,
+            background: C.tealTint,
+            color: C.tealDark,
+          }}
         >
           <Icon className="h-6 w-6" />
         </span>
@@ -1714,7 +1728,9 @@ function FlightDetail({
 function estimateNights(plan: ChosenPlan): number | null {
   const a = plan.accommodation;
   if (!a || a.price_per_night <= 0) return null;
-  const nights = Math.round(plan.cost_breakdown.accommodation / a.price_per_night);
+  const nights = Math.round(
+    plan.cost_breakdown.accommodation / a.price_per_night,
+  );
   return nights > 0 ? nights : null;
 }
 

@@ -55,7 +55,11 @@ const C = {
   soft: "#f1f5f4",
 };
 
-const WRAP: React.CSSProperties = { maxWidth: 1200, margin: "0 auto", padding: "0 32px" };
+const WRAP: React.CSSProperties = {
+  maxWidth: 1200,
+  margin: "0 auto",
+  padding: "0 32px",
+};
 const EYEBROW: React.CSSProperties = {
   fontSize: 12,
   fontWeight: 700,
@@ -100,18 +104,52 @@ const COMPARE: [string, string, string][] = [
 ];
 
 const TABS = [
-  "Flight search", "Hotel deals", "Weather 10-day", "Bus timetable", "Maps", "Reviews",
-  "Budget.xlsx", '"Top 10 things…"', "Currency", "Fuel calculator", "Hostel site", "Forum thread",
+  "Flight search",
+  "Hotel deals",
+  "Weather 10-day",
+  "Bus timetable",
+  "Maps",
+  "Reviews",
+  "Budget.xlsx",
+  '"Top 10 things…"',
+  "Currency",
+  "Fuel calculator",
+  "Hostel site",
+  "Forum thread",
 ];
 const TILT = [-3, 2, -1, 3, -2, 1, -3, 2, 0, -2, 3, -1];
 
 const FAQS: [string, string, string][] = [
-  ["Is BudgetSwarm free?", "Yes. Planning a trip is free. We link you to providers like Airbnb and airlines when you want to book.", "Pricing"],
-  ["How accurate are the prices?", "Flights and stays are live where available. Everything else is a careful estimate, and we label what's estimated.", "Planning"],
-  ["Do I need a destination in mind?", "No, that's the point. Give us a budget and what you enjoy, and we pick the destination for you.", "Planning"],
-  ["Can I travel by car or bus?", "Yes. Choose your transport mode, and for car trips we use your fuel consumption to calculate the cost.", "Travel"],
-  ["What does the swarm actually do?", "Several AI agents work at once — one checks transport, one checks stays, one checks weather and one checks highlights. A coordinator then scores every destination against your budget.", "Planning"],
-  ["Can I compare other destinations?", "Every plan includes a comparison with the next best cities, so you can switch if one suits you better.", "Pricing"],
+  [
+    "Is BudgetSwarm free?",
+    "Yes. Planning a trip is free. We link you to providers like Airbnb and airlines when you want to book.",
+    "Pricing",
+  ],
+  [
+    "How accurate are the prices?",
+    "Flights and stays are live where available. Everything else is a careful estimate, and we label what's estimated.",
+    "Planning",
+  ],
+  [
+    "Do I need a destination in mind?",
+    "No, that's the point. Give us a budget and what you enjoy, and we pick the destination for you.",
+    "Planning",
+  ],
+  [
+    "Can I travel by car or bus?",
+    "Yes. Choose your transport mode, and for car trips we use your fuel consumption to calculate the cost.",
+    "Travel",
+  ],
+  [
+    "What does the swarm actually do?",
+    "Several AI agents work at once — one checks transport, one checks stays, one checks weather and one checks highlights. A coordinator then scores every destination against your budget.",
+    "Planning",
+  ],
+  [
+    "Can I compare other destinations?",
+    "Every plan includes a comparison with the next best cities, so you can switch if one suits you better.",
+    "Pricing",
+  ],
 ];
 
 export default function Home() {
@@ -181,7 +219,13 @@ function Header() {
           type="button"
           aria-label="BudgetSwarm home"
           onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
-          style={{ all: "unset", cursor: "pointer", display: "flex", alignItems: "center", gap: 10 }}
+          style={{
+            all: "unset",
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+          }}
         >
           <span
             style={{
@@ -239,11 +283,19 @@ function Header() {
 
 /* ---------------- Hero + form ---------------- */
 
-function Hero({ onResult }: { onResult: Parameters<typeof TripInputForm>[0]["onResult"] }) {
+function Hero({
+  onResult,
+}: {
+  onResult: Parameters<typeof TripInputForm>[0]["onResult"];
+}) {
   return (
     <section
       id="plan"
-      style={{ background: "linear-gradient(160deg,#f3f6ea 0%,#eaf6f3 45%,#dff3f0 100%)", scrollMarginTop: 60 }}
+      style={{
+        background:
+          "linear-gradient(160deg,#f3f6ea 0%,#eaf6f3 45%,#dff3f0 100%)",
+        scrollMarginTop: 60,
+      }}
     >
       <div
         style={{ maxWidth: 1200, margin: "0 auto", padding: "32px 32px 48px" }}
@@ -278,9 +330,18 @@ function Hero({ onResult }: { onResult: Parameters<typeof TripInputForm>[0]["onR
             <br />
             We'll find <span style={{ color: C.teal }}>where to go.</span>
           </h1>
-          <p style={{ margin: 0, fontSize: 17, lineHeight: 1.6, color: "#4a5856", maxWidth: 470 }}>
-            BudgetSwarm uses AI to analyse travel costs, transport logistics and city highlights,
-            then builds the perfect trip that respects your wallet.
+          <p
+            style={{
+              margin: 0,
+              fontSize: 17,
+              lineHeight: 1.6,
+              color: "#4a5856",
+              maxWidth: 470,
+            }}
+          >
+            BudgetSwarm uses AI to analyse travel costs, transport logistics and
+            city highlights, then builds the perfect trip that respects your
+            wallet.
           </p>
           <div style={{ display: "flex", gap: 28, flexWrap: "wrap" }}>
             {(
@@ -290,7 +351,15 @@ function Hero({ onResult }: { onResult: Parameters<typeof TripInputForm>[0]["onR
               ] as [string, string, string][]
             ).map(([c, a, b]) => (
               <div key={a} style={{ display: "flex", gap: 10 }}>
-                <span style={{ width: 8, height: 8, borderRadius: 4, background: c, marginTop: 6 }} />
+                <span
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: 4,
+                    background: c,
+                    marginTop: 6,
+                  }}
+                />
                 <div>
                   <div style={{ fontSize: 12, color: C.muted }}>{a}</div>
                   <div style={{ fontSize: 15, fontWeight: 600 }}>{b}</div>
@@ -300,7 +369,14 @@ function Hero({ onResult }: { onResult: Parameters<typeof TripInputForm>[0]["onR
           </div>
           <a
             href="#how"
-            style={{ alignSelf: "start", fontSize: 14, fontWeight: 600, color: C.tealDark, textDecoration: "none", marginTop: 8 }}
+            style={{
+              alignSelf: "start",
+              fontSize: 14,
+              fontWeight: 600,
+              color: C.tealDark,
+              textDecoration: "none",
+              marginTop: 8,
+            }}
           >
             See how it works ↓
           </a>
@@ -318,7 +394,9 @@ function Hero({ onResult }: { onResult: Parameters<typeof TripInputForm>[0]["onR
         >
           <div style={{ marginBottom: 10 }}>
             <div style={{ fontSize: 18, fontWeight: 800 }}>Plan your trip</div>
-            <div style={{ fontSize: 12, color: C.muted }}>About 30 seconds. We'll do the rest.</div>
+            <div style={{ fontSize: 12, color: C.muted }}>
+              About 30 seconds. We'll do the rest.
+            </div>
           </div>
           <TripInputForm onResult={onResult} />
         </div>
@@ -333,7 +411,15 @@ function HowItWorks() {
   const bg = "#cde8e1";
   return (
     <section id="how" style={{ background: bg, scrollMarginTop: 60 }}>
-      <div style={{ ...WRAP, padding: "112px 32px", display: "flex", flexDirection: "column", gap: 64 }}>
+      <div
+        style={{
+          ...WRAP,
+          padding: "112px 32px",
+          display: "flex",
+          flexDirection: "column",
+          gap: 64,
+        }}
+      >
         <div
           style={{
             display: "grid",
@@ -350,9 +436,17 @@ function HowItWorks() {
               Trip out.
             </h2>
           </div>
-          <p style={{ margin: 0, fontSize: 17, color: C.muted, lineHeight: 1.65, maxWidth: 440 }}>
-            You tell us what you can spend. A swarm of AI agents does the hours of tab-hopping for
-            you, and hands back one plan in under a minute.
+          <p
+            style={{
+              margin: 0,
+              fontSize: 17,
+              color: C.muted,
+              lineHeight: 1.65,
+              maxWidth: 440,
+            }}
+          >
+            You tell us what you can spend. A swarm of AI agents does the hours
+            of tab-hopping for you, and hands back one plan in under a minute.
           </p>
         </div>
 
@@ -366,7 +460,10 @@ function HowItWorks() {
           {STEPS.map((s, i) => {
             const last = i === STEPS.length - 1;
             return (
-              <div key={s.title} style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+              <div
+                key={s.title}
+                style={{ display: "flex", flexDirection: "column", gap: 22 }}
+              >
                 <div style={{ display: "flex", alignItems: "center" }}>
                   <span
                     style={{
@@ -397,8 +494,17 @@ function HowItWorks() {
                     />
                   )}
                 </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 10, paddingRight: 24 }}>
-                  <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 10,
+                    paddingRight: 24,
+                  }}
+                >
+                  <div
+                    style={{ display: "flex", gap: 10, alignItems: "center" }}
+                  >
                     <span
                       style={{
                         fontSize: 12,
@@ -411,13 +517,46 @@ function HowItWorks() {
                     >
                       {s.who}
                     </span>
-                    <span style={{ width: 4, height: 4, borderRadius: 2, background: "#b8c6c3" }} />
-                    <span style={{ fontSize: 12, fontWeight: 600, color: C.muted, whiteSpace: "nowrap" }}>
+                    <span
+                      style={{
+                        width: 4,
+                        height: 4,
+                        borderRadius: 2,
+                        background: "#b8c6c3",
+                      }}
+                    />
+                    <span
+                      style={{
+                        fontSize: 12,
+                        fontWeight: 600,
+                        color: C.muted,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
                       {s.time}
                     </span>
                   </div>
-                  <h3 style={{ margin: 0, fontSize: 24, fontWeight: 800, letterSpacing: "-.02em" }}>{s.title}</h3>
-                  <p style={{ margin: 0, fontSize: 15, lineHeight: 1.7, color: C.muted, maxWidth: 320 }}>{s.text}</p>
+                  <h3
+                    style={{
+                      margin: 0,
+                      fontSize: 24,
+                      fontWeight: 800,
+                      letterSpacing: "-.02em",
+                    }}
+                  >
+                    {s.title}
+                  </h3>
+                  <p
+                    style={{
+                      margin: 0,
+                      fontSize: 15,
+                      lineHeight: 1.7,
+                      color: C.muted,
+                      maxWidth: 320,
+                    }}
+                  >
+                    {s.text}
+                  </p>
                 </div>
               </div>
             );
@@ -438,7 +577,8 @@ function HowItWorks() {
           }}
         >
           <span style={{ fontSize: 16 }}>
-            <b>Ready in under a minute.</b> <span style={{ color: C.muted }}>Free, and no account needed.</span>
+            <b>Ready in under a minute.</b>{" "}
+            <span style={{ color: C.muted }}>Free, and no account needed.</span>
           </span>
           <a
             href="#plan"
@@ -478,7 +618,15 @@ function WhyUs() {
   };
   return (
     <section id="why" style={{ background: "#e4e4e4", scrollMarginTop: 60 }}>
-      <div style={{ ...WRAP, padding: "112px 32px", display: "flex", flexDirection: "column", gap: 56 }}>
+      <div
+        style={{
+          ...WRAP,
+          padding: "112px 32px",
+          display: "flex",
+          flexDirection: "column",
+          gap: 56,
+        }}
+      >
         <div
           style={{
             display: "grid",
@@ -498,8 +646,19 @@ function WhyUs() {
                 ["15 → 1", "tabs open"],
               ] as [string, string][]
             ).map(([n, l]) => (
-              <div key={l} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <span style={{ fontSize: 44, fontWeight: 800, letterSpacing: "-.03em", lineHeight: 1, color: C.teal }}>
+              <div
+                key={l}
+                style={{ display: "flex", flexDirection: "column", gap: 4 }}
+              >
+                <span
+                  style={{
+                    fontSize: 44,
+                    fontWeight: 800,
+                    letterSpacing: "-.03em",
+                    lineHeight: 1,
+                    color: C.teal,
+                  }}
+                >
                   {n}
                 </span>
                 <span style={{ fontSize: 13, color: C.muted }}>{l}</span>
@@ -528,11 +687,26 @@ function WhyUs() {
               gap: 22,
             }}
           >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: ".06em", color: C.grey }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+              }}
+            >
+              <span
+                style={{
+                  fontSize: 13,
+                  fontWeight: 700,
+                  letterSpacing: ".06em",
+                  color: C.grey,
+                }}
+              >
                 PLANNING YOURSELF
               </span>
-              <span style={{ fontSize: 12, color: C.grey }}>{TABS.length} tabs open</span>
+              <span style={{ fontSize: 12, color: C.grey }}>
+                {TABS.length} tabs open
+              </span>
             </div>
             <div
               style={{
@@ -580,7 +754,9 @@ function WhyUs() {
                   }}
                 >
                   <span>{l}</span>
-                  <span style={{ fontWeight: 600, textAlign: "right" }}>{a}</span>
+                  <span style={{ fontWeight: 600, textAlign: "right" }}>
+                    {a}
+                  </span>
                 </div>
               ))}
             </div>
@@ -599,8 +775,22 @@ function WhyUs() {
               boxShadow: "0 30px 60px -30px rgba(15,80,72,.55)",
             }}
           >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontSize: 13, fontWeight: 800, letterSpacing: ".06em" }}>WITH BUDGETSWARM</span>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+              }}
+            >
+              <span
+                style={{
+                  fontSize: 13,
+                  fontWeight: 800,
+                  letterSpacing: ".06em",
+                }}
+              >
+                WITH BUDGETSWARM
+              </span>
               <span style={{ fontSize: 12, color: "#c9ece6" }}>1 tab</span>
             </div>
             <div
@@ -626,13 +816,19 @@ function WhyUs() {
                   color: C.ink,
                 }}
               >
-                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                <div
+                  style={{ display: "flex", flexDirection: "column", gap: 2 }}
+                >
                   <b style={{ fontSize: 15 }}>Istanbul, 5 days</b>
-                  <span style={{ fontSize: 12, color: C.muted }}>Flights, stay and 20 stops</span>
+                  <span style={{ fontSize: 12, color: C.muted }}>
+                    Flights, stay and 20 stops
+                  </span>
                 </div>
                 <b style={{ fontSize: 18 }}>€329</b>
               </div>
-              <span style={{ fontSize: 12, color: "#c9ece6", textAlign: "center" }}>
+              <span
+                style={{ fontSize: 12, color: "#c9ece6", textAlign: "center" }}
+              >
                 Everything in one plan, ready to book
               </span>
             </div>
@@ -650,7 +846,15 @@ function WhyUs() {
                   }}
                 >
                   <span style={{ color: "#c9ece6" }}>{l}</span>
-                  <span style={{ display: "flex", gap: 8, alignItems: "center", fontWeight: 700, textAlign: "right" }}>
+                  <span
+                    style={{
+                      display: "flex",
+                      gap: 8,
+                      alignItems: "center",
+                      fontWeight: 700,
+                      textAlign: "right",
+                    }}
+                  >
                     <span style={check}>✓</span>
                     {b}
                   </span>
@@ -683,8 +887,18 @@ function Faq() {
         <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <span style={EYEBROW}>FAQ</span>
-            <h2 style={{ ...H2, fontSize: "clamp(32px,4.2vw,46px)" }}>Questions, answered</h2>
-            <p style={{ margin: 0, fontSize: 16, color: "#4a5856", lineHeight: 1.6, maxWidth: 360 }}>
+            <h2 style={{ ...H2, fontSize: "clamp(32px,4.2vw,46px)" }}>
+              Questions, answered
+            </h2>
+            <p
+              style={{
+                margin: 0,
+                fontSize: 16,
+                color: "#4a5856",
+                lineHeight: 1.6,
+                maxWidth: 360,
+              }}
+            >
               Everything you need to know before you plan your first trip.
             </p>
           </div>
@@ -791,10 +1005,27 @@ function Faq() {
                     cursor: "pointer",
                   }}
                 >
-                  <span style={{ flex: "none", width: 32, fontSize: 13, fontWeight: 800, color: isOpen ? C.teal : "#9fb3af" }}>
+                  <span
+                    style={{
+                      flex: "none",
+                      width: 32,
+                      fontSize: 13,
+                      fontWeight: 800,
+                      color: isOpen ? C.teal : "#9fb3af",
+                    }}
+                  >
                     {String(i + 1).padStart(2, "0")}
                   </span>
-                  <span style={{ flex: 1, fontSize: 17, fontWeight: 700, letterSpacing: "-.01em" }}>{q}</span>
+                  <span
+                    style={{
+                      flex: 1,
+                      fontSize: 17,
+                      fontWeight: 700,
+                      letterSpacing: "-.01em",
+                    }}
+                  >
+                    {q}
+                  </span>
                   <span
                     style={{
                       flex: "none",
@@ -814,8 +1045,25 @@ function Faq() {
                   </span>
                 </button>
                 {isOpen && (
-                  <div style={{ padding: "0 22px 22px 70px", display: "flex", flexDirection: "column", gap: 12 }}>
-                    <p style={{ margin: 0, fontSize: 15, lineHeight: 1.7, color: "#4a5856", maxWidth: 560 }}>{a}</p>
+                  <div
+                    style={{
+                      padding: "0 22px 22px 70px",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 12,
+                    }}
+                  >
+                    <p
+                      style={{
+                        margin: 0,
+                        fontSize: 15,
+                        lineHeight: 1.7,
+                        color: "#4a5856",
+                        maxWidth: 560,
+                      }}
+                    >
+                      {a}
+                    </p>
                     <span
                       style={{
                         alignSelf: "start",
@@ -843,7 +1091,10 @@ function Faq() {
 /* ---------------- Footer ---------------- */
 
 function Footer() {
-  const link: React.CSSProperties = { color: "#c3d3d0", textDecoration: "none" };
+  const link: React.CSSProperties = {
+    color: "#c3d3d0",
+    textDecoration: "none",
+  };
   return (
     <footer style={{ background: "#027a69", color: "#fff" }}>
       <div
@@ -858,14 +1109,28 @@ function Footer() {
         }}
       >
         <div>
-          <div style={{ fontSize: 15, fontWeight: 700 }}>© 2026 BudgetSwarm</div>
-          <div style={{ fontSize: 13, color: "#9fb3af" }}>AI-powered travel planning for smarter budgets.</div>
+          <div style={{ fontSize: 15, fontWeight: 700 }}>
+            © 2026 BudgetSwarm
+          </div>
+          <div style={{ fontSize: 13, color: "#9fb3af" }}>
+            AI-powered travel planning for smarter budgets.
+          </div>
         </div>
-        <nav style={{ display: "flex", gap: 24, fontSize: 14, flexWrap: "wrap" }}>
-          <a href="#faq" style={link}>Contact support</a>
-          <a href="#faq" style={link}>FAQ</a>
-          <a href="#why" style={link}>Why us</a>
-          <a href="#how" style={link}>How it works</a>
+        <nav
+          style={{ display: "flex", gap: 24, fontSize: 14, flexWrap: "wrap" }}
+        >
+          <a href="#faq" style={link}>
+            Contact support
+          </a>
+          <a href="#faq" style={link}>
+            FAQ
+          </a>
+          <a href="#why" style={link}>
+            Why us
+          </a>
+          <a href="#how" style={link}>
+            How it works
+          </a>
         </nav>
       </div>
     </footer>
