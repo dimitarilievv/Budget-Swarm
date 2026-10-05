@@ -57,9 +57,15 @@ describe("App", () => {
     render(<App />);
     // The home page's sticky header (banner) has anchor nav links and a Profile pill.
     const header = within(screen.getByRole("banner"));
-    expect(header.getByRole("link", { name: /plan trip/i })).toBeInTheDocument();
-    expect(header.getByRole("link", { name: /how it works/i })).toBeInTheDocument();
-    expect(header.getByRole("button", { name: /profile/i })).toBeInTheDocument();
+    expect(
+      header.getByRole("link", { name: /plan trip/i }),
+    ).toBeInTheDocument();
+    expect(
+      header.getByRole("link", { name: /how it works/i }),
+    ).toBeInTheDocument();
+    expect(
+      header.getByRole("button", { name: /profile/i }),
+    ).toBeInTheDocument();
   });
 
   it("navigates Home → Results → Compare → back after generating a trip", async () => {

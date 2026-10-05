@@ -179,16 +179,16 @@ describe("ResultsPage (redesign)", () => {
   it("shows the estimated chip when a figure is not fully live", () => {
     // Accommodation is 'cached' in the fixture, so the chip shows.
     render(<ResultsPage response={fixture()} request={request()} />);
-    expect(
-      screen.getByText(/some figures estimated/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/some figures estimated/i)).toBeInTheDocument();
   });
 
   it("hides the estimated chip when everything is live and nothing degraded", () => {
     const r = fixture();
     r.chosen_plan.accommodation!.quality_flag = "real";
     render(<ResultsPage response={r} request={request()} />);
-    expect(screen.queryByText(/some figures estimated/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/some figures estimated/i),
+    ).not.toBeInTheDocument();
   });
 
   it("summarises flights and stay, omitting the activities tile when free", () => {
@@ -233,19 +233,17 @@ describe("ResultsPage (redesign)", () => {
     expect(
       screen.getByRole("button", { name: /fly out/i }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /fly home/i })).toBeInTheDocument();
-    // Day 1 is selected by default → its stops show.
     expect(
-      screen.getByRole("button", { name: /day 1/i }),
+      screen.getByRole("button", { name: /fly home/i }),
     ).toBeInTheDocument();
+    // Day 1 is selected by default → its stops show.
+    expect(screen.getByRole("button", { name: /day 1/i })).toBeInTheDocument();
   });
 
   it("dedupes near-identical stops and cleans category labels", () => {
     render(<ResultsPage response={fixture()} request={request()} />);
     // "The Hagia Sophia Grand Mosque" + "Hagia Sophia Grand Mosque" collapse to one row.
-    expect(
-      screen.getAllByText(/Hagia Sophia Grand Mosque/).length,
-    ).toBe(1);
+    expect(screen.getAllByText(/Hagia Sophia Grand Mosque/).length).toBe(1);
     // national_museums → "Museum" (shown in the stop's "duration · category" line).
     expect(screen.getByText(/· Museum/)).toBeInTheDocument();
   });
@@ -281,7 +279,9 @@ describe("ResultsPage (redesign)", () => {
     expect(
       screen.getByText(/isn't available for these dates yet/i),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/no forecast available/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/no forecast available/i),
+    ).not.toBeInTheDocument();
   });
 
   it("labels far-future weather as typical conditions with a caveat", () => {
@@ -292,7 +292,9 @@ describe("ResultsPage (redesign)", () => {
       .slice(0, 10);
     render(<ResultsPage response={r} request={request()} />);
     // "Typical conditions" appears on both the badge and the caveat.
-    expect(screen.getAllByText(/typical conditions/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/typical conditions/i).length).toBeGreaterThan(
+      0,
+    );
     expect(screen.getByText(/averaged from recent years/i)).toBeInTheDocument();
     // The days still render (temperatures present), just labelled as typical.
     expect(screen.getByText("24°")).toBeInTheDocument();

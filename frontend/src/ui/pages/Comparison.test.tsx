@@ -94,8 +94,12 @@ describe("ComparisonPage (city cards)", () => {
       expect(screen.getByTestId(`city-${city}`)).toBeInTheDocument();
     }
     // Ranks run #1..#3 in score order.
-    expect(within(screen.getByTestId("city-Budapest")).getByText("#1")).toBeInTheDocument();
-    expect(within(screen.getByTestId("city-Sofia")).getByText("#3")).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("city-Budapest")).getByText("#1"),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("city-Sofia")).getByText("#3"),
+    ).toBeInTheDocument();
   });
 
   it("marks exactly one Recommended card (the chosen destination)", () => {
@@ -201,7 +205,11 @@ describe("ComparisonPage (city cards)", () => {
   it("calls onBack from the back link", () => {
     const onBack = vi.fn();
     render(
-      <ComparisonPage response={threeCities()} request={request()} onBack={onBack} />,
+      <ComparisonPage
+        response={threeCities()}
+        request={request()}
+        onBack={onBack}
+      />,
     );
     fireEvent.click(screen.getByRole("button", { name: /back to budapest/i }));
     expect(onBack).toHaveBeenCalledTimes(1);

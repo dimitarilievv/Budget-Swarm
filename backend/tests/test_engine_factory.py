@@ -79,8 +79,9 @@ def test_translating_engine_converts_engine_no_plan_to_api_error():
 
 
 def test_translating_engine_maps_origin_unresolved_to_validation_error():
-    from ai_engine.core.planner import OriginUnresolvedError
     from errors import ValidationError as ApiValidationError
+
+    from ai_engine.core.planner import OriginUnresolvedError
 
     class _BadOrigin:
         def generate_trip(self, request):
