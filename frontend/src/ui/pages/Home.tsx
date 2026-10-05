@@ -8,7 +8,7 @@
  * to Results. The page brings its own sticky anchor header + teal footer (the shared Navbar/
  * Footer are shown on the Results/Compare views instead).
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import TripInputForm from "@/ui/components/forms/TripInputForm";
 import { useTripResult } from "@/hooks/useTripResult";
@@ -42,6 +42,96 @@ function useActiveSection(ids: string[]): string {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ids.join(",")]);
   return active;
+}
+
+/** True when the viewer prefers reduced motion — we then skip the scroll animations. */
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
+}
+
+/**
+ * Reveals an element the first time it scrolls into view. Returns false until then; returns
+ * true immediately where IntersectionObserver is unavailable (SSR/tests) or motion is reduced,
+ * so content is never left hidden.
+ */
+function useInView(ref: React.RefObject<Element | null>): boolean {
+  const [inView, setInView] = useState(false);
+  useEffect(() => {
+    if (typeof IntersectionObserver === "undefined" || prefersReducedMotion()) {
+      setInView(true);
+      return;
+    }
+    const el = ref.current;
+    if (!el) {
+      setInView(true);
+      return;
+    }
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting) {
+            setInView(true);
+            io.disconnect();
+            return;
+          }
+        }
+      },
+      { threshold: 0.15, rootMargin: "0px 0px -8% 0px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [ref]);
+  return inView;
+}
+
+type RevealProps = React.HTMLAttributes<HTMLDivElement> & {
+  /** Stagger, in ms, so items in a group cascade rather than pop at once. */
+  delay?: number;
+  /** How far (px) the element rises as it fades in. */
+  y?: number;
+};
+
+/**
+ * A plain <div> that fades and rises into place when scrolled into view. It merges the
+ * reveal transition with any transition already on `style`, so existing hover/state
+ * animations keep working, and honours prefers-reduced-motion (renders in place, no motion).
+ */
+function Reveal({ children, delay = 0, y = 26, style, ...rest }: RevealProps) {
+  const ref = useRef<HTMLDivElement>(null);
+  const shown = useInView(ref);
+  const reveal: React.CSSProperties = {
+    opacity: shown ? 1 : 0,
+    transform: shown ? "none" : `translateY(${y}px)`,
+    transition: [
+      style?.transition,
+      `opacity .7s ease ${delay}ms`,
+      `transform .75s cubic-bezier(.22,.7,.2,1) ${delay}ms`,
+    ]
+      .filter(Boolean)
+      .join(", "),
+    willChange: "opacity, transform",
+  };
+  return (
+    <div ref={ref} {...rest} style={{ ...style, ...reveal }}>
+      {children}
+    </div>
+  );
+}
+
+/** True once the page has scrolled past `threshold` px — used to lift the sticky header. */
+function useScrolled(threshold = 8): boolean {
+  const [scrolled, setScrolled] = useState(false);
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > threshold);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, [threshold]);
+  return scrolled;
 }
 
 const C = {
@@ -178,6 +268,7 @@ export default function Home() {
 
 function Header() {
   const active = useActiveSection(["plan", "how", "why", "faq"]);
+  const scrolled = useScrolled(8);
   const link: React.CSSProperties = {
     padding: "7px 14px",
     color: C.muted,
@@ -200,9 +291,14 @@ function Header() {
         position: "sticky",
         top: 0,
         zIndex: 10,
-        background: "rgba(246,250,249,.85)",
+        background: scrolled
+          ? "rgba(246,250,249,.95)"
+          : "rgba(246,250,249,.85)",
         backdropFilter: "blur(10px)",
-        borderBottom: "1px solid rgba(15,148,136,.1)",
+        borderBottom: `1px solid rgba(15,148,136,${scrolled ? 0.18 : 0.1})`,
+        boxShadow: scrolled ? "0 8px 24px -16px rgba(15,80,72,.45)" : "none",
+        transition:
+          "box-shadow .25s ease, background .25s ease, border-color .25s ease",
       }}
     >
       <div
@@ -301,7 +397,7 @@ function Hero({
         style={{ maxWidth: 1200, margin: "0 auto", padding: "32px 32px 48px" }}
         className="grid items-center gap-8 lg:gap-14 lg:grid-cols-[1fr_minmax(0,440px)]"
       >
-        <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+        <Reveal style={{ display: "flex", flexDirection: "column", gap: 22 }}>
           <span
             style={{
               alignSelf: "start",
@@ -380,11 +476,13 @@ function Hero({
           >
             See how it works ↓
           </a>
-        </div>
+        </Reveal>
 
         {/* The real planner — all form logic, validation, geolocation, API call. It owns its
             own card chrome, and swaps to the searching card while a plan is generating. */}
-        <TripInputForm onResult={onResult} />
+        <Reveal delay={140}>
+          <TripInputForm onResult={onResult} />
+        </Reveal>
       </div>
     </section>
   );
@@ -405,7 +503,7 @@ function HowItWorks() {
           gap: 64,
         }}
       >
-        <div
+        <Reveal
           style={{
             display: "grid",
             gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,360px),1fr))",
@@ -433,7 +531,7 @@ function HowItWorks() {
             You tell us what you can spend. A swarm of AI agents does the hours
             of tab-hopping for you, and hands back one plan in under a minute.
           </p>
-        </div>
+        </Reveal>
 
         <div
           style={{
@@ -445,8 +543,9 @@ function HowItWorks() {
           {STEPS.map((s, i) => {
             const last = i === STEPS.length - 1;
             return (
-              <div
+              <Reveal
                 key={s.title}
+                delay={i * 110}
                 style={{ display: "flex", flexDirection: "column", gap: 22 }}
               >
                 <div style={{ display: "flex", alignItems: "center" }}>
@@ -543,12 +642,12 @@ function HowItWorks() {
                     {s.text}
                   </p>
                 </div>
-              </div>
+              </Reveal>
             );
           })}
         </div>
 
-        <div
+        <Reveal
           style={{
             display: "flex",
             alignItems: "center",
@@ -580,7 +679,7 @@ function HowItWorks() {
           >
             Start with your budget ↑
           </a>
-        </div>
+        </Reveal>
       </div>
     </section>
   );
@@ -612,7 +711,7 @@ function WhyUs() {
           gap: 56,
         }}
       >
-        <div
+        <Reveal
           style={{
             display: "grid",
             gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,360px),1fr))",
@@ -650,7 +749,7 @@ function WhyUs() {
               </div>
             ))}
           </div>
-        </div>
+        </Reveal>
 
         <div
           style={{
@@ -661,7 +760,7 @@ function WhyUs() {
           }}
         >
           {/* Planning yourself */}
-          <div
+          <Reveal
             style={{
               borderRadius: 26,
               background: "#b6d7cf",
@@ -745,10 +844,11 @@ function WhyUs() {
                 </div>
               ))}
             </div>
-          </div>
+          </Reveal>
 
           {/* With BudgetSwarm */}
-          <div
+          <Reveal
+            delay={120}
             style={{
               borderRadius: 26,
               background: C.teal,
@@ -846,7 +946,7 @@ function WhyUs() {
                 </div>
               ))}
             </div>
-          </div>
+          </Reveal>
         </div>
       </div>
     </section>
@@ -869,7 +969,7 @@ function Faq() {
           alignItems: "start",
         }}
       >
-        <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+        <Reveal style={{ display: "flex", flexDirection: "column", gap: 24 }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <span style={EYEBROW}>FAQ</span>
             <h2 style={{ ...H2, fontSize: "clamp(32px,4.2vw,46px)" }}>
@@ -957,14 +1057,15 @@ function Faq() {
               Contact support →
             </button>
           </div>
-        </div>
+        </Reveal>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {FAQS.map(([q, a, cat], i) => {
             const isOpen = open === i;
             return (
-              <div
+              <Reveal
                 key={q}
+                delay={i * 70}
                 style={{
                   background: "#fff",
                   borderRadius: 18,
@@ -1064,7 +1165,7 @@ function Faq() {
                     </span>
                   </div>
                 )}
-              </div>
+              </Reveal>
             );
           })}
         </div>
