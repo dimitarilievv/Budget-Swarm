@@ -29,14 +29,9 @@ import OriginInput, { type OriginValue } from "./OriginInput";
 import {
   IconArrowRight,
   IconBus,
-  IconCamera,
   IconCar,
-  IconLandmark,
-  IconMoon,
-  IconMountain,
   IconPlane,
   IconTrain,
-  IconUtensils,
 } from "@/ui/components/common/Icons";
 import { INPUT_CLASS } from "@/ui/theme/theme";
 
@@ -54,17 +49,20 @@ const TRANSPORT_MODES: {
 ];
 
 // Interests map to the engine's preference themes (culture/nature/nightlife/food/tourism).
-const INTERESTS: { key: string; label: string; Icon: IconType }[] = [
-  { key: "culture", label: "Culture", Icon: IconLandmark },
-  { key: "nature", label: "Nature", Icon: IconMountain },
-  { key: "food", label: "Food", Icon: IconUtensils },
-  { key: "nightlife", label: "Nightlife", Icon: IconMoon },
-  { key: "tourism", label: "Sightseeing", Icon: IconCamera },
+// Text-only chips (no icons).
+const INTERESTS: { key: string; label: string }[] = [
+  { key: "culture", label: "Culture" },
+  { key: "nature", label: "Nature" },
+  { key: "food", label: "Food" },
+  { key: "nightlife", label: "Nightlife" },
+  { key: "tourism", label: "Sightseeing" },
 ];
 const DEFAULT_INTERESTS = ["culture", "food", "tourism"];
 
 interface TripInputFormProps {
-  onResult?: (response: TripResponse) => void;
+  /** Receives the plan and the request that produced it (the request carries budget,
+   * preferences and origin, which the Results page needs but the response omits). */
+  onResult?: (response: TripResponse, request: TripRequestPayload) => void;
   submit?: (payload: TripRequestPayload) => Promise<TripResponse>;
 }
 
@@ -159,16 +157,25 @@ export default function TripInputForm({
     setSubmitError(null);
     try {
       const response = await submit(payload);
-      onResult?.(response);
+      onResult?.(response, payload);
     } catch (err) {
-      setSubmitError(
+      const apiErr =
         err instanceof ApiError
           ? err
           : new ApiError(
               "INTERNAL_ERROR",
               "Something went wrong. Please try again.",
-            ),
-      );
+            );
+      // A field validation error (e.g. an unresolvable start city) belongs inline on the
+      // form so the user can fix it in place, not on the full-screen error state.
+      if (
+        apiErr.code === "VALIDATION_ERROR" &&
+        apiErr.field === "origin_label"
+      ) {
+        setErrors((prev) => ({ ...prev, origin: apiErr.message }));
+        return;
+      }
+      setSubmitError(apiErr);
     } finally {
       setSubmitting(false);
     }
@@ -186,7 +193,9 @@ export default function TripInputForm({
     if (lastPayload.current) void runSubmit(lastPayload.current);
   }
 
-  const numberField = INPUT_CLASS;
+  // Hide the native number spinners so the €/days suffix is the only right-side element and
+  // reads cleanly, centred in the field.
+  const numberField = `${INPUT_CLASS} [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none`;
 
   // While a request is in flight, show the agent-progress screen; on failure, the error
   // state with a retry affordance. Form state persists behind both (same component).
@@ -212,14 +221,14 @@ export default function TripInputForm({
   }
 
   return (
-    <form onSubmit={handleSubmit} noValidate className="space-y-6 text-left">
+    <form onSubmit={handleSubmit} noValidate className="space-y-3 text-left">
       <OriginInput value={origin} onChange={setOrigin} />
       {errors.origin && (
         <p className="text-xs text-amber-600">{errors.origin}</p>
       )}
 
       {/* Budget · Duration · Travelers */}
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-2.5 sm:grid-cols-3">
         <div>
           <label
             htmlFor={ids.budget}
@@ -238,7 +247,7 @@ export default function TripInputForm({
               onChange={(e) => setBudget(e.target.value)}
               className={`${numberField} pr-9`}
             />
-            <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-slate-400">
+            <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-sm text-slate-400">
               €
             </span>
           </div>
@@ -282,12 +291,12 @@ export default function TripInputForm({
           >
             Travelers
           </label>
-          <div className="mt-1.5 flex items-center rounded-lg border border-slate-200 bg-white shadow-sm">
+          <div className="mt-1 flex items-center rounded-lg border border-slate-200 bg-white shadow-sm">
             <button
               type="button"
               aria-label="Fewer travelers"
               onClick={() => setTravelers((n) => Math.max(1, n - 1))}
-              className="px-3.5 py-2.5 text-lg text-slate-500 hover:text-teal-600"
+              className="px-3.5 py-2 text-base text-slate-500 hover:text-teal-600"
             >
               −
             </button>
@@ -298,13 +307,13 @@ export default function TripInputForm({
               value={travelers}
               aria-invalid={Boolean(errors.travelers)}
               onChange={(e) => setTravelers(Number(e.target.value))}
-              className="w-full border-x border-slate-100 py-2.5 text-center text-[15px] font-medium text-slate-900 focus:outline-none"
+              className="w-full border-x border-slate-100 py-2 text-center text-sm font-medium text-slate-900 focus:outline-none"
             />
             <button
               type="button"
               aria-label="More travelers"
               onClick={() => setTravelers((n) => n + 1)}
-              className="px-3.5 py-2.5 text-lg text-slate-500 hover:text-teal-600"
+              className="px-3.5 py-2 text-base text-slate-500 hover:text-teal-600"
             >
               +
             </button>
@@ -332,13 +341,13 @@ export default function TripInputForm({
                 type="button"
                 aria-pressed={active}
                 onClick={() => setTransportMode(m.value)}
-                className={`flex flex-col items-center gap-1.5 rounded-xl border px-3 py-3 text-sm font-medium transition ${
+                className={`flex items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-sm font-medium transition ${
                   active
                     ? "border-teal-500 bg-teal-50 text-teal-700 ring-1 ring-teal-500/40"
                     : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
                 }`}
               >
-                <m.Icon className="h-5 w-5" />
+                <m.Icon className="h-4 w-4" />
                 {m.label}
               </button>
             );
@@ -391,13 +400,12 @@ export default function TripInputForm({
                 type="button"
                 aria-pressed={active}
                 onClick={() => toggleInterest(it.key)}
-                className={`flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium transition ${
+                className={`rounded-full border px-3 py-1.5 text-sm font-medium transition ${
                   active
                     ? "border-teal-500 bg-teal-50 text-teal-700"
                     : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
                 }`}
               >
-                <it.Icon className="h-4 w-4" />
                 {it.label}
               </button>
             );
@@ -411,7 +419,7 @@ export default function TripInputForm({
       {/* CTA */}
       <button
         type="submit"
-        className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-teal-600 to-teal-500 px-4 py-3.5 text-base font-semibold text-white shadow-sm transition hover:from-teal-700 hover:to-teal-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40"
+        className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-teal-600 to-teal-500 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:from-teal-700 hover:to-teal-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40"
       >
         Generate Optimized Plan
         <IconArrowRight className="h-5 w-5" />

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { vi } from "vitest";
 
 import App from "./App";
@@ -42,7 +42,7 @@ describe("App", () => {
       screen.getByRole("heading", { name: /tell us your budget/i }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /budget\s*swarm/i }),
+      screen.getByRole("button", { name: /budgetswarm home/i }),
     ).toBeVisible();
   });
 
@@ -53,13 +53,18 @@ describe("App", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders the navigation bar", () => {
+  it("renders the home header nav", () => {
     render(<App />);
+    // The home page's sticky header (banner) has anchor nav links and a Profile pill.
+    const header = within(screen.getByRole("banner"));
     expect(
-      screen.getByRole("button", { name: /plan trip/i }),
+      header.getByRole("link", { name: /plan trip/i }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /profile/i }),
+      header.getByRole("link", { name: /how it works/i }),
+    ).toBeInTheDocument();
+    expect(
+      header.getByRole("button", { name: /profile/i }),
     ).toBeInTheDocument();
   });
 
@@ -87,11 +92,11 @@ describe("App", () => {
       screen.getByRole("button", { name: /compare destinations/i }),
     );
     expect(
-      screen.getByRole("heading", { name: /top destination comparisons/i }),
+      screen.getByRole("heading", { name: /compare destinations/i }),
     ).toBeInTheDocument();
 
-    // And back to the results.
-    fireEvent.click(screen.getByRole("button", { name: /back to results/i }));
+    // And back to the results (the compare page's back link names the recommended city).
+    fireEvent.click(screen.getByRole("button", { name: /back to/i }));
     expect(
       screen.getByRole("heading", { name: /budapest, hungary/i }),
     ).toBeInTheDocument();

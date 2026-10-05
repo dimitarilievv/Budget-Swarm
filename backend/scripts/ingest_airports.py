@@ -11,9 +11,15 @@ At request time :class:`ai_engine.utils.airports.AirportIndex` loads that snapsh
 and resolves any coordinate (origin or destination) to its nearest airport, so no
 schema change or per-city curation is required and arbitrary user origins work.
 
-Only ``large_airport`` and ``medium_airport`` rows with a 3-letter IATA code are
-kept (small airfields and heliports are not sensible commercial endpoints), giving
-a few thousand rows — small enough to scan in-process.
+Only ``large_airport`` and ``medium_airport`` rows that carry a 3-letter IATA code
+**and have scheduled passenger service** are kept (small airfields, heliports, and
+closed/cargo-only fields are not sensible commercial endpoints), giving a few thousand
+rows — small enough to scan in-process. The ``scheduled_service`` filter matters: a
+closed hub such as Istanbul Atatürk (``ISL``, no scheduled service since 2019) sits
+closer to the city centre than the operating airports, so without it the nearest-airport
+lookup would pick a code the flight API cannot price — every fare from/to that city then
+falls back to the distance estimate. Requiring scheduled service resolves Istanbul to the
+operating airports (``IST`` / ``SAW``) instead.
 
 Attribution: OurAirports data is released into the public domain
 (https://ourairports.com/data/). Source CSV:
@@ -64,14 +70,20 @@ def fetch_csv(url: str = OURAIRPORTS_URL, *, timeout: float = 60.0) -> str:
 def parse_airports(csv_text: str) -> list[dict[str, object]]:
     """Parse the CSV into slim ``{iata, name, lat, lon, type}`` records.
 
-    Keeps only large/medium airports carrying a 3-letter IATA code and valid
-    coordinates; everything else (heliports, closed fields, code-less strips) is
-    dropped so the snapshot stays small and every row is a viable endpoint.
+    Keeps only large/medium airports that carry a 3-letter IATA code, **have scheduled
+    passenger service**, and have valid coordinates; everything else (heliports, closed or
+    cargo-only fields such as Istanbul Atatürk/``ISL``, code-less strips) is dropped so the
+    snapshot stays small and every row is a viable, priceable commercial endpoint.
     """
     reader = csv.DictReader(io.StringIO(csv_text))
     records: list[dict[str, object]] = []
     for row in reader:
         if row.get("type") not in _KEEP_TYPES:
+            continue
+        # Require scheduled passenger service so the nearest-airport lookup never returns a
+        # closed/cargo-only field (e.g. ISL) that the flight API rejects — which would force
+        # every fare for that city onto the distance estimate.
+        if (row.get("scheduled_service") or "").strip().lower() != "yes":
             continue
         iata = (row.get("iata_code") or "").strip().upper()
         if len(iata) != 3 or not iata.isalpha():

@@ -739,7 +739,8 @@ def test_evaluate_runs_only_the_selected_mode():
     assert transit_spy.calls == 0
 
     agent.evaluate(_flight_request())
-    assert flight_spy.calls == 1 and transit_spy.calls == 0
+    # A round trip queries both legs (outbound + return); transit is still untouched.
+    assert flight_spy.calls >= 1 and transit_spy.calls == 0
 
 
 def test_evaluate_rejects_unknown_request_type():
@@ -824,8 +825,15 @@ def test_flight_invalid_currency_rejected():
         agent.flight_option(_flight_request(currency="euro"))
 
 
-def test_flight_round_trip_multipliers_are_configurable():
-    agent = TransportAgent(flight_service=_real_flight_service())
+def test_flight_round_trip_multipliers_are_the_fallback_when_return_unavailable():
+    # The symmetric multipliers apply only when the return leg can't be priced (no fare and
+    # no coordinates to estimate); normally the two real legs are summed instead.
+    def transport(req):
+        if req.origin == "BCN":  # the return leg (destination -> origin) has no data
+            return {"success": True, "data": []}
+        return RECORDED_TP
+
+    agent = TransportAgent(flight_service=_tp_service(transport))
     option = agent.flight_option(
         _flight_request(
             round_trip=True, round_trip_fare_multiplier=1.8, round_trip_duration_multiplier=1.5
@@ -833,6 +841,15 @@ def test_flight_round_trip_multipliers_are_configurable():
     )
     assert option.cost == pytest.approx(BEST_PRICE * 1.8)
     assert option.duration_minutes == round(BEST_DURATION * 1.5)
+
+
+def test_flight_round_trip_sums_both_real_legs():
+    # With a real return fare available, the round-trip cost is the sum of both legs (not the
+    # outbound doubled by a multiplier).
+    agent = TransportAgent(flight_service=_real_flight_service())
+    option = agent.flight_option(_flight_request(round_trip=True, round_trip_fare_multiplier=1.8))
+    assert option.cost == pytest.approx(BEST_PRICE * 2)  # outbound + return, not × 1.8
+    assert option.duration_minutes == BEST_DURATION * 2
 
 
 def test_flight_degrades_to_unpriced_option_when_all_providers_fail():

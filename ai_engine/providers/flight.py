@@ -123,7 +123,10 @@ class TravelpayoutsProvider(FlightProvider):
     def _raw(self, request: FlightRequest) -> dict[str, Any]:
         try:
             return self._transport(request)
-        except ProviderUnavailable:
+        except (ProviderUnavailable, ProviderNoResult):
+            # ProviderNoResult (e.g. a 4xx for an unsupported IATA pair) is permanent for
+            # this query — let it propagate so the chain falls straight to the estimate
+            # instead of burning the retry budget on a call that can only fail again.
             raise
         except Exception as exc:  # noqa: BLE001 - normalize any transport error
             raise ProviderUnavailable(f"Travelpayouts request failed: {exc}") from exc
@@ -264,7 +267,14 @@ def tp_http_transport(
             headers = {"X-Access-Token": token} if token else {}
             resp = http.get(base_url, params=params, headers=headers)
             if resp.status_code == 429 or resp.status_code >= 500:
+                # Rate-limit / server error: transient → retry, then fall back.
                 raise ProviderUnavailable(f"Travelpayouts HTTP {resp.status_code}")
+            if 400 <= resp.status_code < 500:
+                # A client error (typically an unsupported/unknown IATA code for this pair)
+                # is permanent: the same query will keep returning 4xx. Treat it as "no
+                # result" — not retryable — so the chain degrades to the distance estimate
+                # immediately rather than retrying a doomed call for every candidate date.
+                raise ProviderNoResult(f"Travelpayouts HTTP {resp.status_code}")
             resp.raise_for_status()
             return resp.json()
         except httpx.HTTPError as exc:

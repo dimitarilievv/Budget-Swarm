@@ -115,6 +115,44 @@ class CostBreakdown(BaseModel):
     activities: float
 
 
+class FlightEndpoint(BaseModel):
+    """One end of a flight — its airport (IATA code + name) and the city it serves."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    code: str
+    city: str | None = None
+    airport: str | None = None
+
+
+class FlightLeg(BaseModel):
+    """One flight leg's schedule: date, clock times, duration and stops (all indicative).
+
+    ``date`` is an ISO ``YYYY-MM-DD`` string (kept a string to avoid shadowing the
+    ``datetime.date`` type used elsewhere in this module).
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    date: str | None = None
+    depart_time: str | None = None
+    arrival_time: str | None = None
+    duration_min: int | None = None
+    stops: int | None = None
+
+
+class FlightPlan(BaseModel):
+    """Rich per-leg flight detail for the air card (both legs + a booking deep link)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    origin: FlightEndpoint
+    destination: FlightEndpoint
+    outbound: FlightLeg | None = None
+    inbound: FlightLeg | None = None
+    booking_url: str | None = None
+
+
 class PlanTransport(BaseModel):
     """The chosen transport leg, normalized (api.md ``chosen_plan.transport``)."""
 
@@ -128,6 +166,8 @@ class PlanTransport(BaseModel):
     # Outbound departure clock time ("HH:MM") when the fare source provides one (air);
     # None for modes/sources without a scheduled departure time.
     depart_time: str | None = None
+    # Rich per-leg flight detail (air mode only) for the flight card; None otherwise.
+    flight: FlightPlan | None = None
 
 
 class PlanAccommodation(BaseModel):
@@ -142,6 +182,14 @@ class PlanAccommodation(BaseModel):
     latitude: float | None = None
     longitude: float | None = None
     quality_flag: QualityFlagStr
+    # Listing detail for the UI card (BS-104); present only for real listings, all optional.
+    listing_url: str | None = None
+    picture_url: str | None = None
+    review_count: int | None = None
+    location_score: float | None = None
+    neighbourhood: str | None = None
+    amenities: list[str] = Field(default_factory=list)
+    accommodates: int | None = None  # guest capacity, matched to the party size
 
 
 class ItineraryActivity(BaseModel):
@@ -159,6 +207,8 @@ class ItineraryActivity(BaseModel):
     # map each activity. Optional: an activity without a located POI is simply not plotted.
     latitude: float | None = None
     longitude: float | None = None
+    # OSM opening-hours string where the POI is tagged (sparse); None when unknown.
+    opening_hours: str | None = None
 
 
 class ItineraryDay(BaseModel):

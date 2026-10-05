@@ -420,3 +420,51 @@ def test_transition_buffer_does_not_penalize_a_single_activity():
 def test_negative_transition_buffer_rejected():
     with pytest.raises(ValueError, match="transition_buffer_minutes"):
         SchedulingPolicy(transition_buffer_minutes=-1)
+
+
+# --- weekday-aware opening hours --------------------------------------------
+
+from ai_engine.core.scheduler import opening_windows_for_weekday  # noqa: E402
+
+
+def test_opening_windows_for_weekday_handles_day_rules():
+    # Closed Monday (only Tu-Su listed) → empty on Mon (0), open on Tue (1).
+    assert opening_windows_for_weekday("Tu-Su 09:00-17:00", 0) == ()
+    assert opening_windows_for_weekday("Tu-Su 09:00-17:00", 1) == ((540, 1020),)
+    # Explicit "Su off" closes Sunday but leaves weekdays open.
+    assert opening_windows_for_weekday("Mo-Sa 10:00-18:00; Su off", 6) == ()
+    assert opening_windows_for_weekday("Mo-Sa 10:00-18:00; Su off", 2) == ((600, 1080),)
+    # A bare range (no weekday) applies every day.
+    assert opening_windows_for_weekday("09:00-17:00", 0) == ((540, 1020),)
+    # 24/7 with a Monday closure.
+    assert opening_windows_for_weekday("24/7; Mo off", 0) == ()
+    assert opening_windows_for_weekday("24/7; Mo off", 2) == ((0, 24 * 60),)
+    # Unknown / unparseable → None (leave unconstrained).
+    assert opening_windows_for_weekday("by appointment", 0) is None
+    assert opening_windows_for_weekday(None, 0) is None
+
+
+def test_scheduler_skips_a_venue_closed_on_that_weekday():
+    # A museum closed on Mondays; a 2-day trip starting on a Monday (weekday 0).
+    # It must not land on day 0 (Monday) — it goes to day 1 (Tuesday) instead.
+    closed_mon = _activity("Monday-Closed Museum", opening_hours="Tu-Su 09:00-17:00")
+    result = ActivityScheduler().schedule([closed_mon], days=2, start_weekday=0)
+    placed = result.items
+    assert len(placed) == 1
+    assert placed[0].day == 1  # Tuesday, not Monday
+
+
+def test_scheduler_drops_a_venue_closed_every_trip_day():
+    # Open only on Sundays, but the trip is Mon–Tue (weekdays 0,1) → cannot be placed.
+    sunday_only = _activity("Sunday-Only Site", opening_hours="Su 10:00-16:00")
+    result = ActivityScheduler().schedule([sunday_only], days=2, start_weekday=0)
+    assert result.items == ()
+    assert len(result.unscheduled) == 1
+
+
+def test_scheduler_weekday_agnostic_when_no_start_weekday():
+    # Without start_weekday the weekday rule is ignored (clock hours only), so a
+    # Monday-closed venue can still be placed on day 0.
+    closed_mon = _activity("Museum", opening_hours="Tu-Su 09:00-17:00")
+    result = ActivityScheduler().schedule([closed_mon], days=1)
+    assert len(result.items) == 1

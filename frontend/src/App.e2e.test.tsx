@@ -110,7 +110,10 @@ describe("input → results E2E (mocked backend)", () => {
     expect(
       await screen.findByRole("heading", { name: /budapest, hungary/i }),
     ).toBeInTheDocument();
-    expect(screen.getByText(/budapest fits comfortably/i)).toBeInTheDocument();
+    // The redesigned hero shows the match pill and a budget-aware "why" sentence (the LLM
+    // explanation card was removed); the total and the day-1 stop render from the plan.
+    expect(screen.getByText(/top match · 92\/100/i)).toBeInTheDocument();
+    expect(screen.getByText(/€220 under/i)).toBeInTheDocument(); // 1000 budget − 780 total
     expect(screen.getAllByText(/€780/).length).toBeGreaterThan(0);
     expect(screen.getByText("Buda Castle")).toBeInTheDocument();
 

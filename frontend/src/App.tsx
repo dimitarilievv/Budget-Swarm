@@ -29,7 +29,7 @@ function activeScreen(hasResult: boolean, view: ResultView): string {
 }
 
 function Shell() {
-  const { result, clear } = useTripResult();
+  const { result, request, clear } = useTripResult();
   const [view, setView] = useState<ResultView>("results");
   const mainRef = useRef<HTMLElement>(null);
 
@@ -54,11 +54,15 @@ function Shell() {
       >
         Skip to content
       </a>
-      <Navbar
-        onHome={clear}
-        onCompare={canCompare ? () => setView("compare") : undefined}
-        compareActive={view === "compare"}
-      />
+      {/* The shared chrome wraps the Results/Compare views; the Home page brings its own
+          sticky anchor header + teal footer, so it renders full-bleed without them. */}
+      {result && (
+        <Navbar
+          onHome={clear}
+          onCompare={canCompare ? () => setView("compare") : undefined}
+          compareActive={view === "compare"}
+        />
+      )}
       <main
         id="main"
         ref={mainRef}
@@ -70,12 +74,16 @@ function Shell() {
             {view === "compare" ? (
               <ComparisonPage
                 response={result}
+                request={request}
                 onBack={() => setView("results")}
+                onAction={() => setView("results")}
               />
             ) : (
               <ResultsPage
                 response={result}
+                request={request}
                 onBack={clear}
+                onPlanAnother={clear}
                 onCompare={canCompare ? () => setView("compare") : undefined}
               />
             )}
@@ -84,7 +92,7 @@ function Shell() {
           <Home />
         )}
       </main>
-      <Footer />
+      {result && <Footer />}
     </div>
   );
 }

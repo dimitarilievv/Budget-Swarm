@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import logging
 from abc import ABC
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
 from ai_engine.utils.api_clients import (
@@ -34,6 +34,11 @@ from ai_engine.utils.api_clients import (
 )
 
 logger = logging.getLogger(__name__)
+
+# When several listings sleep the whole party, favour the closest-fitting size: keep those
+# from the smallest fitting capacity up to that plus this slack, so a small party is not
+# booked into a much larger place while still leaving a little price choice.
+_CAPACITY_SLACK = 2
 
 
 @runtime_checkable
@@ -47,6 +52,15 @@ class AccommodationRow(Protocol):
     latitude: float | None
     longitude: float | None
     quality_flag: str
+    # Optional listing detail for the UI card (BS-104); read defensively via getattr so a
+    # row without these still works.
+    listing_url: str | None
+    picture_url: str | None
+    review_count: int | None
+    location_score: Any | None
+    neighbourhood: str | None
+    amenities: Any | None
+    accommodates: int | None
 
 
 @runtime_checkable
@@ -78,11 +92,16 @@ class AccommodationSource(Protocol):
 
 @dataclass(frozen=True)
 class AccommodationRequest:
-    """A lodging query for one destination; ``limit`` caps representative options."""
+    """A lodging query for one destination; ``limit`` caps representative options.
+
+    ``travelers`` is the party size: the DB provider prefers listings that sleep at least
+    this many, so the stay fits the group rather than being chosen on price alone.
+    """
 
     destination_id: int
     limit: int = 3
     currency: str = "eur"
+    travelers: int = 1
 
 
 @dataclass
@@ -101,6 +120,14 @@ class AccommodationOption:
     # Per-option provenance carried from the source row (a real listing) or the
     # estimate provider ('estimated'), so honesty survives normalization (BS-062).
     quality_flag: str = QUALITY_REAL
+    # Optional listing detail for the UI card (BS-104); present only for real listings.
+    listing_url: str | None = None
+    picture_url: str | None = None
+    review_count: int | None = None
+    location_score: float | None = None
+    neighbourhood: str | None = None
+    amenities: list[str] = field(default_factory=list)
+    accommodates: int | None = None
 
 
 def _to_float(value: Any) -> float | None:
@@ -142,11 +169,39 @@ class InsideAirbnbProvider(AccommodationProvider):
         super().__init__(**kwargs)
         self._source = source
 
+    def _by_capacity(self, rows: list, travelers: int, destination_id: int) -> list:
+        """Narrow price-sorted listings to ones sized for the party (closest fit).
+
+        Keeps listings that sleep at least ``travelers`` and, among those, favours the
+        **closest-fitting** size: the smallest fitting capacity plus a small slack band, so
+        a party of two is not booked into a place that sleeps sixteen while still leaving a
+        little price choice. Falls back to the full list when no capacity data is present or
+        nothing is large enough, so a stay is always offered (degrade, don't crash).
+        """
+        fitting = [
+            r
+            for r in rows
+            if getattr(r, "accommodates", None) is not None and r.accommodates >= travelers
+        ]
+        if not fitting:
+            if any(getattr(r, "accommodates", None) is not None for r in rows) and travelers > 1:
+                logger.info(
+                    "accommodation: no listing sleeps %d for destination %s; using all listings",
+                    travelers,
+                    destination_id,
+                )
+            return rows
+        smallest = min(r.accommodates for r in fitting)
+        cap = smallest + _CAPACITY_SLACK
+        close = [r for r in fitting if r.accommodates <= cap]
+        return close or fitting
+
     def _fetch(self, request: AccommodationRequest) -> list[AccommodationOption]:
         rows = self._source.list_by_destination(request.destination_id) or []
         if not rows:
             logger.info("accommodation: no listings for destination %s", request.destination_id)
             return []
+        rows = self._by_capacity(rows, request.travelers, request.destination_id)
         labels = ["budget", "typical", "comfort"]
         idxs = _representative_indices(len(rows), request.limit)
         options: list[AccommodationOption] = []
@@ -164,6 +219,13 @@ class InsideAirbnbProvider(AccommodationProvider):
                     longitude=row.longitude,
                     representative=labels[pos] if len(idxs) <= len(labels) else None,
                     quality_flag=getattr(row, "quality_flag", None) or QUALITY_REAL,
+                    listing_url=getattr(row, "listing_url", None),
+                    picture_url=getattr(row, "picture_url", None),
+                    review_count=getattr(row, "review_count", None),
+                    location_score=_to_float(getattr(row, "location_score", None)),
+                    neighbourhood=getattr(row, "neighbourhood", None),
+                    amenities=list(getattr(row, "amenities", None) or []),
+                    accommodates=getattr(row, "accommodates", None),
                 )
             )
         return options

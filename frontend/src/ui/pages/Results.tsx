@@ -1,47 +1,75 @@
 /**
- * ResultsPage — renders the chosen plan of a {@link TripResponse} (BS-085, redesigned).
+ * ResultsPage — the redesigned trip results view (design 1a).
  *
- * A high-fidelity result view: a header with the recommended destination and match score, a
- * summary card row (total cost with a category bar, transport, accommodation with a mini map,
- * and a multi-day weather forecast), a day-by-day itinerary timeline beside an overview map,
- * and the LLM "Why {city}?" explanation with next-step actions.
+ * Renders the chosen plan of a {@link TripResponse} as one coherent trip: a hero (match score,
+ * city, dates, a one-line rationale and a Wikipedia city photo), a budget-aware summary strip,
+ * the weather, flights + stay side by side, and a "step by step" journey (fly out → day 1..N →
+ * fly home) whose day view lists the stops beside a numbered Leaflet map, with arrival/airport
+ * notes drawn from the flight times. Degraded/estimated runs are flagged with a compact chip.
  *
- * Purely presentational — it takes a response and an optional `onBack` handler, so it renders
- * straight from a fixture in tests. Maps only ever plot markers the response carries real
- * coordinates for (destination centre, accommodation); activity pins are not shown because the
- * itinerary carries no per-activity coordinates.
+ * Purely presentational: it takes the response plus the originating request (for budget,
+ * preferences and origin — which the response omits) and renders straight from fixtures in tests.
+ * The city photo and any map pins come only from real coordinates/sources; nothing is invented.
  */
+import { useEffect, useMemo, useState } from "react";
+
+import { fetchDestinationSummary } from "@/api/wikipedia";
 import type {
   ChosenPlan,
-  CostBreakdown,
   ItineraryActivity,
   PlanAccommodation,
   PlanTransport,
   PlanWeatherDay,
   TransportMode,
+  TripRequestPayload,
   TripResponse,
 } from "@/types/trip";
-import DestinationInfo from "@/ui/components/common/DestinationInfo";
-import MapView from "@/ui/components/common/MapView";
-import {
-  MARKER_COLOR,
-  type MapMarker,
-  type MarkerKind,
-} from "@/ui/components/common/mapMarkers";
+import MapView, { type MapFocus } from "@/ui/components/common/MapView";
+import type { MapMarker } from "@/ui/components/common/mapMarkers";
 import {
   IconArrowRight,
+  IconLocation,
   IconBus,
   IconCar,
-  IconCloud,
-  IconCloudRain,
-  IconCloudSun,
-  IconCompare,
-  IconInfo,
-  IconLocation,
   IconPlane,
-  IconSun,
   IconTrain,
 } from "@/ui/components/common/Icons";
+
+/* -------------------------------------------------------------------------- */
+/* Design tokens (spec)                                                         */
+/* -------------------------------------------------------------------------- */
+
+const C = {
+  teal: "#0f9488",
+  tealDark: "#0b7a70",
+  tealTint: "#e6f5f2",
+  indigo: "#6366f1",
+  amber: "#f59e0b",
+  ink: "#12201e",
+  muted: "#5d6b69",
+  line: "#e4ebe9",
+  bg: "#f4f8f7",
+  soft: "#f1f5f4",
+  warnBg: "#fff6e0",
+  warnInk: "#8a5a00",
+  airbnb: "#ff385c",
+};
+
+const ENV: Record<string, { label: string; bg: string; fg: string }> = {
+  indoor: { label: "Indoor", bg: "#eef0fb", fg: "#4b55c7" },
+  outdoor: { label: "Outdoor", bg: "#e7f6ee", fg: "#1f8a55" },
+  mixed: { label: "Mixed", bg: "#f1f3f2", fg: C.muted },
+};
+
+const CARD: React.CSSProperties = {
+  background: "#fff",
+  border: `1px solid ${C.line}`,
+  borderRadius: 18,
+};
+
+/* -------------------------------------------------------------------------- */
+/* Formatting helpers                                                           */
+/* -------------------------------------------------------------------------- */
 
 function euro(value: number): string {
   return new Intl.NumberFormat("en-IE", {
@@ -56,925 +84,1647 @@ function scoreOutOf100(score: number): number {
   return Math.round(Math.max(0, Math.min(1, score)) * 100);
 }
 
-const INDOOR_OUTDOOR_LABEL: Record<string, string> = {
-  indoor: "Indoor",
-  outdoor: "Outdoor",
-  mixed: "Indoor / outdoor",
-};
-
-interface ResultsPageProps {
-  response: TripResponse;
-  onBack?: () => void;
-  /** Open the destination comparison; omitted when there are no candidates to compare. */
-  onCompare?: () => void;
-}
-
-export default function ResultsPage({
-  response,
-  onBack,
-  onCompare,
-}: ResultsPageProps) {
-  const plan = response.chosen_plan;
-  const { destination } = plan;
-  const mapMarkers = planMarkers(plan);
-
-  return (
-    <div className="animate-enter space-y-6">
-      <Header plan={plan} onBack={onBack} />
-
-      <DataQualityNotice degradedSources={response.meta.degraded_sources} />
-
-      <DestinationInfo city={destination.city} />
-
-      {/* Summary card row — cost, transport, accommodation, weather. */}
-      <div className="grid gap-5 lg:grid-cols-4 sm:grid-cols-2">
-        <TotalCostCard plan={plan} />
-        <TransportCard
-          transport={plan.transport}
-          startDate={plan.start_date}
-          endDate={plan.end_date}
-        />
-        <AccommodationCard
-          accommodation={plan.accommodation}
-          nights={estimateNights(plan)}
-          startDate={plan.start_date}
-          endDate={plan.end_date}
-        />
-        <WeatherCard weather={plan.weather} />
-      </div>
-
-      {/* Itinerary timeline beside the overview map. */}
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-        <ItineraryCard plan={plan} />
-        <OverviewMapCard markers={mapMarkers} city={destination.city} />
-      </div>
-
-      <WhyCard
-        city={destination.city}
-        explanation={response.explanation}
-        onBack={onBack}
-        onCompare={onCompare}
-      />
-    </div>
-  );
-}
-
-/* -------------------------------------------------------------------------- */
-/* Header                                                                      */
-/* -------------------------------------------------------------------------- */
-
-function Header({ plan, onBack }: { plan: ChosenPlan; onBack?: () => void }) {
-  const { destination } = plan;
-  const score = scoreOutOf100(plan.overall_score);
-  return (
-    <header className="flex flex-wrap items-end justify-between gap-4">
-      <div>
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800 ring-1 ring-amber-200/70">
-          ★ Recommended
-        </span>
-        <h1 className="mt-3 text-3xl font-extrabold tracking-tight text-slate-900 sm:text-4xl">
-          {destination.city}, {destination.country}
-        </h1>
-        {formatDateRange(plan.start_date, plan.end_date) && (
-          <p className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-600">
-            {formatDateRange(plan.start_date, plan.end_date)}
-          </p>
-        )}
-        <p className="mt-2 flex items-center gap-2 text-sm text-slate-500">
-          Match score
-          <span className="text-2xl font-extrabold text-teal-600">
-            {score}
-            <span className="text-base font-semibold text-slate-400">/100</span>
-          </span>
-          <span
-            title="How well this destination fits your budget and preferences (0–100)."
-            className="text-slate-400"
-          >
-            <IconInfo className="h-4 w-4" />
-          </span>
-        </p>
-      </div>
-      {onBack && (
-        <button
-          type="button"
-          onClick={onBack}
-          className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:border-slate-300"
-        >
-          ← Back to planning
-        </button>
-      )}
-    </header>
-  );
-}
-
-/* -------------------------------------------------------------------------- */
-/* Card shell                                                                  */
-/* -------------------------------------------------------------------------- */
-
-function Card({
-  title,
-  eyebrow,
-  children,
-  className = "",
-}: {
-  title: string;
-  eyebrow?: React.ReactNode;
-  children: React.ReactNode;
-  className?: string;
-}) {
-  return (
-    <section
-      className={`flex flex-col rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200 transition-shadow duration-200 hover:shadow-md ${className}`}
-    >
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-          {title}
-        </h2>
-        {eyebrow}
-      </div>
-      {children}
-    </section>
-  );
-}
-
-/* -------------------------------------------------------------------------- */
-/* Total cost                                                                  */
-/* -------------------------------------------------------------------------- */
-
-const COST_ROWS: {
-  key: keyof CostBreakdown;
-  label: string;
-  color: string;
-}[] = [
-  { key: "transport", label: "Transport", color: "#14b8a6" }, // teal-500
-  { key: "accommodation", label: "Accommodation", color: "#6366f1" }, // indigo-500
-  { key: "activities", label: "Activities", color: "#f59e0b" }, // amber-500
-];
-
-function TotalCostCard({ plan }: { plan: ChosenPlan }) {
-  const { cost_breakdown, total_cost } = plan;
-  const barTotal =
-    cost_breakdown.transport +
-    cost_breakdown.accommodation +
-    cost_breakdown.activities;
-
-  return (
-    <Card title="Total cost">
-      <p className="text-3xl font-extrabold tracking-tight text-slate-900">
-        ≈ {euro(total_cost)}
-      </p>
-
-      {/* Stacked category bar. */}
-      <div className="mt-4 flex h-2.5 w-full overflow-hidden rounded-full bg-slate-100">
-        {barTotal > 0 &&
-          COST_ROWS.map((row) => {
-            const pct = (cost_breakdown[row.key] / barTotal) * 100;
-            if (pct <= 0) return null;
-            return (
-              <span
-                key={row.key}
-                style={{ width: `${pct}%`, backgroundColor: row.color }}
-                title={`${row.label}: ${euro(cost_breakdown[row.key])}`}
-              />
-            );
-          })}
-      </div>
-
-      <dl className="mt-4 space-y-1.5">
-        {COST_ROWS.map((row) => (
-          <div
-            key={row.key}
-            className="flex items-center justify-between gap-2 text-sm"
-          >
-            <dt className="flex items-center gap-2 text-slate-500">
-              <span
-                className="h-2.5 w-2.5 rounded-full"
-                style={{ backgroundColor: row.color }}
-                aria-hidden
-              />
-              {row.label}
-            </dt>
-            <dd className="font-semibold tabular-nums text-slate-800">
-              {euro(cost_breakdown[row.key])}
-            </dd>
-          </div>
-        ))}
-      </dl>
-    </Card>
-  );
-}
-
-/* -------------------------------------------------------------------------- */
-/* Transport                                                                   */
-/* -------------------------------------------------------------------------- */
-
-const TRANSPORT_ICON: Record<
-  TransportMode,
-  (props: { className?: string }) => JSX.Element
-> = {
+const TRANSPORT_ICON: Record<TransportMode, typeof IconCar> = {
   airplane: IconPlane,
   car: IconCar,
   bus: IconBus,
   train: IconTrain,
 };
 
-function TransportCard({
-  transport,
-  startDate,
-  endDate,
-}: {
-  transport?: PlanTransport | null;
-  startDate?: string | null;
-  endDate?: string | null;
-}) {
-  if (!transport) {
-    return (
-      <Card title="Transport">
-        <p className="text-sm text-slate-400">
-          No transport details available.
-        </p>
-      </Card>
-    );
+const TRANSPORT_WORD: Record<TransportMode, string> = {
+  airplane: "Flights",
+  car: "Car",
+  bus: "Bus",
+  train: "Train",
+};
+
+function toMin(hhmm?: string | null): number | null {
+  if (!hhmm) return null;
+  const m = /^(\d{1,2}):(\d{2})/.exec(hhmm);
+  if (!m) return null;
+  return Number(m[1]) * 60 + Number(m[2]);
+}
+
+function fmtDurMin(min: number): string {
+  if (min < 60) return `${min}m`;
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return m ? `${h}h ${m}m` : `${h}h`;
+}
+
+function fmtRange(start?: string | null, end?: string | null): string | null {
+  const a = toMin(start);
+  const b = toMin(end);
+  if (a == null || b == null) return start ?? null;
+  return fmtDurMin(Math.max(0, b - a));
+}
+
+function weekday(iso?: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? ""
+    : d.toLocaleDateString("en-GB", { weekday: "short" });
+}
+
+function dayMonth(iso?: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? ""
+    : d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+}
+
+/** "Thu 22 – Mon 26 Oct 2026" for the trip window, or null when no dates are present. */
+function formatDateRange(
+  start?: string | null,
+  end?: string | null,
+): string | null {
+  if (!start && !end) return null;
+  const s = start ? new Date(start) : null;
+  const e = end ? new Date(end) : null;
+  const fmt = (d: Date) =>
+    d.toLocaleDateString("en-GB", {
+      weekday: "short",
+      day: "numeric",
+      month: "short",
+    });
+  if (s && e && !Number.isNaN(s.getTime()) && !Number.isNaN(e.getTime())) {
+    const year = e.getFullYear();
+    return `${fmt(s)} – ${fmt(e)} ${year}`;
   }
-  const Icon = TRANSPORT_ICON[transport.mode] ?? IconCar;
+  const only = (s && !Number.isNaN(s.getTime()) && s) || (e as Date);
+  return only ? fmt(only) : null;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Itinerary derivation (clean labels, dedupe, conflict detection)              */
+/* -------------------------------------------------------------------------- */
+
+const CATEGORY_LABEL: Record<string, string> = {
+  national_museums: "Museum",
+  museums: "Museum",
+  museum: "Museum",
+  religion: "Religion",
+  historic: "Historic",
+  palace: "Palace",
+  fountain: "Fountain",
+  street: "Street",
+  milestone: "Milestone",
+  culture: "Culture",
+  nature: "Nature",
+  nightlife: "Nightlife",
+  food: "Food",
+  tourism: "Sightseeing",
+};
+
+function cleanCategory(cat?: string | null): string | null {
+  if (!cat) return null;
+  const key = cat.toLowerCase().trim();
+  if (CATEGORY_LABEL[key]) return CATEGORY_LABEL[key];
+  return key
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/** Normalised key for dedupe: lowercased, "the" + parentheticals + punctuation stripped. */
+function normalizeName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/\(.*?\)/g, " ")
+    .replace(/\bthe\b/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+interface Stop {
+  name: string;
+  category: string | null;
+  env: string;
+  start: string | null;
+  end: string | null;
+  startMin: number | null;
+  endMin: number | null;
+  lat: number | null;
+  lon: number | null;
+  rescheduled: boolean;
+  hours: string | null;
+}
+
+function toStops(activities: ItineraryActivity[]): Stop[] {
+  const seen = new Set<string>();
+  const stops: Stop[] = [];
+  for (const a of activities) {
+    const key = normalizeName(a.name);
+    if (key && seen.has(key)) continue; // dedupe near-identical stops within the day
+    if (key) seen.add(key);
+    stops.push({
+      name: a.name,
+      category: cleanCategory(a.category),
+      env: a.indoor_outdoor,
+      start: a.start_time ?? null,
+      end: a.end_time ?? null,
+      startMin: toMin(a.start_time),
+      endMin: toMin(a.end_time),
+      lat: a.latitude ?? null,
+      lon: a.longitude ?? null,
+      rescheduled: a.was_rescheduled,
+      hours: a.opening_hours ?? null,
+    });
+  }
+  return stops;
+}
+
+interface DayModel {
+  dayNumber: number;
+  stops: Stop[];
+  /** An informative note (arrival on day 1, airport transfer on the last day) — not a warning;
+   * the engine already schedules the stops around the journey, so these just explain the gap. */
+  note: string | null;
+}
+
+function buildDays(plan: ChosenPlan): DayModel[] {
+  const flight = plan.transport?.flight ?? null;
+  const isAir = plan.transport?.mode === "airplane";
+  const total = plan.itinerary.length;
+  const destCode = flight?.destination.code;
+
+  return plan.itinerary.map((day, idx) => {
+    const stops = toStops(day.activities);
+    const notes: string[] = [];
+
+    // Day 1: the engine already begins the plan after the traveller arrives — just say so.
+    if (isAir && idx === 0 && flight?.outbound?.arrival_time) {
+      notes.push(
+        `You land at ${destCode ?? "the airport"} at ${flight.outbound.arrival_time}, so the day's plans begin once you've arrived and settled in.`,
+      );
+    }
+    // Last day: the plan wraps up in time to reach the airport for the return.
+    if (isAir && idx === total - 1 && flight?.inbound?.depart_time) {
+      notes.push(
+        `Your return flight leaves ${destCode ?? ""} at ${flight.inbound.depart_time}, so the last stops finish with time to spare for the airport.`,
+      );
+    }
+
+    return {
+      dayNumber: day.day_number,
+      stops,
+      note: notes.length ? notes.join(" ") : null,
+    };
+  });
+}
+
+/* -------------------------------------------------------------------------- */
+/* Small shared pieces                                                          */
+/* -------------------------------------------------------------------------- */
+
+function Dot({ color, size = 8 }: { color: string; size?: number }) {
   return (
-    <Card
-      title="Transport"
-      eyebrow={<QualityBadge flag={transport.quality_flag} />}
+    <span
+      style={{
+        width: size,
+        height: size,
+        borderRadius: size / 2,
+        background: color,
+        flex: "none",
+        display: "inline-block",
+      }}
+    />
+  );
+}
+
+function LiveBadge({ text = "Live price" }: { text?: string }) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        gap: 6,
+        alignItems: "center",
+        fontSize: 11,
+        fontWeight: 600,
+        color: "#1f8a55",
+      }}
     >
-      <div className="flex items-center gap-3">
-        <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-teal-50 text-teal-600">
-          <Icon className="h-6 w-6" />
-        </span>
-        <div>
-          <p className="text-lg font-bold capitalize text-slate-900">
-            {transport.mode}
-          </p>
-          {transport.distance_km != null && (
-            <p className="text-sm text-slate-500">
-              ≈ {Math.round(transport.distance_km).toLocaleString()} km
-            </p>
+      <Dot color="#22a565" size={6} />
+      {text}
+    </span>
+  );
+}
+
+function btnStyle(
+  bg: string,
+  fg = "#fff",
+  border?: string,
+): React.CSSProperties {
+  return {
+    padding: "11px 18px",
+    borderRadius: 12,
+    background: bg,
+    color: fg,
+    fontSize: 14,
+    fontWeight: 600,
+    border: border ?? "none",
+    cursor: "pointer",
+    fontFamily: "inherit",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 8,
+    textDecoration: "none",
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Page                                                                         */
+/* -------------------------------------------------------------------------- */
+
+interface ResultsPageProps {
+  response: TripResponse;
+  /** The request that produced the plan (budget, preferences, origin) — optional in tests. */
+  request?: TripRequestPayload | null;
+  onBack?: () => void;
+  onPlanAnother?: () => void;
+  onCompare?: () => void;
+}
+
+export default function ResultsPage({
+  response,
+  request = null,
+  onBack,
+  onPlanAnother,
+  onCompare,
+}: ResultsPageProps) {
+  const plan = response.chosen_plan;
+  const { destination } = plan;
+  const costs = plan.cost_breakdown;
+  const total = plan.total_cost;
+  const budget = request?.budget ?? null;
+  const left = budget != null ? Math.round(budget - total) : null;
+  const score = scoreOutOf100(plan.overall_score);
+
+  const nextBest = useMemo(() => {
+    const other = response.ranked_candidates.find(
+      (c) => c.destination.city !== destination.city,
+    );
+    return other?.destination.city ?? null;
+  }, [response.ranked_candidates, destination.city]);
+
+  const prefs = useMemo(() => {
+    const p = request?.preferences ?? {};
+    return Object.entries(p)
+      .filter(([, w]) => (w ?? 0) > 0)
+      .map(([k]) => k);
+  }, [request?.preferences]);
+
+  const days = useMemo(() => buildDays(plan), [plan]);
+  const sightCount = days.reduce((n, d) => n + d.stops.length, 0);
+  const nights = estimateNights(plan) ?? dateSpanNights(plan) ?? days.length;
+
+  const anyEstimated =
+    response.meta.degraded_sources.length > 0 ||
+    plan.transport?.quality_flag !== "real" ||
+    (plan.accommodation != null && plan.accommodation.quality_flag !== "real");
+
+  const photo = useCityPhoto(`${destination.city}`);
+
+  // Journey selection + a "show the stay on the map" spotlight are lifted here so the stay card's
+  // "Show on map" button can jump to the journey's day map and open the accommodation pin.
+  const [journeySel, setJourneySel] = useState<Selection>(0);
+  const [stayFocus, setStayFocus] = useState<MapFocus | null>(null);
+
+  const showAccommodationOnMap = () => {
+    const a = plan.accommodation;
+    if (a?.latitude != null && a.longitude != null) {
+      setJourneySel(0); // ensure a day view (with its map) is showing, not a flight step
+      setStayFocus({ lat: a.latitude, lon: a.longitude, nonce: Date.now() });
+    }
+    document
+      .getElementById(JOURNEY_ID)
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  return (
+    <div
+      style={{
+        color: C.ink,
+        fontFamily: "'Plus Jakarta Sans',system-ui,sans-serif",
+      }}
+      className="animate-enter"
+    >
+      <div className="flex flex-col gap-6">
+        {/* Back bar + estimated chip */}
+        <div className="flex items-center justify-between text-[13px]">
+          <button
+            type="button"
+            onClick={onBack}
+            style={{ all: "unset", cursor: "pointer", color: C.muted }}
+          >
+            ← Back to planning
+          </button>
+          {anyEstimated && (
+            <span
+              style={{
+                display: "inline-flex",
+                gap: 8,
+                alignItems: "center",
+                padding: "5px 11px",
+                borderRadius: 99,
+                background: C.warnBg,
+                color: C.warnInk,
+                fontWeight: 500,
+              }}
+            >
+              <Dot color="#e0a100" size={6} />
+              Some figures estimated · prices indicative
+            </span>
           )}
         </div>
-      </div>
-      <dl className="mt-4 space-y-1.5 text-sm">
-        {transport.cost != null && (
-          <MiniRow label="Cost" value={euro(transport.cost)} />
-        )}
-        {transport.duration_min != null && (
-          <MiniRow
-            label="Duration"
-            value={formatDuration(transport.duration_min)}
+
+        {/* Hero */}
+        <div className="grid items-center gap-8 min-[900px]:grid-cols-[minmax(0,1fr)_380px]">
+          <div className="flex flex-col gap-3.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <span
+                style={{
+                  padding: "4px 10px",
+                  borderRadius: 99,
+                  background: C.teal,
+                  color: "#fff",
+                  fontSize: 12,
+                  fontWeight: 600,
+                }}
+              >
+                Top match · {score}/100
+              </span>
+              {nextBest && (
+                <span style={{ fontSize: 13, color: C.muted }}>
+                  Next best: {nextBest}
+                </span>
+              )}
+            </div>
+            <h1
+              style={{
+                margin: 0,
+                fontSize: 52,
+                lineHeight: 1,
+                letterSpacing: "-.03em",
+                fontWeight: 800,
+              }}
+              className="!text-4xl min-[900px]:!text-[52px]"
+            >
+              {destination.city}, {destination.country}
+            </h1>
+            <div style={{ fontSize: 15, color: C.muted }}>
+              {[
+                formatDateRange(plan.start_date, plan.end_date),
+                `${nights} ${nights === 1 ? "night" : "nights"}`,
+                request?.origin_label ? `from ${request.origin_label}` : null,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </div>
+            <WhySentence prefs={prefs} budget={budget} left={left} />
+          </div>
+          <HeroPhoto
+            imageUrl={photo?.imageUrl ?? null}
+            city={destination.city}
           />
-        )}
-        {startDate && (
-          <MiniRow
-            label="Departure"
-            value={
-              (formatDateShort(startDate) ?? "") +
-              (transport.depart_time ? `, ${transport.depart_time}` : "")
+        </div>
+
+        {/* Summary strip — the Activities tile only appears when activities actually cost
+            something; free sights total €0, so we omit the tile rather than show "€0". */}
+        <div
+          className={`grid grid-cols-2 gap-3 ${
+            costs.activities > 0
+              ? "min-[900px]:grid-cols-[1.6fr_1fr_1fr_1fr]"
+              : "min-[900px]:grid-cols-[1.6fr_1fr_1fr]"
+          }`}
+        >
+          <div
+            style={{ ...CARD, borderRadius: 16, padding: "18px 20px" }}
+            className="col-span-2 flex flex-col gap-2.5 min-[900px]:col-span-1"
+          >
+            <div className="flex items-baseline justify-between">
+              <span style={{ fontSize: 12, color: C.muted, fontWeight: 600 }}>
+                Estimated total
+              </span>
+              {budget != null && (
+                <span style={{ fontSize: 12, color: C.muted }}>
+                  of {euro(budget)}
+                </span>
+              )}
+            </div>
+            <div
+              style={{ fontSize: 34, fontWeight: 800, letterSpacing: "-.02em" }}
+            >
+              ≈ {euro(total)}
+            </div>
+            <BudgetBar costs={costs} budget={budget} total={total} />
+            {left != null ? (
+              <div style={{ fontSize: 12, color: C.tealDark, fontWeight: 600 }}>
+                {left >= 0
+                  ? `${euro(left)} left for food & extras`
+                  : `${euro(Math.abs(left))} over budget`}
+              </div>
+            ) : (
+              <div style={{ fontSize: 12, color: C.muted }}>
+                Transport, stay and activities combined
+              </div>
+            )}
+          </div>
+          <Stat
+            color={C.teal}
+            label={TRANSPORT_WORD[plan.transport?.mode ?? "airplane"]}
+            value={euro(costs.transport)}
+            sub={transportSub(plan.transport)}
+          />
+          <Stat
+            color={C.indigo}
+            label="Stay"
+            value={euro(costs.accommodation)}
+            sub={
+              plan.accommodation
+                ? `${nights} nights · ${euro(plan.accommodation.price_per_night)} / night`
+                : "No stay"
             }
           />
-        )}
-        {endDate && (
-          <MiniRow label="Return" value={formatDateShort(endDate) ?? "—"} />
-        )}
-      </dl>
-    </Card>
-  );
-}
+          {costs.activities > 0 && (
+            <Stat
+              color={C.amber}
+              label="Activities"
+              value={euro(costs.activities)}
+              sub={`${sightCount} sights`}
+            />
+          )}
+        </div>
 
-/* -------------------------------------------------------------------------- */
-/* Accommodation                                                               */
-/* -------------------------------------------------------------------------- */
+        {/* Weather */}
+        <WeatherStrip weather={plan.weather} startDate={plan.start_date} />
 
-function AccommodationCard({
-  accommodation,
-  nights,
-  startDate,
-  endDate,
-}: {
-  accommodation?: PlanAccommodation | null;
-  nights: number | null;
-  startDate?: string | null;
-  endDate?: string | null;
-}) {
-  if (!accommodation) {
-    return (
-      <Card title="Accommodation">
-        <p className="text-sm text-slate-400">
-          No accommodation details available.
-        </p>
-      </Card>
-    );
-  }
-  const a = accommodation;
-  const hasCoords = a.latitude != null && a.longitude != null;
-  const nightsTotal = nights != null ? a.price_per_night * nights : null;
+        {/* Flights + stay */}
+        <div className="grid gap-4 min-[900px]:grid-cols-2">
+          <TransportSummaryCard
+            transport={plan.transport}
+            cost={costs.transport}
+          />
+          <StayCard
+            accommodation={plan.accommodation}
+            nights={nights}
+            onShowOnMap={showAccommodationOnMap}
+          />
+        </div>
 
-  return (
-    <Card
-      title="Accommodation"
-      eyebrow={<QualityBadge flag={a.quality_flag} />}
-    >
-      <p className="text-base font-bold leading-tight text-slate-900">
-        {a.name ?? "Selected stay"}
-      </p>
-      {a.accom_type && (
-        <p className="text-xs capitalize text-slate-500">{a.accom_type}</p>
-      )}
-      <p className="mt-2 text-sm text-slate-600">
-        {euro(a.price_per_night)}/night
-        {nights != null && nightsTotal != null && (
-          <>
-            {" · "}
-            {nights} {nights === 1 ? "night" : "nights"} ={" "}
-            <span className="font-semibold text-slate-800">
-              {euro(nightsTotal)}
-            </span>
-          </>
-        )}
-      </p>
-      {a.rating != null && (
-        <p className="mt-1 text-sm font-medium text-amber-600">
-          ★ {a.rating.toFixed(1)}
-        </p>
-      )}
-      {formatDateShort(startDate) && formatDateShort(endDate) && (
-        <p className="mt-2 text-sm text-slate-600">
-          <span className="text-slate-400">Check-in</span>{" "}
-          <span className="font-medium text-slate-700">
-            {formatDateShort(startDate)}
-          </span>
-          {" · "}
-          <span className="text-slate-400">Check-out</span>{" "}
-          <span className="font-medium text-slate-700">
-            {formatDateShort(endDate)}
-          </span>
-        </p>
-      )}
-      {hasCoords && (
-        <MapView
-          markers={[
-            {
-              lat: a.latitude as number,
-              lon: a.longitude as number,
-              label: a.name ?? "Accommodation",
-              kind: "accommodation",
-            },
-          ]}
-          ariaLabel={`Map showing ${a.name ?? "the accommodation"} location`}
-          singleZoom={14}
-          className="mt-3 h-28 w-full overflow-hidden rounded-xl ring-1 ring-slate-200"
+        {/* Journey */}
+        <Journey
+          plan={plan}
+          days={days}
+          sel={journeySel}
+          onSelect={setJourneySel}
+          focus={stayFocus}
         />
-      )}
-    </Card>
-  );
-}
 
-/* -------------------------------------------------------------------------- */
-/* Weather                                                                     */
-/* -------------------------------------------------------------------------- */
-
-// precip_prob is a percentage in [0, 100] (api.md), matching Open-Meteo's
-// precipitation_probability_max — not a 0-1 fraction.
-function weatherIcon(day: PlanWeatherDay) {
-  const text = (day.conditions ?? "").toLowerCase();
-  const rainy =
-    /rain|drizzle|shower|storm|thunder/.test(text) ||
-    (day.precip_prob != null && day.precip_prob >= 50);
-  if (rainy) return IconCloudRain;
-  if (/cloud|overcast|fog|mist/.test(text)) return IconCloud;
-  if (/part|sun.*cloud|cloud.*sun/.test(text)) return IconCloudSun;
-  if (/clear|sun|fair/.test(text)) return IconSun;
-  if (day.precip_prob != null && day.precip_prob >= 20) return IconCloudSun;
-  return IconSun;
-}
-
-/** A day counts as wet enough to surface its precipitation chance and a rain icon. */
-function isWetDay(day: PlanWeatherDay): boolean {
-  return (
-    day.weather_conflict ||
-    (day.precip_prob != null && day.precip_prob >= 30) ||
-    /rain|drizzle|shower|storm|thunder/.test(
-      (day.conditions ?? "").toLowerCase(),
-    )
-  );
-}
-
-/** A short headline + subtitle summarising the whole forecast (top of the card). */
-function weatherSummary(weather: PlanWeatherDay[]) {
-  const highs = weather
-    .map((d) => d.temp_max)
-    .filter((n): n is number => n != null);
-  const avgHigh = highs.length
-    ? highs.reduce((a, b) => a + b, 0) / highs.length
-    : null;
-  const adjective =
-    avgHigh == null
-      ? "Mixed"
-      : avgHigh < 8
-        ? "Cold"
-        : avgHigh < 16
-          ? "Cool"
-          : avgHigh < 24
-            ? "Mild"
-            : avgHigh < 30
-              ? "Warm"
-              : "Hot";
-
-  const wet = weather.filter(isWetDay).length;
-  const cloudy = weather.filter((d) =>
-    /cloud|overcast|fog|mist/.test((d.conditions ?? "").toLowerCase()),
-  ).length;
-  let sky: "rainy" | "cloudy" | "clear";
-  let Icon = IconSun;
-  if (wet >= Math.ceil(weather.length / 2)) {
-    sky = "rainy";
-    Icon = IconCloudRain;
-  } else if (cloudy >= weather.length - cloudy) {
-    sky = "cloudy";
-    Icon = IconCloud;
-  } else {
-    sky = "clear";
-    Icon = IconSun;
-  }
-
-  let subtitle = "";
-  if (highs.length) {
-    const lo = Math.round(Math.min(...highs));
-    const hi = Math.round(Math.max(...highs));
-    subtitle = lo === hi ? `${hi}° days` : `${lo}–${hi}° days`;
-  }
-  const firstWet = weather.find(isWetDay);
-  if (firstWet) {
-    subtitle +=
-      (subtitle ? " · " : "") +
-      `rain likely ${formatWeekday(firstWet.forecast_date)}`;
-  }
-  return { title: `${adjective} and ${sky}`, subtitle, Icon };
-}
-
-/** One day's low→high temperature bar, positioned within the week's range. */
-function TempBar({
-  day,
-  scaleMin,
-  span,
-}: {
-  day: PlanWeatherDay;
-  scaleMin: number;
-  span: number;
-}) {
-  const lo = day.temp_min ?? day.temp_max;
-  const hi = day.temp_max ?? day.temp_min;
-  if (lo == null || hi == null) {
-    return <div className="h-1.5 flex-1 rounded-full bg-slate-100" />;
-  }
-  const width = Math.max(((hi - lo) / span) * 100, 8); // keep a tiny range visible
-  let left = ((lo - scaleMin) / span) * 100;
-  if (left + width > 100) left = 100 - width;
-  return (
-    <div className="relative h-1.5 flex-1 rounded-full bg-slate-200">
-      <div
-        className="absolute inset-y-0 rounded-full bg-teal-500"
-        style={{ left: `${left}%`, width: `${width}%` }}
-      />
+        {/* Footer actions */}
+        <div className="flex flex-wrap items-center justify-between gap-3 px-1 pt-1">
+          <span style={{ fontSize: 13, color: C.muted }}>
+            {nextBest
+              ? `Not quite right? Compare it with ${nextBest} or start over.`
+              : "Not quite right? Start over."}
+          </span>
+          <div className="flex gap-2.5">
+            {onCompare && (
+              <button
+                type="button"
+                onClick={onCompare}
+                style={btnStyle("#fff", C.ink, "1px solid #d7e2df")}
+              >
+                Compare destinations
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onPlanAnother ?? onBack}
+              style={btnStyle(C.ink)}
+            >
+              Plan another trip
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
 
-function WeatherCard({ weather }: { weather: PlanWeatherDay[] }) {
-  if (weather.length === 0) {
-    return (
-      <Card title="Weather forecast">
-        <p className="text-sm text-slate-400">No forecast available.</p>
-      </Card>
+/* -------------------------------------------------------------------------- */
+/* Hero bits                                                                    */
+/* -------------------------------------------------------------------------- */
+
+function WhySentence({
+  prefs,
+  budget,
+  left,
+}: {
+  prefs: string[];
+  budget: number | null;
+  left: number | null;
+}) {
+  const parts: React.ReactNode[] = [];
+  if (prefs.length) {
+    parts.push(
+      <>
+        Matches your <b>{prefs.join(", ")}</b> picks best
+      </>,
     );
   }
-  const temps = weather.flatMap((d) =>
-    [d.temp_min, d.temp_max].filter((n): n is number => n != null),
-  );
-  const scaleMin = temps.length ? Math.min(...temps) : 0;
-  const span = (temps.length ? Math.max(...temps) : 1) - scaleMin || 1;
-  const { title, subtitle, Icon: SummaryIcon } = weatherSummary(weather);
-
+  if (budget != null && left != null && left >= 0) {
+    parts.push(
+      <>
+        stays <b style={{ color: C.tealDark }}>{euro(left)} under</b> your{" "}
+        {euro(budget)} budget
+      </>,
+    );
+  }
   return (
-    <Card title={`Weather · ${weather.length}-day forecast`}>
-      <div className="mb-2 flex items-center gap-3">
-        <SummaryIcon className="h-8 w-8 shrink-0 text-slate-400" />
-        <div className="leading-tight">
-          <p className="text-sm font-semibold text-slate-700">{title}</p>
-          {subtitle && <p className="text-xs text-slate-400">{subtitle}</p>}
+    <p
+      style={{
+        margin: "4px 0 0",
+        fontSize: 16,
+        lineHeight: 1.55,
+        maxWidth: 560,
+      }}
+    >
+      {parts.length ? (
+        <>
+          {parts.map((p, i) => (
+            <span key={i}>
+              {i === 0 ? "" : ", and "}
+              {p}
+            </span>
+          ))}
+          .
+        </>
+      ) : (
+        "A strong all-round match for your trip."
+      )}
+    </p>
+  );
+}
+
+function HeroPhoto({
+  imageUrl,
+  city,
+}: {
+  imageUrl: string | null;
+  city: string;
+}) {
+  return (
+    <div
+      style={{
+        height: 230,
+        borderRadius: 18,
+        overflow: "hidden",
+        background: `linear-gradient(135deg, ${C.tealTint}, #dfe9e7)`,
+      }}
+      className="hidden min-[900px]:block"
+    >
+      {imageUrl ? (
+        <img
+          src={imageUrl}
+          alt={city}
+          loading="lazy"
+          style={{
+            width: "100%",
+            height: "100%",
+            objectFit: "cover",
+            display: "block",
+          }}
+          onError={(e) => {
+            e.currentTarget.style.display = "none";
+          }}
+        />
+      ) : (
+        <div
+          className="flex h-full w-full items-center justify-center"
+          style={{ color: C.tealDark, fontSize: 22, fontWeight: 700 }}
+        >
+          {city}
         </div>
+      )}
+    </div>
+  );
+}
+
+/** Fetch a real Wikipedia lead image for the hero (best-effort; null when unavailable). */
+function useCityPhoto(city: string): { imageUrl: string | null } | null {
+  const [photo, setPhoto] = useState<{ imageUrl: string | null } | null>(null);
+  useEffect(() => {
+    let active = true;
+    setPhoto(null);
+    void fetchDestinationSummary(city)
+      .then((s) => {
+        if (active && s) setPhoto({ imageUrl: s.imageUrl });
+      })
+      .catch(() => {
+        /* best-effort */
+      });
+    return () => {
+      active = false;
+    };
+  }, [city]);
+  return photo;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Summary strip                                                                */
+/* -------------------------------------------------------------------------- */
+
+function Stat({
+  color,
+  label,
+  value,
+  sub,
+}: {
+  color: string;
+  label: string;
+  value: string;
+  sub: string;
+}) {
+  return (
+    <div
+      style={{ ...CARD, borderRadius: 16, padding: "18px 20px" }}
+      className="flex flex-col gap-1.5"
+    >
+      <span
+        className="flex items-center gap-1.5"
+        style={{ fontSize: 12, color: C.muted, fontWeight: 600 }}
+      >
+        <Dot color={color} />
+        {label}
+      </span>
+      <span style={{ fontSize: 24, fontWeight: 700 }}>{value}</span>
+      <span style={{ fontSize: 12, color: C.muted }}>{sub}</span>
+    </div>
+  );
+}
+
+function BudgetBar({
+  costs,
+  budget,
+  total,
+}: {
+  costs: ChosenPlan["cost_breakdown"];
+  budget: number | null;
+  total: number;
+}) {
+  // Scale against the budget when known, else against the total (shows the mix proportionally).
+  const scale = budget && budget > 0 ? budget : total || 1;
+  const pct = (v: number) => `${Math.max(0, (v / scale) * 100)}%`;
+  return (
+    <div
+      className="flex gap-0.5 overflow-hidden"
+      style={{ height: 8, borderRadius: 4, background: "#edf1f0" }}
+    >
+      <div style={{ width: pct(costs.transport), background: C.teal }} />
+      <div style={{ width: pct(costs.accommodation), background: C.indigo }} />
+      {costs.activities > 0 && (
+        <div style={{ width: pct(costs.activities), background: C.amber }} />
+      )}
+    </div>
+  );
+}
+
+function transportSub(transport?: PlanTransport | null): string {
+  if (!transport) return "—";
+  if (transport.mode === "airplane") {
+    const dur =
+      transport.flight?.outbound?.duration_min != null
+        ? fmtDurMin(transport.flight.outbound.duration_min)
+        : null;
+    return ["Return", dur].filter(Boolean).join(" · ") || "Return";
+  }
+  const parts = [`Return by ${transport.mode}`];
+  if (transport.distance_km != null) {
+    parts.push(`≈ ${Math.round(transport.distance_km).toLocaleString()} km`);
+  }
+  return parts.join(" · ");
+}
+
+/* -------------------------------------------------------------------------- */
+/* Weather                                                                      */
+/* -------------------------------------------------------------------------- */
+
+function weatherColor(day: PlanWeatherDay): string {
+  const text = (day.conditions ?? "").toLowerCase();
+  if (
+    /rain|drizzle|shower|storm|thunder/.test(text) ||
+    (day.precip_prob ?? 0) >= 50
+  )
+    return "#6aa8d8";
+  if (/cloud|overcast|fog|mist/.test(text) || (day.precip_prob ?? 0) >= 25)
+    return "#c9d3d1";
+  return "#f5b301";
+}
+
+// The live forecast only reaches ~16 days out; beyond that the backend serves typical
+// conditions averaged from recent years, which the UI labels honestly.
+const FORECAST_HORIZON_DAYS = 14;
+
+function WeatherStrip({
+  weather,
+  startDate,
+}: {
+  weather: PlanWeatherDay[];
+  startDate?: string | null;
+}) {
+  const hasForecast = weather.length > 0;
+  const daysOut = startDate
+    ? Math.ceil((new Date(startDate).getTime() - Date.now()) / 86400000)
+    : null;
+  const typical = daysOut != null && daysOut > FORECAST_HORIZON_DAYS;
+  return (
+    <div
+      style={{ ...CARD, padding: "18px 22px" }}
+      className="grid items-center gap-6 min-[720px]:grid-cols-[220px_minmax(0,1fr)]"
+    >
+      <div className="flex flex-col gap-1.5">
+        <span style={{ fontSize: 15, fontWeight: 700 }}>Weather</span>
+        {hasForecast ? (
+          typical ? (
+            <>
+              <span
+                style={{
+                  alignSelf: "start",
+                  padding: "3px 9px",
+                  borderRadius: 7,
+                  background: C.warnBg,
+                  color: C.warnInk,
+                  fontSize: 11,
+                  fontWeight: 600,
+                }}
+              >
+                Typical conditions
+              </span>
+              <span style={{ fontSize: 12, color: C.muted, lineHeight: 1.45 }}>
+                Your trip is too far ahead for a live forecast — these are
+                typical conditions for the dates, averaged from recent years, so
+                the actual weather can differ.
+              </span>
+            </>
+          ) : (
+            <LiveBadge text="Live forecast" />
+          )
+        ) : (
+          <span style={{ fontSize: 12, color: C.muted, lineHeight: 1.45 }}>
+            A live forecast isn't available for these dates yet — check again
+            closer to departure.
+          </span>
+        )}
       </div>
-      <ul className="divide-y divide-slate-100">
-        {weather.map((day) => {
-          const Icon = weatherIcon(day);
-          const wet = isWetDay(day);
-          return (
-            <li
-              key={day.forecast_date}
-              className="flex items-center gap-3 py-2.5"
-              title={day.conditions ?? undefined}
-            >
-              <div className="w-11 shrink-0 leading-tight">
-                <div className="text-sm font-semibold text-slate-700">
-                  {formatWeekday(day.forecast_date)}
+      {hasForecast ? (
+        // A scrollable row of fixed-width day cards: they stretch to fill for a short trip and
+        // scroll horizontally for a long one, so a 5-day and a 16-day forecast both read well.
+        <div className="-mx-1 overflow-x-auto px-1 pb-1">
+          <div className="flex gap-2">
+            {weather.map((w, i) => (
+              <div
+                key={w.forecast_date}
+                style={{
+                  padding: "12px 12px",
+                  borderRadius: 12,
+                  background: C.bg,
+                }}
+                className="flex min-w-[92px] flex-1 flex-col gap-1.5"
+              >
+                <div className="flex items-center justify-between">
+                  <span
+                    style={{ fontSize: 12, fontWeight: 600, color: C.muted }}
+                  >
+                    D{i + 1} ·{" "}
+                    {weekday(w.forecast_date) || dayMonth(w.forecast_date)}
+                  </span>
+                  <Dot color={weatherColor(w)} size={10} />
                 </div>
-                <div className="text-[11px] text-slate-400">
-                  {formatMonthDay(day.forecast_date)}
+                <div className="flex items-baseline gap-1.5">
+                  <span style={{ fontSize: 22, fontWeight: 700 }}>
+                    {w.temp_max != null ? `${Math.round(w.temp_max)}°` : "—"}
+                  </span>
+                  <span style={{ fontSize: 13, color: C.muted }}>
+                    {w.temp_min != null ? `${Math.round(w.temp_min)}°` : ""}
+                  </span>
                 </div>
-              </div>
-              <div className="flex w-8 shrink-0 flex-col items-center">
-                <Icon
-                  className={`h-5 w-5 ${wet ? "text-sky-500" : "text-slate-400"}`}
-                />
-                {wet && day.precip_prob != null && (
-                  <span className="text-[10px] font-semibold tabular-nums text-sky-500">
-                    {Math.round(day.precip_prob)}%
+                <span
+                  className="truncate"
+                  style={{ fontSize: 12, color: C.muted }}
+                  title={w.conditions ?? undefined}
+                >
+                  {w.conditions ?? "—"}
+                </span>
+                {w.precip_prob != null && (
+                  <span style={{ fontSize: 11, color: C.muted }}>
+                    {Math.round(w.precip_prob)}% rain
                   </span>
                 )}
               </div>
-              <span className="w-7 shrink-0 text-right text-xs tabular-nums text-slate-400">
-                {day.temp_min != null ? `${Math.round(day.temp_min)}°` : "—"}
-              </span>
-              <TempBar day={day} scaleMin={scaleMin} span={span} />
-              <span className="w-8 shrink-0 text-right text-sm font-semibold tabular-nums text-slate-700">
-                {day.temp_max != null ? `${Math.round(day.temp_max)}°` : "—"}
-              </span>
-            </li>
-          );
-        })}
-      </ul>
-    </Card>
-  );
-}
-
-/* -------------------------------------------------------------------------- */
-/* Itinerary                                                                    */
-/* -------------------------------------------------------------------------- */
-
-function ItineraryCard({ plan }: { plan: ChosenPlan }) {
-  if (plan.itinerary.length === 0) {
-    return (
-      <Card title="Daily itinerary">
-        <p className="text-sm text-slate-400">No itinerary available.</p>
-      </Card>
-    );
-  }
-  return (
-    <Card title="Daily itinerary">
-      <ol className="space-y-5">
-        {plan.itinerary.map((day) => {
-          const rescheduled = day.activities.some((a) => a.was_rescheduled);
-          return (
-            <li key={day.day_number} className="flex gap-3">
-              <div className="flex flex-col items-center">
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-teal-600 text-xs font-bold text-white">
-                  D{day.day_number}
-                </span>
-                <span className="mt-1 w-px flex-1 bg-slate-200" aria-hidden />
-              </div>
-              <div
-                className={`min-w-0 flex-1 rounded-xl p-2 ${
-                  rescheduled ? "bg-amber-50/60 ring-1 ring-amber-100" : ""
-                }`}
-              >
-                <h3 className="mb-1.5 text-sm font-bold text-slate-700">
-                  Day {day.day_number}
-                </h3>
-                {day.activities.length === 0 ? (
-                  <p className="text-sm text-slate-400">
-                    A free day — nothing scheduled.
-                  </p>
-                ) : (
-                  <ul className="space-y-1">
-                    {day.activities.map((activity, i) => (
-                      <ActivityRow
-                        key={`${activity.name}-${i}`}
-                        activity={activity}
-                      />
-                    ))}
-                  </ul>
-                )}
-              </div>
-            </li>
-          );
-        })}
-      </ol>
-    </Card>
-  );
-}
-
-function ActivityRow({ activity }: { activity: ItineraryActivity }) {
-  const time =
-    activity.start_time && activity.end_time
-      ? `${activity.start_time}–${activity.end_time}`
-      : (activity.start_time ?? null);
-  return (
-    <li className="flex flex-wrap items-center gap-x-2 gap-y-1 py-1">
-      {time && (
-        <span className="w-24 shrink-0 text-xs font-medium tabular-nums text-slate-500">
-          {time}
-        </span>
-      )}
-      <span className="text-sm font-medium text-slate-800">
-        {activity.name}
-      </span>
-      {activity.category && (
-        <span className="text-xs text-slate-400">· {activity.category}</span>
-      )}
-      <span className="ml-auto flex items-center gap-1.5">
-        <IndoorOutdoorTag value={activity.indoor_outdoor} />
-        {activity.was_rescheduled && (
-          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
-            ↻ Rescheduled
-          </span>
-        )}
-      </span>
-    </li>
-  );
-}
-
-function IndoorOutdoorTag({ value }: { value: string }) {
-  const style =
-    value === "indoor"
-      ? "bg-sky-100 text-sky-700"
-      : value === "outdoor"
-        ? "bg-emerald-100 text-emerald-700"
-        : "bg-slate-200 text-slate-600";
-  return (
-    <span
-      className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${style}`}
-    >
-      {INDOOR_OUTDOOR_LABEL[value] ?? value}
-    </span>
-  );
-}
-
-/* -------------------------------------------------------------------------- */
-/* Overview map                                                                 */
-/* -------------------------------------------------------------------------- */
-
-const MARKER_LABEL: Record<MarkerKind, string> = {
-  destination: "City centre",
-  accommodation: "Accommodation",
-  activity: "Activities",
-  airport: "Airport",
-};
-
-function OverviewMapCard({
-  markers,
-  city,
-}: {
-  markers: MapMarker[];
-  city: string;
-}) {
-  const kinds = Array.from(new Set(markers.map((m) => m.kind)));
-  return (
-    <Card title="Trip map" className="min-h-[20rem]">
-      {markers.length === 0 ? (
-        <div className="flex flex-1 items-center justify-center rounded-xl bg-slate-50 text-sm text-slate-400">
-          No mapped locations available.
+            ))}
+          </div>
         </div>
       ) : (
-        <>
-          <MapView
-            markers={markers}
-            ariaLabel={`Map of ${city} showing the destination and accommodation`}
-            className="min-h-[15rem] flex-1 overflow-hidden rounded-xl ring-1 ring-slate-200"
-          />
-          <ul className="mt-3 flex flex-wrap gap-x-4 gap-y-1">
-            {kinds.map((kind) => (
-              <li
-                key={kind}
-                className="flex items-center gap-1.5 text-xs text-slate-500"
-              >
-                <span
-                  className="h-2.5 w-2.5 rounded-full"
-                  style={{ backgroundColor: MARKER_COLOR[kind] }}
-                  aria-hidden
-                />
-                {MARKER_LABEL[kind]}
-              </li>
-            ))}
-          </ul>
-        </>
+        <div
+          style={{
+            padding: "16px 18px",
+            borderRadius: 12,
+            background: C.bg,
+            color: C.muted,
+            fontSize: 13,
+          }}
+        >
+          Typical conditions for your dates will appear here once the forecast
+          window opens.
+        </div>
       )}
-    </Card>
-  );
-}
-
-/* -------------------------------------------------------------------------- */
-/* Why {city}?                                                                  */
-/* -------------------------------------------------------------------------- */
-
-function WhyCard({
-  city,
-  explanation,
-  onBack,
-  onCompare,
-}: {
-  city: string;
-  explanation?: string | null;
-  onBack?: () => void;
-  onCompare?: () => void;
-}) {
-  return (
-    <section className="rounded-2xl bg-teal-50/70 p-6 ring-1 ring-teal-100">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0 flex-1">
-          <h2 className="flex items-center gap-2 text-lg font-bold text-slate-800">
-            <IconLocation className="h-5 w-5 text-teal-600" />
-            Why {city}?
-          </h2>
-          {explanation ? (
-            <p className="mt-2 whitespace-pre-line text-sm leading-relaxed text-slate-700">
-              {explanation}
-            </p>
-          ) : (
-            <p className="mt-2 text-sm text-slate-500">
-              This destination scored highest across your budget, transport and
-              preference criteria.
-            </p>
-          )}
-        </div>
-        <div className="flex shrink-0 flex-wrap items-center gap-3">
-          {onCompare && (
-            <button
-              type="button"
-              onClick={onCompare}
-              className="inline-flex items-center gap-2 rounded-xl border border-teal-200 bg-white px-4 py-2.5 text-sm font-semibold text-teal-700 shadow-sm hover:border-teal-300"
-            >
-              <IconCompare className="h-4 w-4" />
-              Compare destinations
-            </button>
-          )}
-          {onBack && (
-            <button
-              type="button"
-              onClick={onBack}
-              className="inline-flex items-center gap-2 rounded-xl bg-teal-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-teal-700"
-            >
-              Plan another trip
-              <IconArrowRight className="h-4 w-4" />
-            </button>
-          )}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-/* -------------------------------------------------------------------------- */
-/* Small pieces + helpers                                                       */
-/* -------------------------------------------------------------------------- */
-
-function MiniRow({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <div className="flex items-center justify-between gap-2">
-      <dt className="text-slate-500">{label}</dt>
-      <dd className="font-semibold text-slate-800">{value}</dd>
     </div>
   );
 }
 
-const QUALITY_META: Record<
-  string,
-  { label: string; cls: string; dot: string; title: string }
-> = {
-  real: {
-    label: "Live",
-    cls: "bg-emerald-100 text-emerald-700",
-    dot: "bg-emerald-500",
-    title: "Live data from a real source",
-  },
-  cached: {
-    label: "Cached",
-    cls: "bg-slate-100 text-slate-600",
-    dot: "bg-slate-400",
-    title: "Cached from an earlier fetch",
-  },
-  estimated: {
-    label: "Estimated",
-    cls: "bg-amber-100 text-amber-800",
-    dot: "bg-amber-500",
-    title: "Estimated figure — not a live quote",
-  },
-};
+/* -------------------------------------------------------------------------- */
+/* Flights + stay                                                               */
+/* -------------------------------------------------------------------------- */
 
-function QualityBadge({ flag }: { flag: string }) {
-  const meta = QUALITY_META[flag] ?? {
-    label: flag,
-    cls: "bg-slate-100 text-slate-600",
-    dot: "bg-slate-400",
-    title: "Data quality",
-  };
+function FlightMiniRow({
+  label,
+  date,
+  dep,
+  arr,
+  from,
+  to,
+  dur,
+}: {
+  label: string;
+  date: string;
+  dep: string;
+  arr: string;
+  from: string;
+  to: string;
+  dur: string;
+}) {
   return (
-    <span
-      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${meta.cls}`}
-      title={meta.title}
-    >
-      <span className={`h-1.5 w-1.5 rounded-full ${meta.dot}`} aria-hidden />
-      {meta.label}
-    </span>
-  );
-}
-
-/**
- * Surfaces `meta.degraded_sources` (BS-088). When the engine reports a source as estimated,
- * cached or unavailable, we say so plainly rather than presenting the plan as fully live — the
- * per-field {@link QualityBadge} marks *which* figures, this banner explains the run as a whole.
- * Renders nothing when every source was healthy.
- */
-function DataQualityNotice({ degradedSources }: { degradedSources: string[] }) {
-  if (degradedSources.length === 0) return null;
-  return (
-    <section
-      className="flex flex-wrap items-start gap-3 rounded-2xl bg-amber-50 p-4 ring-1 ring-amber-200"
-      aria-label="Data quality notice"
-    >
-      <IconInfo className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
-      <div className="min-w-0 flex-1">
-        <p className="text-sm font-semibold text-amber-900">
-          Some figures are estimated or cached
-        </p>
-        <p className="mt-0.5 text-sm text-amber-800">
-          The following sources were degraded or unavailable for this plan, so
-          the numbers above are indicative rather than live quotes:
-        </p>
-        <ul className="mt-2 flex flex-wrap gap-1.5">
-          {degradedSources.map((source) => (
-            <li
-              key={source}
-              className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-900 ring-1 ring-amber-200"
-              title={source}
-            >
-              {describeDegradedSource(source)}
-            </li>
-          ))}
-        </ul>
+    <div className="grid grid-cols-[64px_1fr] items-center gap-3">
+      <span style={{ fontSize: 12, color: C.muted, fontWeight: 600 }}>
+        {label}
+        <br />
+        {date}
+      </span>
+      <div className="grid grid-cols-[auto_1fr_auto] items-center gap-3.5">
+        <div>
+          <div style={{ fontSize: 20, fontWeight: 700 }}>{dep}</div>
+          <div style={{ fontSize: 12, color: C.muted }}>{from}</div>
+        </div>
+        <div className="flex flex-col items-center gap-1">
+          <span style={{ fontSize: 11, color: C.muted }}>{dur}</span>
+          <div
+            style={{
+              height: 2,
+              width: "100%",
+              background:
+                "repeating-linear-gradient(90deg,#b8cbc7 0 6px,transparent 6px 10px)",
+            }}
+          />
+        </div>
+        <div className="text-right">
+          <div style={{ fontSize: 20, fontWeight: 700 }}>{arr}</div>
+          <div style={{ fontSize: 12, color: C.muted }}>{to}</div>
+        </div>
       </div>
-    </section>
+    </div>
   );
 }
 
-/** Turn a `meta.degraded_sources` marker (e.g. "transport:estimated") into a readable label. */
-const KNOWN_DEGRADED_SOURCES: Record<string, string> = {
-  "engine:stub": "Planning engine — placeholder data",
-};
+/** The left card: real flight legs for air, else a generic transport summary. */
+function TransportSummaryCard({
+  transport,
+  cost,
+}: {
+  transport?: PlanTransport | null;
+  cost: number;
+}) {
+  if (!transport) {
+    return (
+      <div style={{ ...CARD, padding: 22 }} className="flex flex-col gap-3">
+        <span style={{ fontSize: 15, fontWeight: 700 }}>Transport</span>
+        <p style={{ fontSize: 14, color: C.muted }}>
+          No transport details available.
+        </p>
+      </div>
+    );
+  }
+  const f = transport.flight;
+  const Icon = TRANSPORT_ICON[transport.mode];
+  const live = transport.quality_flag === "real";
 
-function describeDegradedSource(marker: string): string {
-  const known = KNOWN_DEGRADED_SOURCES[marker];
-  if (known) return known;
-  const [area, flag] = marker.split(":");
-  const label = area ? area.charAt(0).toUpperCase() + area.slice(1) : marker;
-  return flag ? `${label} — ${flag}` : label;
+  if (transport.mode === "airplane" && f) {
+    return (
+      <div style={{ ...CARD, padding: 22 }} className="flex flex-col gap-4">
+        <div className="flex items-center justify-between">
+          <span style={{ fontSize: 15, fontWeight: 700 }}>Flights</span>
+          {live && <LiveBadge />}
+        </div>
+        {f.outbound && (
+          <FlightMiniRow
+            label="Out"
+            date={dayMonth(f.outbound.date)}
+            dep={f.outbound.depart_time ?? "—"}
+            arr={f.outbound.arrival_time ?? "—"}
+            from={`${f.origin.code} · ${f.origin.city ?? ""}`}
+            to={`${f.destination.code} · ${f.destination.city ?? ""}`}
+            dur={
+              f.outbound.duration_min != null
+                ? `${fmtDurMin(f.outbound.duration_min)} · ${stopsLabel(f.outbound.stops)}`
+                : stopsLabel(f.outbound.stops)
+            }
+          />
+        )}
+        {f.inbound && (
+          <>
+            <div style={{ height: 1, background: "#edf1f0" }} />
+            <FlightMiniRow
+              label="Back"
+              date={dayMonth(f.inbound.date)}
+              dep={f.inbound.depart_time ?? "—"}
+              arr={f.inbound.arrival_time ?? "—"}
+              from={`${f.destination.code} · ${f.destination.city ?? ""}`}
+              to={`${f.origin.code} · ${f.origin.city ?? ""}`}
+              dur={
+                f.inbound.duration_min != null
+                  ? `${fmtDurMin(f.inbound.duration_min)} · ${stopsLabel(f.inbound.stops)}`
+                  : stopsLabel(f.inbound.stops)
+              }
+            />
+          </>
+        )}
+        <div className="mt-auto flex items-center justify-between pt-1.5">
+          <div>
+            <div style={{ fontSize: 20, fontWeight: 700 }}>{euro(cost)}</div>
+            <div style={{ fontSize: 12, color: C.muted }}>total, return</div>
+          </div>
+          {f.booking_url && (
+            <a
+              href={f.booking_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={btnStyle(C.teal)}
+            >
+              Reserve flight <IconArrowRight className="h-4 w-4" />
+            </a>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Non-air: a compact transport summary.
+  return (
+    <div style={{ ...CARD, padding: 22 }} className="flex flex-col gap-4">
+      <div className="flex items-center justify-between">
+        <span style={{ fontSize: 15, fontWeight: 700 }}>Transport</span>
+        {live && <LiveBadge />}
+      </div>
+      <div className="flex items-center gap-3">
+        <span
+          className="flex items-center justify-center"
+          style={{
+            width: 44,
+            height: 44,
+            borderRadius: 12,
+            background: C.tealTint,
+            color: C.tealDark,
+          }}
+        >
+          <Icon className="h-6 w-6" />
+        </span>
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 700 }} className="capitalize">
+            {transport.mode}
+          </div>
+          {transport.distance_km != null && (
+            <div style={{ fontSize: 13, color: C.muted }}>
+              ≈ {Math.round(transport.distance_km).toLocaleString()} km return
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="mt-auto flex items-center justify-between pt-1.5">
+        <div>
+          <div style={{ fontSize: 20, fontWeight: 700 }}>{euro(cost)}</div>
+          <div style={{ fontSize: 12, color: C.muted }}>
+            total, return
+            {transport.duration_min != null
+              ? ` · ${fmtDurMin(transport.duration_min)}`
+              : ""}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
-/**
- * Markers we hold real coordinates for: the city centre, the stay (if located), and every
- * itinerary activity that carries a POI coordinate. Activities without coordinates are skipped
- * rather than guessed, so the map only ever shows real, source-backed positions.
- */
-function planMarkers(plan: ChosenPlan): MapMarker[] {
-  const markers: MapMarker[] = [
+function stopsLabel(stops?: number | null): string {
+  if (stops == null) return "direct";
+  if (stops === 0) return "direct";
+  return `${stops} ${stops === 1 ? "stop" : "stops"}`;
+}
+
+function StayCard({
+  accommodation,
+  nights,
+  onShowOnMap,
+}: {
+  accommodation?: PlanAccommodation | null;
+  nights: number;
+  onShowOnMap?: () => void;
+}) {
+  if (!accommodation) {
+    return (
+      <div style={{ ...CARD, padding: 22 }} className="flex flex-col gap-3">
+        <span style={{ fontSize: 15, fontWeight: 700 }}>Stay</span>
+        <p style={{ fontSize: 14, color: C.muted }}>
+          No accommodation details available.
+        </p>
+      </div>
+    );
+  }
+  const a = accommodation;
+  const amenities = a.amenities ?? [];
+  const total = a.price_per_night * nights;
+  const live = a.quality_flag === "real";
+  const hasCoords = a.latitude != null && a.longitude != null;
+
+  return (
+    <div
+      style={{ ...CARD, padding: 22 }}
+      className="grid gap-4 min-[520px]:grid-cols-[180px_minmax(0,1fr)]"
+    >
+      <div
+        style={{ borderRadius: 12, overflow: "hidden", background: "#dfe9e7" }}
+        className="aspect-[4/3] min-[520px]:aspect-auto"
+      >
+        {a.picture_url && (
+          <img
+            src={a.picture_url}
+            alt={a.name ?? "Accommodation"}
+            loading="lazy"
+            style={{
+              width: "100%",
+              height: "100%",
+              objectFit: "cover",
+              display: "block",
+            }}
+            onError={(e) => {
+              e.currentTarget.style.display = "none";
+            }}
+          />
+        )}
+      </div>
+      <div className="flex flex-col gap-2.5">
+        <div className="flex items-center justify-between">
+          <span style={{ fontSize: 12, color: C.muted, fontWeight: 600 }}>
+            Stay{a.neighbourhood ? ` · ${a.neighbourhood}` : ""}
+          </span>
+          {live && <LiveBadge text="Live" />}
+        </div>
+        <div style={{ fontSize: 19, fontWeight: 700, lineHeight: 1.2 }}>
+          {a.name ?? "Selected stay"}
+        </div>
+        <div style={{ fontSize: 13, color: C.muted }} className="capitalize">
+          {[
+            a.accom_type,
+            a.accommodates != null ? `sleeps ${a.accommodates}` : null,
+          ]
+            .filter(Boolean)
+            .join(" · ")}
+          {a.rating != null && (
+            <>
+              {" · "}
+              <span style={{ color: C.ink, fontWeight: 600 }}>
+                ★ {a.rating.toFixed(1)}
+              </span>
+              {a.review_count != null ? ` (${a.review_count})` : ""}
+            </>
+          )}
+        </div>
+        {amenities.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {amenities.slice(0, 4).map((am) => (
+              <span
+                key={am}
+                style={{
+                  padding: "3px 9px",
+                  borderRadius: 7,
+                  background: C.soft,
+                  fontSize: 12,
+                }}
+              >
+                {am}
+              </span>
+            ))}
+            {amenities.length > 4 && (
+              <span
+                style={{
+                  padding: "3px 9px",
+                  borderRadius: 7,
+                  background: C.soft,
+                  fontSize: 12,
+                }}
+              >
+                +{amenities.length - 4}
+              </span>
+            )}
+          </div>
+        )}
+        <div className="mt-auto flex items-center justify-between pt-1">
+          <div>
+            <div style={{ fontSize: 20, fontWeight: 700 }}>{euro(total)}</div>
+            <div style={{ fontSize: 12, color: C.muted }}>
+              {euro(a.price_per_night)} × {nights} nights
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {hasCoords && onShowOnMap && (
+              <button
+                type="button"
+                onClick={onShowOnMap}
+                style={btnStyle("#fff", C.ink, `1px solid ${C.line}`)}
+              >
+                <IconLocation className="h-4 w-4 text-teal-600" />
+                Show on map
+              </button>
+            )}
+            {a.listing_url && (
+              <a
+                href={a.listing_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={btnStyle(C.teal)}
+              >
+                Reserve accommodation <IconArrowRight className="h-4 w-4" />
+              </a>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Journey (flights + days as one sequence)                                     */
+/* -------------------------------------------------------------------------- */
+
+type Selection = number | "out" | "back";
+
+/** DOM id of the journey section, so the stay card's "Show on map" can scroll to its day map. */
+const JOURNEY_ID = "trip-journey";
+
+function Journey({
+  plan,
+  days,
+  sel,
+  onSelect,
+  focus,
+}: {
+  plan: ChosenPlan;
+  days: DayModel[];
+  sel: Selection;
+  onSelect: (s: Selection) => void;
+  focus?: MapFocus | null;
+}) {
+  const setSel = onSelect;
+  const [hov, setHov] = useState<number | null>(null);
+  const transport = plan.transport;
+  const flight = transport?.flight ?? null;
+  const isAir = transport?.mode === "airplane";
+
+  const steps: {
+    k: Selection;
+    glyph: string;
+    title: string;
+    sub: string;
+  }[] = [
     {
-      lat: plan.destination.latitude,
-      lon: plan.destination.longitude,
-      label: `${plan.destination.city} centre`,
-      kind: "destination",
+      k: "out",
+      glyph: "↗",
+      title: isAir ? "Fly out" : "Depart",
+      sub: isAir
+        ? `${weekday(flight?.outbound?.date)} · ${flight?.outbound?.depart_time ?? ""}`.trim()
+        : dayMonth(plan.start_date) || "Day 1",
+    },
+    ...days.map((d, i) => ({
+      k: i as Selection,
+      glyph: `D${i + 1}`,
+      title: `Day ${i + 1}`,
+      sub: `${d.stops.length} ${d.stops.length === 1 ? "stop" : "stops"}`,
+    })),
+    {
+      k: "back",
+      glyph: "↘",
+      title: isAir ? "Fly home" : "Return",
+      sub: isAir
+        ? `${weekday(flight?.inbound?.date)} · ${flight?.inbound?.depart_time ?? ""}`.trim()
+        : dayMonth(plan.end_date) || `Day ${days.length}`,
     },
   ];
+
+  const isDay = typeof sel === "number";
+  const day = isDay ? days[sel] : null;
+
+  return (
+    <div id={JOURNEY_ID} className="flex flex-col gap-4 scroll-mt-4">
+      <span style={{ fontSize: 18, fontWeight: 700 }}>
+        Your trip, step by step
+      </span>
+
+      {/* Stepper — scrolls horizontally when it doesn't fit. The padding gives the selected
+          step's glow ring and raised label card room inside the scroll box: setting overflow-x
+          to auto also makes overflow-y auto (CSS), which would otherwise clip them. */}
+      <div className="-mx-2 overflow-x-auto px-2 pb-4 pt-2">
+        <div
+          className="relative grid gap-2.5"
+          style={{
+            gridTemplateColumns: `repeat(${steps.length},minmax(104px,1fr))`,
+            minWidth: steps.length * 112,
+          }}
+        >
+          <div
+            style={{
+              position: "absolute",
+              left: "4%",
+              right: "4%",
+              top: 22,
+              height: 2,
+              background: "#d7e2df",
+            }}
+          />
+          {steps.map((s) => {
+            const on = sel === s.k;
+            const isFl = typeof s.k === "string";
+            return (
+              <button
+                key={String(s.k)}
+                type="button"
+                onClick={() => {
+                  setSel(s.k);
+                  setHov(null);
+                }}
+                style={{ all: "unset", cursor: "pointer" }}
+                className="relative flex flex-col items-center gap-2.5"
+              >
+                <div
+                  style={{
+                    position: "relative",
+                    zIndex: 1,
+                    width: 44,
+                    height: 44,
+                    borderRadius: 22,
+                    display: "grid",
+                    placeItems: "center",
+                    fontSize: isFl ? 18 : 12,
+                    fontWeight: 700,
+                    background: on ? C.teal : "#fff",
+                    color: on ? "#fff" : isFl ? C.tealDark : C.ink,
+                    border: `2px solid ${on ? C.teal : "#d7e2df"}`,
+                    boxShadow: on ? "0 0 0 5px rgba(15,148,136,.15)" : "none",
+                  }}
+                >
+                  {s.glyph}
+                </div>
+                <div
+                  className="flex w-full flex-col items-center gap-1 text-center"
+                  style={{
+                    padding: "8px 6px",
+                    borderRadius: 12,
+                    boxSizing: "border-box",
+                    background: on ? "#fff" : "transparent",
+                    border: `1px solid ${on ? C.line : "transparent"}`,
+                  }}
+                >
+                  <span style={{ fontSize: 13, fontWeight: 700 }}>
+                    {s.title}
+                  </span>
+                  <span style={{ fontSize: 11, color: C.muted }}>{s.sub}</span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {isDay && day ? (
+        <DayView
+          plan={plan}
+          day={day}
+          index={sel as number}
+          hov={hov}
+          setHov={setHov}
+          focus={focus}
+        />
+      ) : (
+        <FlightDetail
+          plan={plan}
+          leg={sel === "back" ? "inbound" : "outbound"}
+        />
+      )}
+    </div>
+  );
+}
+
+function DayView({
+  plan,
+  day,
+  index,
+  hov,
+  setHov,
+  focus,
+}: {
+  plan: ChosenPlan;
+  day: DayModel;
+  index: number;
+  hov: number | null;
+  setHov: (n: number | null) => void;
+  focus?: MapFocus | null;
+}) {
+  const markers = useMemo(() => dayMarkers(plan, day), [plan, day]);
+  return (
+    <div
+      style={{ ...CARD, borderRadius: 20, padding: 22 }}
+      className="grid gap-5 min-[900px]:grid-cols-[minmax(0,1fr)_minmax(0,460px)]"
+    >
+      <div className="flex flex-col gap-1">
+        <div className="flex items-baseline justify-between pb-2">
+          <span style={{ fontSize: 20, fontWeight: 800 }}>Day {index + 1}</span>
+          <span style={{ fontSize: 13, color: C.muted }}>
+            {day.stops.length} {day.stops.length === 1 ? "stop" : "stops"}
+          </span>
+        </div>
+
+        {day.stops.length === 0 ? (
+          <p style={{ fontSize: 14, color: C.muted }}>
+            A free day — nothing scheduled.
+          </p>
+        ) : (
+          day.stops.map((it, i) => {
+            const e = ENV[it.env] ?? ENV.mixed;
+            const dur = fmtRange(it.start, it.end);
+            return (
+              <div
+                key={`${it.name}-${i}`}
+                onMouseEnter={() => setHov(i + 1)}
+                onMouseLeave={() => setHov(null)}
+                className="flex items-center gap-3"
+                style={{
+                  padding: 10,
+                  borderRadius: 12,
+                  background: hov === i + 1 ? C.tealTint : "transparent",
+                  transition: "background .15s",
+                }}
+              >
+                <span
+                  style={{
+                    fontVariantNumeric: "tabular-nums",
+                    fontSize: 12,
+                    color: C.muted,
+                    width: 46,
+                    flex: "none",
+                  }}
+                >
+                  {it.start ?? ""}
+                </span>
+                <span
+                  style={{
+                    width: 24,
+                    height: 24,
+                    borderRadius: 12,
+                    background: C.teal,
+                    color: "#fff",
+                    display: "grid",
+                    placeItems: "center",
+                    fontSize: 11,
+                    fontWeight: 700,
+                    flex: "none",
+                  }}
+                >
+                  {i + 1}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div style={{ fontSize: 14, fontWeight: 600 }}>{it.name}</div>
+                  <div style={{ fontSize: 12, color: C.muted }}>
+                    {[dur, it.category].filter(Boolean).join(" · ")}
+                  </div>
+                  {it.hours && (
+                    <div
+                      className="truncate"
+                      style={{ fontSize: 11, color: C.muted }}
+                      title={`Opening hours: ${it.hours}`}
+                    >
+                      🕒 {it.hours}
+                    </div>
+                  )}
+                </div>
+                <span
+                  style={{
+                    padding: "3px 9px",
+                    borderRadius: 7,
+                    background: e.bg,
+                    color: e.fg,
+                    fontSize: 11,
+                    fontWeight: 600,
+                    flex: "none",
+                  }}
+                >
+                  {e.label}
+                </span>
+              </div>
+            );
+          })
+        )}
+
+        {day.note && (
+          <div
+            className="mt-1.5 flex gap-3"
+            style={{
+              padding: "12px 14px",
+              borderRadius: 12,
+              background: C.tealTint,
+              color: "#0d4a44",
+              fontSize: 13,
+              lineHeight: 1.45,
+            }}
+          >
+            <b>→</b>
+            <span>{day.note}</span>
+          </div>
+        )}
+      </div>
+
+      {markers.length > 0 ? (
+        <MapView
+          markers={markers}
+          highlightNumber={hov}
+          focus={focus}
+          ariaLabel={`Map of day ${index + 1} stops in ${plan.destination.city}`}
+          className="h-[320px] w-full overflow-hidden rounded-2xl ring-1 ring-slate-200 min-[900px]:h-full"
+        />
+      ) : (
+        <div
+          className="flex items-center justify-center rounded-2xl"
+          style={{
+            background: C.soft,
+            color: C.muted,
+            fontSize: 13,
+            minHeight: 320,
+          }}
+        >
+          No mapped stops for this day.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function dayMarkers(plan: ChosenPlan, day: DayModel): MapMarker[] {
+  const markers: MapMarker[] = [];
   const a = plan.accommodation;
   if (a?.latitude != null && a.longitude != null) {
     markers.push({
       lat: a.latitude,
       lon: a.longitude,
-      label: a.name ?? "Accommodation",
+      label: a.name ?? "Your stay",
       kind: "accommodation",
     });
   }
-  for (const day of plan.itinerary) {
-    for (const activity of day.activities) {
-      if (activity.latitude != null && activity.longitude != null) {
-        markers.push({
-          lat: activity.latitude,
-          lon: activity.longitude,
-          label: activity.name,
-          kind: "activity",
-        });
-      }
+  day.stops.forEach((s, i) => {
+    if (s.lat != null && s.lon != null) {
+      markers.push({
+        lat: s.lat,
+        lon: s.lon,
+        label: `${i + 1}. ${s.name}`,
+        kind: "activity",
+        number: i + 1,
+      });
     }
-  }
+  });
   return markers;
 }
 
-/**
- * Nights, derived from real figures: the accommodation spend divided by the nightly price. We
- * do not fall back to the itinerary length, so a mismatched or missing price yields null rather
- * than a guessed number.
- */
+function FlightDetail({
+  plan,
+  leg,
+}: {
+  plan: ChosenPlan;
+  leg: "outbound" | "inbound";
+}) {
+  const transport = plan.transport;
+  const f = transport?.flight ?? null;
+  const cost = plan.cost_breakdown.transport;
+
+  if (!f || transport?.mode !== "airplane") {
+    const Icon = TRANSPORT_ICON[transport?.mode ?? "car"];
+    return (
+      <div
+        style={{ ...CARD, borderRadius: 20, padding: 28 }}
+        className="flex items-center gap-4"
+      >
+        <span
+          className="flex items-center justify-center"
+          style={{
+            width: 48,
+            height: 48,
+            borderRadius: 14,
+            background: C.tealTint,
+            color: C.tealDark,
+          }}
+        >
+          <Icon className="h-6 w-6" />
+        </span>
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 700 }} className="capitalize">
+            {leg === "outbound" ? "Departure" : "Return"} by {transport?.mode}
+          </div>
+          <div style={{ fontSize: 13, color: C.muted }}>
+            {euro(cost)} total, return
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const l = leg === "inbound" ? f.inbound : f.outbound;
+  const from = leg === "inbound" ? f.destination : f.origin;
+  const to = leg === "inbound" ? f.origin : f.destination;
+
+  return (
+    <div
+      style={{ ...CARD, borderRadius: 20, padding: 28 }}
+      className="grid items-center gap-6 min-[900px]:grid-cols-[auto_1fr_auto_240px]"
+    >
+      <div>
+        <div style={{ fontSize: 12, fontWeight: 600, color: C.tealDark }}>
+          {leg === "inbound" ? "Return" : "Outbound"} · {dayMonth(l?.date)}
+        </div>
+        <div style={{ fontSize: 40, fontWeight: 800, letterSpacing: "-.02em" }}>
+          {l?.depart_time ?? "—"}
+        </div>
+        <div style={{ fontSize: 13, color: C.muted }}>
+          {from.code} · {from.city ?? from.airport ?? ""}
+        </div>
+      </div>
+      <div className="flex flex-col items-center gap-1.5">
+        <span style={{ fontSize: 12, color: C.muted }}>
+          {l?.duration_min != null ? fmtDurMin(l.duration_min) : ""} ·{" "}
+          {stopsLabel(l?.stops)}
+        </span>
+        <div
+          style={{
+            height: 2,
+            width: "100%",
+            background:
+              "repeating-linear-gradient(90deg,#b8cbc7 0 6px,transparent 6px 10px)",
+          }}
+        />
+      </div>
+      <div className="text-right">
+        <div style={{ fontSize: 12, color: C.muted }}>arrive</div>
+        <div style={{ fontSize: 40, fontWeight: 800, letterSpacing: "-.02em" }}>
+          {l?.arrival_time ?? "—"}
+        </div>
+        <div style={{ fontSize: 13, color: C.muted }}>
+          {to.code} · {to.city ?? to.airport ?? ""}
+        </div>
+      </div>
+      <div
+        style={{ padding: 16, borderRadius: 14, background: C.bg }}
+        className="flex flex-col gap-2.5"
+      >
+        <div style={{ fontSize: 13, color: C.muted }}>Return flights total</div>
+        <div style={{ fontSize: 24, fontWeight: 800 }}>{euro(cost)}</div>
+        {f.booking_url && (
+          <a
+            href={f.booking_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ ...btnStyle(C.teal), justifyContent: "center" }}
+          >
+            Reserve flights <IconArrowRight className="h-4 w-4" />
+          </a>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Derivations                                                                  */
+/* -------------------------------------------------------------------------- */
+
+/** Nights from the accommodation spend ÷ nightly price (null when not derivable). */
 function estimateNights(plan: ChosenPlan): number | null {
   const a = plan.accommodation;
   if (!a || a.price_per_night <= 0) return null;
@@ -984,44 +1734,12 @@ function estimateNights(plan: ChosenPlan): number | null {
   return nights > 0 ? nights : null;
 }
 
-function formatDuration(minutes: number): string {
-  const h = Math.floor(minutes / 60);
-  const m = Math.round(minutes % 60);
-  if (h === 0) return `${m} min`;
-  return m === 0 ? `${h} h` : `${h} h ${m} min`;
-}
-
-function formatWeekday(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString("en-GB", { weekday: "short" });
-}
-
-/** "1 Dec" for a single date, or null when absent/unparseable. */
-function formatDateShort(iso?: string | null): string | null {
-  if (!iso) return null;
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return null;
-  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
-}
-
-/** "1 Dec – 5 Dec 2026" for the trip window, or null when neither date is present. */
-function formatDateRange(
-  start?: string | null,
-  end?: string | null,
-): string | null {
-  const s = formatDateShort(start);
-  const e = formatDateShort(end);
-  if (s && e) {
-    const year = new Date(end as string).getFullYear();
-    const suffix = Number.isNaN(year) ? "" : ` ${year}`;
-    return `${s} – ${e}${suffix}`;
-  }
-  return s ?? e;
-}
-
-function formatMonthDay(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+/** Nights from the trip window dates (fallback when the price-based figure isn't available). */
+function dateSpanNights(plan: ChosenPlan): number | null {
+  if (!plan.start_date || !plan.end_date) return null;
+  const s = new Date(plan.start_date);
+  const e = new Date(plan.end_date);
+  if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime())) return null;
+  const nights = Math.round((e.getTime() - s.getTime()) / 86400000);
+  return nights > 0 ? nights : null;
 }

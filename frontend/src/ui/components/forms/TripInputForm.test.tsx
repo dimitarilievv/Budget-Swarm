@@ -191,6 +191,31 @@ describe("TripInputForm", () => {
     expect(submit).toHaveBeenCalledTimes(1);
   });
 
+  it("shows an unresolvable origin inline on the form, not the error screen", async () => {
+    const submit = vi.fn(async () => {
+      throw new ApiError(
+        "VALIDATION_ERROR",
+        "We couldn't find a starting location called 'Zzz'.",
+        { field: "origin_label", status: 422 },
+      );
+    });
+    render(<TripInputForm submit={submit} />);
+    setOrigin("Zzz");
+    fireEvent.click(plan());
+
+    // The message appears inline (near the origin field) and the form stays put —
+    // no full-screen error state, no no-trip screen.
+    expect(
+      await screen.findByText(/couldn't find a starting location/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /generate optimized plan/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/no trip fits these constraints/i),
+    ).not.toBeInTheDocument();
+  });
+
   it("edit details returns to the form", async () => {
     const submit = vi.fn(async () => {
       throw new ApiError("INTERNAL_ERROR", "boom");

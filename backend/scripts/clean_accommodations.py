@@ -24,6 +24,7 @@ Built on the reusable validators in ``scripts.validators`` (BS-036).
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 from collections import Counter
 from dataclasses import dataclass, field
@@ -52,6 +53,49 @@ RATING_MIN, RATING_MAX = 0.0, 5.0
 # Large "no real limit" sentinels seen in min/max-nights fields.
 NIGHT_SENTINELS = {999, 1125}
 
+# Canonical amenity chips surfaced on the UI card, in display priority order. Each maps to
+# the substrings that identify it in Inside Airbnb's free-text ``amenities`` list, so only
+# amenities the listing actually declares are shown (no fabrication). Kept short on purpose.
+_AMENITY_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("Wi-Fi", ("wifi", "wi-fi", "internet")),
+    ("Kitchen", ("kitchen",)),
+    ("AC", ("air conditioning", "air-conditioning", "ac ")),
+    ("Heating", ("heating",)),
+    ("Washer", ("washer",)),
+    ("Free parking", ("free parking", "free residential garage", "free carport")),
+    ("Parking", ("parking",)),
+    ("Pool", ("pool",)),
+    ("Balcony", ("balcony", "patio", "terrace")),
+    ("Elevator", ("elevator", "lift")),
+)
+# How many chips to keep on the card.
+_MAX_AMENITIES = 5
+
+
+def _parse_amenities(raw_value: str | None) -> list[str]:
+    """Map Inside Airbnb's ``amenities`` JSON list to a short set of canonical chips.
+
+    The source column is a JSON array of free-text amenity names; parse it and keep, in
+    priority order, the canonical chips whose keywords actually appear — so a chip is shown
+    only when the listing genuinely offers it. Unparseable/empty input yields ``[]``.
+    """
+    if not raw_value:
+        return []
+    try:
+        items = json.loads(raw_value)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    if not isinstance(items, list):
+        return []
+    haystack = " | ".join(str(x).lower() for x in items)
+    chips: list[str] = []
+    for label, keywords in _AMENITY_RULES:
+        if any(kw in haystack for kw in keywords):
+            chips.append(label)
+        if len(chips) >= _MAX_AMENITIES:
+            break
+    return chips
+
 
 @dataclass
 class CleanListing:
@@ -70,6 +114,13 @@ class CleanListing:
     longitude: float
     accommodates: int | None
     minimum_nights: int | None
+    # Listing detail carried through for the UI card (BS-104); all optional.
+    listing_url: str | None = None
+    picture_url: str | None = None
+    review_count: int | None = None
+    location_score: float | None = None
+    neighbourhood: str | None = None
+    amenities: list[str] = field(default_factory=list)
     quality_flag: str = "real"
 
 
@@ -147,6 +198,20 @@ def clean_row(
     name = v.clean_str(raw.get("name")) or None
     accom_type = v.clean_str(raw.get("room_type")) or None
 
+    # Listing detail for the UI card (BS-104) — all optional, taken straight from the row.
+    listing_url = v.clean_str(raw.get("listing_url")) or None
+    picture_url = v.clean_str(raw.get("picture_url")) or None
+    review_count = v.parse_int(raw.get("number_of_reviews"))
+    location_score = v.parse_float(raw.get("review_scores_location"))
+    if location_score is not None and not v.in_range(location_score, RATING_MIN, RATING_MAX):
+        location_score = None
+    neighbourhood = (
+        v.clean_str(raw.get("neighbourhood_cleansed"))
+        or v.clean_str(raw.get("neighbourhood"))
+        or None
+    )
+    amenities = _parse_amenities(raw.get("amenities"))
+
     return (
         CleanListing(
             source=source,
@@ -162,6 +227,12 @@ def clean_row(
             longitude=lon,
             accommodates=accommodates,
             minimum_nights=int(min_nights) if min_nights is not None else None,
+            listing_url=listing_url,
+            picture_url=picture_url,
+            review_count=review_count if review_count is not None and review_count >= 0 else None,
+            location_score=location_score,
+            neighbourhood=neighbourhood,
+            amenities=amenities,
         ),
         None,
     )

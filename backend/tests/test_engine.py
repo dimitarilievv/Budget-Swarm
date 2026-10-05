@@ -108,6 +108,8 @@ def _agents(**overrides) -> AgentSet:
         experience=overrides.get("experience", _experience),
         weather=overrides.get("weather", _weather),
         weather_window=overrides.get("weather_window"),
+        flight_details=overrides.get("flight_details"),
+        air_window=overrides.get("air_window"),
     )
 
 
@@ -146,6 +148,161 @@ def test_meta_has_degraded_sources_and_timing():
     assert isinstance(meta["elapsed_ms"], int) and meta["elapsed_ms"] >= 0
     assert meta["generated_at"] is not None
     assert meta["trip_id"] is None
+
+
+def test_flight_details_attached_for_air_mode():
+    # For air mode the engine calls the flight-details hook (both legs + booking link) and
+    # attaches its payload to the transport, and it validates against the wire schema.
+    def air_transport(_inp, dest):
+        return TransportOption(
+            mode=TransportMode.AIRPLANE, cost=180.0, duration_minutes=210, distance_km=1300.0
+        )
+
+    def fd(_inp, dest, start, end):
+        return {
+            "origin": {"code": "SKP", "city": "Skopje", "airport": "Skopje Airport"},
+            "destination": {"code": "IST", "city": dest.city, "airport": "Istanbul Airport"},
+            "outbound": {
+                "date": start,
+                "depart_time": "12:45",
+                "arrival_time": "14:30",
+                "duration_min": 105,
+                "stops": 0,
+            },
+            "inbound": {
+                "date": end,
+                "depart_time": "16:35",
+                "arrival_time": "18:45",
+                "duration_min": 130,
+                "stops": 1,
+            },
+            "booking_url": "https://www.aviasales.com/search/SKP0110IST0510x1",
+        }
+
+    result = TripPlanEngine(_agents(transport=air_transport, flight_details=fd)).generate_trip(
+        _engine_input(transport_mode=TransportMode.AIRPLANE)
+    )
+    TripResponse.model_validate(result)
+    f = result["chosen_plan"]["transport"]["flight"]
+    assert f["origin"]["code"] == "SKP" and f["destination"]["code"] == "IST"
+    assert f["outbound"]["depart_time"] == "12:45"
+    assert f["inbound"]["stops"] == 1
+    assert f["booking_url"].startswith("https://www.aviasales.com/search/")
+
+
+def test_flight_details_absent_for_non_air_modes():
+    calls = {"n": 0}
+
+    def fd(*_args):
+        calls["n"] += 1
+        return {}
+
+    result = TripPlanEngine(_agents(flight_details=fd)).generate_trip(_engine_input())  # car
+    assert result["chosen_plan"]["transport"]["flight"] is None
+    assert calls["n"] == 0  # hook not called for non-air modes
+
+
+def _air_transport(_inp, dest):
+    # An air option whose fan-out fare is an estimate (no departure_at): without the
+    # availability search the trip would default to today + lead time.
+    return TransportOption(
+        mode=TransportMode.AIRPLANE, cost=180.0, duration_minutes=210, distance_km=1300.0
+    )
+
+
+def test_air_window_drives_the_trip_dates_over_the_transport_default():
+    # For air mode with an air_window hook, the trip window comes from the matched
+    # availability search (a real round-trip window), not the transport-derived today+lead.
+    seen = {}
+
+    def air_window(_inp, dest, duration_days, earliest):
+        seen["args"] = (dest.city, duration_days, earliest)
+        return {
+            "start_date": "2026-11-10",
+            "end_date": "2026-11-14",
+            "depart_time": "08:15",
+            "quality": "real",
+            "flight": {
+                "origin": {"code": "SKP", "city": "Skopje", "airport": "Skopje Airport"},
+                "destination": {"code": "BUD", "city": dest.city, "airport": "Budapest Airport"},
+                "outbound": {"date": "2026-11-10", "depart_time": "08:15", "stops": 0},
+                "inbound": {"date": "2026-11-14", "depart_time": "19:40", "stops": 1},
+                "booking_url": "https://www.aviasales.com/search/SKP1011BUD1411x2",
+            },
+        }
+
+    result = TripPlanEngine(_agents(transport=_air_transport, air_window=air_window)).generate_trip(
+        _engine_input(transport_mode=TransportMode.AIRPLANE, duration_days=5)
+    )
+    TripResponse.model_validate(result)
+    cp = result["chosen_plan"]
+    assert cp["start_date"] == date(2026, 11, 10)
+    assert cp["end_date"] == date(2026, 11, 14)  # the matched window, not today+lead
+    assert cp["transport"]["depart_time"] == "08:15"
+    assert cp["transport"]["flight"]["destination"]["code"] == "BUD"
+    # The hook is asked for the requested duration and an earliest date a few days out
+    # (the engine derives it from UTC "now", so compare in UTC to avoid a local skew).
+    from datetime import UTC, datetime
+
+    assert seen["args"][1] == 5
+    assert date.fromisoformat(seen["args"][2]) >= datetime.now(UTC).date() + timedelta(days=3)
+
+
+def test_air_window_not_used_for_non_air_modes():
+    calls = {"n": 0}
+
+    def air_window(*_args):
+        calls["n"] += 1
+        return None
+
+    result = TripPlanEngine(_agents(air_window=air_window)).generate_trip(_engine_input())  # car
+    assert calls["n"] == 0
+    assert result["chosen_plan"]["transport"]["flight"] is None
+
+
+def test_air_window_falls_back_to_transport_dates_when_hook_returns_none():
+    # If the availability search yields nothing usable (e.g. airports unresolved), the engine
+    # degrades to the transport-derived window rather than crashing.
+    result = TripPlanEngine(
+        _agents(transport=_air_transport, air_window=lambda *_a: None)
+    ).generate_trip(_engine_input(transport_mode=TransportMode.AIRPLANE, duration_days=3))
+    from datetime import UTC, datetime
+
+    cp = result["chosen_plan"]
+    expected_start = datetime.now(UTC).date() + timedelta(days=3)
+    assert cp["start_date"] == expected_start  # transport had no departure_at -> lead time
+    assert cp["transport"]["flight"] is None
+
+
+def test_air_window_weather_is_aligned_to_the_matched_dates():
+    captured = {}
+
+    def air_window(_inp, dest, duration_days, earliest):
+        return {
+            "start_date": "2026-11-10",
+            "end_date": "2026-11-12",
+            "depart_time": "08:15",
+            "quality": "real",
+            "flight": {"origin": {}, "destination": {}, "outbound": None, "inbound": None},
+        }
+
+    def window_weather(_inp, dest, start, end):
+        captured["window"] = (start, end)
+        return WeatherProfile(
+            days=[
+                WeatherDay(
+                    forecast_date=date(2026, 11, 10),
+                    temp_min=2.0,
+                    temp_max=9.0,
+                    conditions="cloudy",
+                )
+            ]
+        )
+
+    TripPlanEngine(
+        _agents(transport=_air_transport, air_window=air_window, weather_window=window_weather)
+    ).generate_trip(_engine_input(transport_mode=TransportMode.AIRPLANE, duration_days=3))
+    assert captured["window"] == ("2026-11-10", "2026-11-12")  # aligned to the matched window
 
 
 def test_trip_window_uses_transport_departure_and_duration():
@@ -206,28 +363,107 @@ def test_weather_is_realigned_to_the_trip_window():
 
 
 def test_weather_window_not_used_when_the_trip_starts_today():
-    # No future departure (car/bus): the fan-out forecast is already aligned, so the
-    # windowed re-fetch is skipped entirely.
+    # When the (real) departure date is today, the fan-out forecast already covers it, so
+    # the windowed re-fetch is skipped.
+    from datetime import UTC, datetime
+
+    today = datetime.now(UTC).date().isoformat()
     calls = {"n": 0}
+
+    def today_transport(_inp, dest):
+        return TransportOption(mode=TransportMode.CAR, cost=150.0, departure_at=today)
 
     def window_weather(_inp, dest, start, end):
         calls["n"] += 1
         return None
 
-    TripPlanEngine(_agents(weather_window=window_weather)).generate_trip(_engine_input())
+    TripPlanEngine(_agents(transport=today_transport, weather_window=window_weather)).generate_trip(
+        _engine_input()
+    )
     assert calls["n"] == 0
 
 
-def test_trip_window_defaults_to_today_without_a_departure():
-    # No departure timestamp (car/bus, or an estimated flight): the window starts today and
-    # no departure time is shown.
+def test_trip_window_defaults_to_a_lead_time_without_a_departure():
+    # No departure timestamp (car/bus, or an estimated flight): the window starts a few days
+    # out (not today, which is unrealistic) and no departure time is shown.
     from datetime import UTC, datetime
 
     result = TripPlanEngine(_agents()).generate_trip(_engine_input(duration_days=3))
     cp = result["chosen_plan"]
-    assert cp["start_date"] == datetime.now(UTC).date()
-    assert cp["end_date"] == cp["start_date"] + timedelta(days=2)
+    expected_start = datetime.now(UTC).date() + timedelta(days=3)
+    assert cp["start_date"] == expected_start
+    assert cp["end_date"] == expected_start + timedelta(days=2)
     assert cp["transport"]["depart_time"] is None
+
+
+def test_itinerary_schedules_around_arrival_and_departure():
+    # Day 1 must not begin before the traveller lands (+ settle-in buffer) and the last day must
+    # end in time for the return — the engine shifts the generic morning timetable accordingly.
+    from types import SimpleNamespace
+
+    from ai_engine.core.engine import _itinerary, _schedule_bounds, _TripWindow
+
+    def _io(value):
+        return SimpleNamespace(value=value)
+
+    def _item(day, start, end, name="Stop"):
+        return SimpleNamespace(
+            day=day,
+            start_minute=start,
+            end_minute=end,
+            was_rescheduled=False,
+            activity=SimpleNamespace(
+                name=name,
+                category="culture",
+                indoor_outdoor=_io("indoor"),
+                latitude=None,
+                longitude=None,
+                opening_hours=None,
+            ),
+        )
+
+    flight = {
+        "outbound": {"arrival_time": "15:50"},
+        "inbound": {"depart_time": "20:15"},
+    }
+    window = _TripWindow(
+        start_date=date(2026, 10, 22), end_date=date(2026, 10, 24), depart_time="14:20"
+    )
+    transport = TransportOption(mode=TransportMode.AIRPLANE, cost=120.0)
+    bounds = _schedule_bounds(transport, flight, window, 3)
+
+    plan = SimpleNamespace(
+        itinerary=[
+            _item(0, 9 * 60, 11 * 60, "Morning stop"),  # 09:00–11:00, before the 15:50 landing
+            _item(0, 11 * 60, 13 * 60, "Late morning stop"),
+            _item(2, 16 * 60, 18 * 60, "Last-day stop"),  # ends 18:00, past the departure limit
+        ]
+    )
+    days = _itinerary(plan, bounds)
+
+    # Day 1 is shifted to start 15:50 + 2h settle-in = 17:50 (not 09:00). The second stop would
+    # run 19:50–21:50, past the 20:00 evening cap, so it is dropped rather than shown that late.
+    assert days[0]["activities"][0]["start_time"] == "17:50"
+    assert len(days[0]["activities"]) == 1
+    assert all(a["end_time"] <= "20:00" for a in days[0]["activities"])
+    # Last day ends by 20:15 − 2.5h airport buffer = 17:45 (not 18:00).
+    assert days[-1]["day_number"] == 3
+    assert days[-1]["activities"][-1]["end_time"] == "17:45"
+
+
+def test_schedule_bounds_for_car_uses_one_way_travel_time():
+    from datetime import date as _date
+
+    from ai_engine.core.engine import _schedule_bounds, _TripWindow
+
+    # Car round-trip duration 10h → one-way 5h; no clock, so an 08:00 start → arrive 13:00,
+    # then rest scales with the drive (half of 5h = 2.5h, within the 3h cap) → first stop 15:30.
+    window = _TripWindow(
+        start_date=_date(2026, 10, 1), end_date=_date(2026, 10, 3), depart_time=None
+    )
+    transport = TransportOption(mode=TransportMode.CAR, cost=90.0, duration_minutes=600)
+    bounds = _schedule_bounds(transport, None, window, 3)
+    assert bounds.day0_earliest_min == 15 * 60 + 30  # 08:00 + 5h drive + 2.5h rest
 
 
 def test_ranked_candidates_include_the_infeasible_runner_up():

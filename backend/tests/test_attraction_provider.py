@@ -70,7 +70,11 @@ RECORDED_OVERPASS = {
             "id": 1,
             "lat": 41.3902,
             "lon": 2.1745,
-            "tags": {"name": "Casa Batlló", "tourism": "attraction"},
+            "tags": {
+                "name": "Casa Batlló",
+                "tourism": "attraction",
+                "opening_hours": "Mo-Su 09:00-20:00",
+            },
         },
         {
             "type": "way",
@@ -179,6 +183,9 @@ def test_overpass_returns_pois_without_key():
     assert activities[1].indoor_outdoor == OUTDOOR  # leisure=park
     assert activities[1].source_id == "way/2"
     assert (activities[1].latitude, activities[1].longitude) == (41.4145, 2.1527)  # way center
+    # OSM opening_hours is carried through when tagged (sparse — the park has none → None).
+    assert activities[0].opening_hours == "Mo-Su 09:00-20:00"
+    assert activities[1].opening_hours is None
 
 
 def test_overpass_empty_raises_no_result():

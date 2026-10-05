@@ -1,35 +1,45 @@
 /**
- * ComparisonPage — the destination evaluation surface (BS-097).
+ * ComparisonPage — "Compare destinations" (design 3a: city cards).
  *
- * Renders every {@link RankedCandidate} from a response side by side across all documented
- * columns (cost, overall score, transport/accommodation cost, the three factor scores, and
- * feasibility). This is an evaluation surface, so **infeasible candidates are flagged, never
- * hidden**, and the chosen destination (the one matching `chosen_plan.destination`) is
- * highlighted with a "Recommended" badge and an elevated teal-framed card.
+ * Renders every {@link RankedCandidate} as a sortable row of city cards (by overall score,
+ * #1 marked "Recommended"), each with a score ring, a budget-aware cost box, and a factor
+ * list. This is an evaluation surface, so infeasible candidates are shown (never hidden) and
+ * clearly marked — a missing stay price yields "€{transport}+", a hatched bar segment, and a
+ * "Find a stay" button rather than a fabricated total.
  *
- * Purely presentational — it takes a response and an optional `onBack`, so it renders straight
- * from a fixture in tests. Candidate order is preserved from the response (the ranking), never
- * re-sorted here.
+ * Purely presentational: it takes the response plus the originating request (for budget, dates
+ * and origin — which the response omits) and renders straight from fixtures in tests.
  */
-import type { ComponentType, ReactNode, SVGProps } from "react";
+import { useMemo, useState } from "react";
 
 import type {
   CandidateDestination,
   RankedCandidate,
   TripResponse,
+  TripRequestPayload,
 } from "@/types/trip";
-import {
-  IconBed,
-  IconCar,
-  IconCheck,
-  IconCloudSun,
-  IconGauge,
-  IconHeart,
-  IconInfo,
-  IconStar,
-  IconWallet,
-  IconX,
-} from "@/ui/components/common/Icons";
+
+const C = {
+  teal: "#0f9488",
+  tealDark: "#0b7a70",
+  tealTint: "#e6f5f2",
+  indigo: "#6366f1",
+  ink: "#12201e",
+  muted: "#5d6b69",
+  line: "#e4ebe9",
+  soft: "#f4f8f7",
+  okInk: "#1f8a55",
+  warnBg: "#fff6e0",
+  warnInk: "#8a5a00",
+};
+const HATCH = "repeating-linear-gradient(135deg,#f0d9a0 0 4px,#fff6e0 4px 8px)";
+
+// Compare shows only the strongest options so the row stays scannable (and the cards don't
+// shrink below a readable width); the rest of the ranking isn't useful to eyeball here.
+const MAX_COMPARE_CITIES = 5;
+
+const pct = (v?: number | null): number =>
+  v == null ? 0 : Math.round(Math.max(0, Math.min(1, v)) * 100);
 
 function euro(value: number): string {
   return new Intl.NumberFormat("en-IE", {
@@ -37,10 +47,6 @@ function euro(value: number): string {
     currency: "EUR",
     maximumFractionDigits: 0,
   }).format(value);
-}
-
-function scoreOutOf100(score: number): number {
-  return Math.round(Math.max(0, Math.min(1, score)) * 100);
 }
 
 function sameDestination(
@@ -53,317 +59,445 @@ function sameDestination(
   );
 }
 
-type IconType = ComponentType<SVGProps<SVGSVGElement>>;
-
-const ROW_H = "h-16";
-
-/** The value rows, in the documented order, each with its label icon and sub-label. */
-const VALUE_ROWS: {
-  key: string;
-  label: string;
-  sublabel?: string;
-  Icon: IconType;
-  tint: "teal" | "amber";
-  render: (c: RankedCandidate, isChosen: boolean) => ReactNode;
-}[] = [
-  {
-    key: "total_cost",
-    label: "Total cost",
-    sublabel: "estimated",
-    Icon: IconWallet,
-    tint: "teal",
-    render: (c) => <Money value={c.total_cost} approx bold />,
-  },
-  {
-    key: "overall_score",
-    label: "Overall score",
-    sublabel: "/100",
-    Icon: IconGauge,
-    tint: "teal",
-    render: (c, isChosen) => (
-      <OverallScore value={c.overall_score} highlight={isChosen} />
-    ),
-  },
-  {
-    key: "transport_cost",
-    label: "Transport cost",
-    sublabel: "estimated",
-    Icon: IconCar,
-    tint: "teal",
-    render: (c) => <Money value={c.transport_cost} />,
-  },
-  {
-    key: "accommodation_cost",
-    label: "Accommodation cost",
-    sublabel: "estimated",
-    Icon: IconBed,
-    tint: "teal",
-    render: (c) => <Money value={c.accommodation_cost} />,
-  },
-  {
-    key: "experience_score",
-    label: "Experience score",
-    sublabel: "/100",
-    Icon: IconStar,
-    tint: "amber",
-    render: (c) => <FactorBar value={c.experience_score} />,
-  },
-  {
-    key: "weather_score",
-    label: "Weather score",
-    sublabel: "/100",
-    Icon: IconCloudSun,
-    tint: "amber",
-    render: (c) => <FactorBar value={c.weather_score} />,
-  },
-  {
-    key: "preference_score",
-    label: "Preference score",
-    sublabel: "/100",
-    Icon: IconHeart,
-    tint: "amber",
-    render: (c) => <FactorBar value={c.preference_score} />,
-  },
-  {
-    key: "feasible",
-    label: "Feasible within budget",
-    Icon: IconCheck,
-    tint: "teal",
-    render: (c) => <FeasibilityBadge feasible={c.feasible} />,
-  },
-];
+function formatDateRange(
+  start?: string | null,
+  end?: string | null,
+): string | null {
+  if (!start && !end) return null;
+  const fmt = (iso: string) => {
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime())
+      ? null
+      : d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  };
+  const s = start ? fmt(start) : null;
+  const e = end ? fmt(end) : null;
+  if (s && e) return `${s} – ${e}`;
+  return s ?? e;
+}
 
 interface ComparisonPageProps {
   response: TripResponse;
+  /** The request that produced the plan (budget, origin) — optional in tests. */
+  request?: TripRequestPayload | null;
   onBack?: () => void;
+  /** Act on a card: "View trip" (recommended), "Plan this" (fits), or "Find a stay". */
+  onAction?: (city: CandidateDestination, label: string) => void;
 }
 
 export default function ComparisonPage({
   response,
+  request = null,
   onBack,
+  onAction,
 }: ComparisonPageProps) {
-  const candidates = response.ranked_candidates;
   const chosen = response.chosen_plan.destination;
+  const budget = request?.budget ?? null;
+
+  const cities = useMemo(
+    () =>
+      [...response.ranked_candidates]
+        .sort((a, b) => (b.overall_score ?? 0) - (a.overall_score ?? 0))
+        .slice(0, MAX_COMPARE_CITIES),
+    [response.ranked_candidates],
+  );
+  // The recommended card is the destination we actually planned (falls back to the top score).
+  const recommendedIndex = useMemo(() => {
+    const i = cities.findIndex((c) => sameDestination(c.destination, chosen));
+    return i >= 0 ? i : 0;
+  }, [cities, chosen]);
+
+  const [selected, setSelected] = useState(recommendedIndex);
+
+  const estimated =
+    response.meta.degraded_sources.length > 0 ||
+    (response.chosen_plan.transport != null &&
+      response.chosen_plan.transport.quality_flag !== "real") ||
+    (response.chosen_plan.accommodation != null &&
+      response.chosen_plan.accommodation.quality_flag !== "real");
+
+  const dates = formatDateRange(
+    response.chosen_plan.start_date,
+    response.chosen_plan.end_date,
+  );
+  const recommendedCity =
+    cities[recommendedIndex]?.destination.city ?? chosen.city;
+
+  const subline = [
+    dates,
+    request?.origin_label ? `from ${request.origin_label}` : null,
+    budget != null ? `${euro(budget)} budget` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
-    <div className="animate-enter space-y-6">
-      <header className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-extrabold tracking-tight text-slate-900">
-            Top destination comparisons
-          </h1>
-          <p className="mt-2 text-sm text-slate-500">
-            How the best options compare against your priorities and budget.
-          </p>
+    <div
+      className="animate-enter"
+      style={{
+        color: C.ink,
+        fontFamily: "'Plus Jakarta Sans',system-ui,sans-serif",
+      }}
+    >
+      <div className="flex flex-col gap-6">
+        {/* Header */}
+        <div className="flex flex-wrap items-end justify-between gap-5">
+          <div className="flex flex-col gap-1.5">
+            {onBack && (
+              <button
+                type="button"
+                onClick={onBack}
+                style={{
+                  all: "unset",
+                  cursor: "pointer",
+                  fontSize: 13,
+                  color: C.muted,
+                }}
+              >
+                ← Back to {recommendedCity}
+              </button>
+            )}
+            <h1
+              style={{
+                margin: 0,
+                fontSize: 34,
+                letterSpacing: "-.03em",
+                fontWeight: 800,
+              }}
+            >
+              Compare destinations
+            </h1>
+            {subline && (
+              <span style={{ fontSize: 15, color: C.muted }}>{subline}</span>
+            )}
+          </div>
+          {estimated && (
+            <span
+              style={{
+                padding: "6px 12px",
+                borderRadius: 99,
+                background: C.warnBg,
+                color: C.warnInk,
+                fontSize: 12,
+                fontWeight: 600,
+              }}
+            >
+              All prices estimated
+            </span>
+          )}
         </div>
-        {onBack && (
-          <button
-            type="button"
-            onClick={onBack}
-            className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:border-slate-300"
-          >
-            ← Back to results
-          </button>
-        )}
-      </header>
 
-      {candidates.length === 0 ? (
-        <div className="rounded-2xl bg-white p-10 text-center text-sm text-slate-500 ring-1 ring-slate-200">
-          No candidate destinations to compare.
-        </div>
-      ) : (
-        <>
-          {/* Columns flex to fill the width when there are only a few candidates, and fall
-              back to horizontal scroll (via each column's min-width) when there are many. */}
-          <div className="overflow-x-auto px-1 pb-2 pt-1">
-            <div className="flex gap-3">
-              <LabelColumn />
-              {candidates.map((candidate, i) => (
-                <CandidateColumn
-                  key={`${candidate.destination.city}-${candidate.destination.country}-${i}`}
-                  candidate={candidate}
-                  isChosen={sameDestination(candidate.destination, chosen)}
-                  index={i}
+        {cities.length === 0 ? (
+          <div
+            className="rounded-2xl bg-white p-10 text-center text-sm"
+            style={{ color: C.muted, border: `1px solid ${C.line}` }}
+          >
+            No candidate destinations to compare.
+          </div>
+        ) : (
+          <>
+            <div
+              className="grid items-stretch gap-3.5 pt-1"
+              style={{
+                gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))",
+              }}
+            >
+              {cities.map((city, i) => (
+                <CityCard
+                  key={`${city.destination.city}-${city.destination.country}-${i}`}
+                  city={city}
+                  rank={i + 1}
+                  budget={budget}
+                  active={selected === i}
+                  recommended={i === recommendedIndex}
+                  onSelect={() => setSelected(i)}
+                  onAction={onAction}
                 />
               ))}
             </div>
-          </div>
 
-          <div className="flex items-center justify-between gap-3">
-            <p className="flex items-center gap-2 text-xs text-slate-400">
-              <IconInfo className="h-4 w-4" />
-              All figures are estimated and based on current data.
-            </p>
-            <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-400">
-              estimated
-            </span>
-          </div>
-        </>
-      )}
+            <div
+              className="flex flex-wrap gap-4"
+              style={{ fontSize: 12, color: C.muted }}
+            >
+              <LegendDot color={C.teal} label="Transport" />
+              <LegendDot color={C.indigo} label="Stay" />
+              <LegendDot hatch label="Stay price missing" />
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }
 
-/**
- * The left-hand row labels — icon chip + label + sub-label. Mirrors the candidate columns'
- * top spacing and row heights so every row lines up across the table.
- */
-function LabelColumn() {
-  return (
-    <div className="w-56 shrink-0">
-      {/* Spacer matching the candidate cards' top padding + chip + header block, so rows align. */}
-      <div className="h-[7.25rem]" />
-      {VALUE_ROWS.map((row) => (
-        <div key={row.key} className={`flex ${ROW_H} items-center gap-3`}>
-          <span
-            className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${
-              row.tint === "teal"
-                ? "bg-teal-50 text-teal-600"
-                : "bg-amber-50 text-amber-600"
-            }`}
-          >
-            <row.Icon className="h-[18px] w-[18px]" />
-          </span>
-          <div className="leading-tight">
-            <p className="text-sm font-medium text-slate-700">{row.label}</p>
-            {row.sublabel && (
-              <p className="text-xs text-slate-400">({row.sublabel})</p>
-            )}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function CandidateColumn({
-  candidate,
-  isChosen,
-  index,
+function CityCard({
+  city,
+  rank,
+  budget,
+  active,
+  recommended,
+  onSelect,
+  onAction,
 }: {
-  candidate: RankedCandidate;
-  isChosen: boolean;
-  index: number;
+  city: RankedCandidate;
+  rank: number;
+  budget: number | null;
+  active: boolean;
+  recommended: boolean;
+  onSelect: () => void;
+  onAction?: (city: CandidateDestination, label: string) => void;
 }) {
-  const { destination } = candidate;
+  const transport = city.transport_cost ?? null;
+  const stay = city.accommodation_cost ?? null;
+  const total = transport != null && stay != null ? transport + stay : null;
+  const fits =
+    total != null && budget != null
+      ? total <= budget
+      : total != null
+        ? city.feasible
+        : false;
+
+  const note =
+    total == null
+      ? "stay price missing"
+      : budget == null
+        ? "total for transport + stay"
+        : total <= budget
+          ? `${euro(budget - total)} under budget`
+          : `${euro(total - budget)} over budget`;
+
+  const cta = recommended ? "View trip" : fits ? "Plan this" : "Find a stay";
+
+  const rows: [string, string, boolean][] = [
+    [
+      "Transport",
+      transport != null ? euro(transport) : "Not found",
+      transport == null,
+    ],
+    ["Stay", stay != null ? euro(stay) : "Not found", stay == null],
+    ["Preferences", String(pct(city.preference_score)), false],
+    ["Weather", String(pct(city.weather_score)), false],
+  ];
+
+  const score = pct(city.overall_score);
+  const budgetLabel =
+    budget == null
+      ? null
+      : budget >= 1000
+        ? `${budget / 1000}k`
+        : String(budget);
+
   return (
     <div
-      className={`animate-enter min-w-[11rem] flex-1 rounded-2xl bg-white px-4 pb-6 pt-5 transition duration-200 hover:-translate-y-1 hover:shadow-xl ${
-        isChosen
-          ? "shadow-xl ring-2 ring-teal-400"
-          : "shadow-sm ring-1 ring-slate-200"
-      }`}
-      style={{ "--enter-delay": `${index * 70}ms` } as React.CSSProperties}
-      data-testid={`candidate-${destination.city}`}
+      role="button"
+      tabIndex={0}
+      onClick={onSelect}
+      onKeyDown={(e) => e.key === "Enter" && onSelect()}
+      data-testid={`city-${city.destination.city}`}
+      className="flex cursor-pointer flex-col gap-4 outline-none"
+      style={{
+        position: "relative",
+        padding: "22px 18px 18px",
+        borderRadius: 22,
+        background: "#fff",
+        border: `2px solid ${active ? C.teal : "transparent"}`,
+        boxShadow: active
+          ? "0 14px 32px -12px rgba(15,148,136,.35)"
+          : "0 1px 2px rgba(0,0,0,.05)",
+        transform: active ? "translateY(-6px)" : "none",
+        transition: "all .2s",
+      }}
     >
-      {/* Top chip: the Recommended badge (chosen) or a subtle marker (others).
-          Kept inside the card so it renders in full within the scroll container. */}
-      <div className="flex h-8 items-center justify-center">
-        {isChosen ? (
-          <span className="inline-flex items-center gap-1 rounded-full bg-amber-400 px-3 py-1 text-xs font-semibold text-white shadow-sm">
-            <IconStar className="h-3.5 w-3.5" />
+      <div
+        className="flex items-center justify-between"
+        style={{ minHeight: 20 }}
+      >
+        <span style={{ fontSize: 12, fontWeight: 700, color: C.muted }}>
+          #{rank}
+        </span>
+        {recommended && (
+          <span
+            style={{
+              padding: "3px 9px",
+              borderRadius: 99,
+              background: C.teal,
+              color: "#fff",
+              fontSize: 11,
+              fontWeight: 700,
+            }}
+          >
             Recommended
-          </span>
-        ) : (
-          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-50 text-slate-300 ring-1 ring-slate-200">
-            <IconStar className="h-3.5 w-3.5" />
           </span>
         )}
       </div>
 
-      {/* Destination header. */}
-      <div className="mt-2 flex h-14 flex-col items-center justify-center text-center">
-        <p className="truncate text-lg font-extrabold text-slate-900">
-          {destination.city}
-        </p>
-        <p className="truncate text-sm text-slate-500">{destination.country}</p>
-      </div>
-
-      {VALUE_ROWS.map((row) => (
-        <div
-          key={row.key}
-          className={`flex ${ROW_H} items-center justify-center`}
-        >
-          {row.render(candidate, isChosen)}
+      <div className="flex flex-col items-center gap-2.5">
+        <ScoreRing value={score} active={active} />
+        <div className="text-center">
+          <div style={{ fontSize: 20, fontWeight: 800 }}>
+            {city.destination.city}
+          </div>
+          <div style={{ fontSize: 12, color: C.muted }}>
+            {city.destination.country}
+          </div>
         </div>
-      ))}
+      </div>
+
+      {/* Cost box */}
+      <div
+        className="flex flex-col gap-1.5"
+        style={{ padding: 12, borderRadius: 14, background: C.soft }}
+      >
+        <div className="flex items-baseline justify-between gap-1.5">
+          <span style={{ fontSize: 20, fontWeight: 800, whiteSpace: "nowrap" }}>
+            {total != null ? euro(total) : `${euro(transport ?? 0)}+`}
+          </span>
+          {budgetLabel && (
+            <span
+              style={{ fontSize: 11, color: C.muted, whiteSpace: "nowrap" }}
+            >
+              of €{budgetLabel}
+            </span>
+          )}
+        </div>
+        <div
+          className="flex overflow-hidden"
+          style={{ gap: 2, height: 7, borderRadius: 4, background: "#e3eae8" }}
+        >
+          <div
+            style={{
+              width: `${Math.min(100, ((transport ?? 0) / (budget || total || 1)) * 100)}%`,
+              background: C.teal,
+            }}
+          />
+          <div
+            style={
+              stay != null
+                ? {
+                    width: `${Math.min(100, (stay / (budget || total || 1)) * 100)}%`,
+                    background: C.indigo,
+                  }
+                : { width: "22%", background: HATCH }
+            }
+          />
+        </div>
+        <span
+          style={{
+            fontSize: 12,
+            fontWeight: 600,
+            color: fits ? C.okInk : C.warnInk,
+          }}
+        >
+          {note}
+        </span>
+      </div>
+
+      {/* Factor list (Experience omitted — it's identical for every city). */}
+      <div className="flex flex-col">
+        {rows.map(([label, value, missing]) => (
+          <div
+            key={label}
+            className="flex justify-between"
+            style={{
+              padding: "7px 2px",
+              borderBottom: `1px dashed ${C.line}`,
+              fontSize: 13,
+            }}
+          >
+            <span style={{ color: C.muted }}>{label}</span>
+            <span
+              style={{ fontWeight: 700, color: missing ? C.warnInk : C.ink }}
+            >
+              {value}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onAction?.(city.destination, cta);
+        }}
+        className="mt-auto"
+        style={{
+          padding: 10,
+          borderRadius: 12,
+          fontSize: 13,
+          fontWeight: 700,
+          border: "none",
+          cursor: "pointer",
+          fontFamily: "inherit",
+          background: active ? C.teal : "#f1f5f4",
+          color: active ? "#fff" : C.ink,
+        }}
+      >
+        {cta}
+      </button>
     </div>
   );
 }
 
-function Money({
-  value,
-  approx = false,
-  bold = false,
-}: {
-  value?: number | null;
-  approx?: boolean;
-  bold?: boolean;
-}) {
-  if (value == null) return <Dash />;
+function ScoreRing({ value, active }: { value: number; active: boolean }) {
   return (
-    <span
-      className={`text-lg tabular-nums text-slate-900 ${
-        bold ? "font-extrabold" : "font-semibold"
-      }`}
+    <div
+      style={{
+        width: 84,
+        height: 84,
+        borderRadius: 42,
+        display: "grid",
+        placeItems: "center",
+        background: `conic-gradient(${active ? C.teal : "#5fb8ae"} ${value * 3.6}deg, #e8eeec 0)`,
+      }}
     >
-      {approx ? "≈ " : ""}
-      {euro(value)}
-    </span>
-  );
-}
-
-function OverallScore({
-  value,
-  highlight,
-}: {
-  value?: number | null;
-  highlight: boolean;
-}) {
-  if (value == null) return <Dash />;
-  return (
-    <span
-      className={`text-2xl font-extrabold tabular-nums ${
-        highlight ? "text-teal-600" : "text-slate-800"
-      }`}
-    >
-      {scoreOutOf100(value)}
-    </span>
-  );
-}
-
-function FactorBar({ value }: { value?: number | null }) {
-  if (value == null) return <Dash />;
-  const pct = Math.round(Math.max(0, Math.min(1, value)) * 100);
-  return (
-    <div className="w-full px-1">
-      <p className="mb-1.5 text-center text-xs font-semibold tabular-nums text-slate-600">
-        {value.toFixed(2)}
-      </p>
-      <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
-        <div
-          className="h-2 rounded-full bg-gradient-to-r from-teal-600 to-teal-300"
-          style={{ width: `${pct}%` }}
-        />
+      <div
+        className="flex flex-col items-center justify-center"
+        style={{ width: 66, height: 66, borderRadius: 33, background: "#fff" }}
+      >
+        <span style={{ fontSize: 22, fontWeight: 800, lineHeight: 1 }}>
+          {value}
+        </span>
+        <span
+          style={{
+            fontSize: 9,
+            color: C.muted,
+            fontWeight: 600,
+            letterSpacing: ".04em",
+          }}
+        >
+          MATCH
+        </span>
       </div>
     </div>
   );
 }
 
-function FeasibilityBadge({ feasible }: { feasible: boolean }) {
-  return feasible ? (
-    <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-3 py-1.5 text-sm font-semibold text-emerald-700">
-      <IconCheck className="h-4 w-4" />
-      Yes
-    </span>
-  ) : (
-    <span className="inline-flex items-center gap-1.5 rounded-full bg-rose-100 px-3 py-1.5 text-sm font-semibold text-rose-700">
-      <IconX className="h-4 w-4" />
-      No
+function LegendDot({
+  color,
+  hatch,
+  label,
+}: {
+  color?: string;
+  hatch?: boolean;
+  label: string;
+}) {
+  return (
+    <span
+      className="flex items-center gap-1.5"
+      style={{ whiteSpace: "nowrap" }}
+    >
+      <span
+        style={{
+          width: hatch ? 12 : 8,
+          height: 8,
+          borderRadius: hatch ? 2 : 4,
+          background: hatch ? HATCH : color,
+          display: "inline-block",
+        }}
+      />
+      {label}
     </span>
   );
-}
-
-function Dash() {
-  return <span className="text-lg text-slate-300">—</span>;
 }

@@ -220,3 +220,31 @@ def test_tp_http_transport_maps_429_to_unavailable():
     with pytest.raises(ProviderUnavailable):
         transport(REQ)
     client.close()
+
+
+def test_tp_http_transport_maps_400_to_no_result_not_unavailable():
+    # A 4xx (e.g. an unsupported IATA code) is permanent: it must map to ProviderNoResult so
+    # the chain falls straight to the estimate instead of retrying a doomed query for every
+    # candidate date (which previously stalled air-mode requests until the client timed out).
+    client = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(400)))
+    transport = tp_http_transport("k", client=client)
+    with pytest.raises(ProviderNoResult):
+        transport(REQ)
+    client.close()
+
+
+def test_flight_service_does_not_retry_a_4xx_before_estimating():
+    # End to end: a 400 from Travelpayouts should be hit exactly once (no retry backoff) and
+    # the service should return the distance estimate.
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(400)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    service = FlightService(TravelpayoutsProvider(tp_http_transport("k", client=client)))
+    result = service.resolve(REQ)
+    assert result.quality_flag == "estimated"  # degraded to the distance fare
+    assert calls["n"] == 1  # the 4xx was not retried
+    client.close()

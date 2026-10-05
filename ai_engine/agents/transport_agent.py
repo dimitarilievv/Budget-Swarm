@@ -557,10 +557,23 @@ class TransportAgent:
         flight = flight_result.data
         quality = QualityFlag(flight_result.quality_flag)
 
-        total_cost = flight.price * request.passengers * fare_factor
-        total_duration_min = (
-            flight.duration_min * dur_factor if flight.duration_min is not None else None
-        )
+        # Cost/duration. For a round trip, sum the two *real* legs — query the return leg
+        # (destination -> origin) and add its actual fare/duration — rather than doubling the
+        # outbound. The symmetric ``round_trip_*_multiplier`` is only a fallback, used when the
+        # return leg cannot be priced at all, so a price is always produced. Fares are per
+        # person; a one-way trip is just the outbound.
+        outbound_cost = flight.price
+        outbound_dur = flight.duration_min
+        total_cost = outbound_cost * request.passengers * fare_factor
+        total_duration_min = outbound_dur * dur_factor if outbound_dur is not None else None
+        if request.round_trip:
+            return_flight, return_quality = self._resolve_return_flight(request)
+            if return_flight is not None:
+                total_cost = (outbound_cost + return_flight.price) * request.passengers
+                if outbound_dur is not None:
+                    total_duration_min = outbound_dur + (return_flight.duration_min or outbound_dur)
+                if return_quality is not None:
+                    quality = min(quality, return_quality, key=lambda q: _QUALITY_RANK[q])
 
         # A flight has no road distance; report the great-circle distance (× legs)
         # when both endpoints are known, purely as an informative figure.
@@ -591,6 +604,36 @@ class TransportAgent:
             # so the plan can show the actual travel dates rather than only a price.
             departure_at=flight.departure_at,
         )
+
+    def _resolve_return_flight(
+        self, request: FlightTripRequest
+    ) -> tuple[Flight | None, QualityFlag | None]:
+        """Resolve the return leg (destination -> origin) for a round-trip fare.
+
+        Returns ``(flight, quality)`` for the cheapest return itinerary, or ``(None, None)``
+        when even the estimate cannot price it — the caller then falls back to the symmetric
+        multiplier. Never raises.
+        """
+        assert self.flight_service is not None  # guarded by the caller
+        try:
+            result: ProviderResult[Flight] = self.flight_service.resolve(
+                FlightRequest(
+                    origin=request.destination_iata,
+                    destination=request.origin_iata,
+                    origin_point=request.destination_point,
+                    destination_point=request.origin_point,
+                    currency=request.currency,
+                )
+            )
+        except (AllProvidersFailed, ProviderError) as exc:
+            logger.info(
+                "flight_option: return leg %s->%s unavailable (%s); using symmetric estimate",
+                request.destination_iata,
+                request.origin_iata,
+                exc,
+            )
+            return None, None
+        return result.data, QualityFlag(result.quality_flag)
 
     def public_transport_option(self, request: PublicTransportTripRequest) -> TransportOption:
         """Return the normalized :class:`TransportOption` for a bus/train trip (Post-MVP).

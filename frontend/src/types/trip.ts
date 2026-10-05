@@ -55,6 +55,28 @@ export interface CostBreakdown {
   activities: number;
 }
 
+export interface FlightEndpoint {
+  code: string;
+  city?: string | null;
+  airport?: string | null;
+}
+
+export interface FlightLeg {
+  date?: string | null; // ISO YYYY-MM-DD
+  depart_time?: string | null;
+  arrival_time?: string | null;
+  duration_min?: number | null;
+  stops?: number | null;
+}
+
+export interface FlightPlan {
+  origin: FlightEndpoint;
+  destination: FlightEndpoint;
+  outbound?: FlightLeg | null;
+  inbound?: FlightLeg | null;
+  booking_url?: string | null;
+}
+
 export interface PlanTransport {
   mode: TransportMode;
   cost?: number | null;
@@ -63,6 +85,8 @@ export interface PlanTransport {
   quality_flag: QualityFlag;
   /** Outbound departure clock time ("HH:MM") when the fare source provides one (air). */
   depart_time?: string | null;
+  /** Rich per-leg flight detail (air mode only) for the flight card. */
+  flight?: FlightPlan | null;
 }
 
 export interface PlanAccommodation {
@@ -73,6 +97,14 @@ export interface PlanAccommodation {
   latitude?: number | null;
   longitude?: number | null;
   quality_flag: QualityFlag;
+  /** Listing detail (Inside Airbnb) for the card; present only for real listings. */
+  listing_url?: string | null;
+  picture_url?: string | null;
+  review_count?: number | null;
+  location_score?: number | null; // 0–5, Airbnb's review_scores_location
+  neighbourhood?: string | null;
+  amenities?: string[] | null;
+  accommodates?: number | null; // guest capacity, matched to the party size
 }
 
 export interface ItineraryActivity {
@@ -85,6 +117,8 @@ export interface ItineraryActivity {
   /** POI coordinates (from the Attraction). Optional — an unlocated activity isn't mapped. */
   latitude?: number | null;
   longitude?: number | null;
+  /** OSM opening-hours string where the POI is tagged (sparse); null when unknown. */
+  opening_hours?: string | null;
 }
 
 export interface ItineraryDay {
