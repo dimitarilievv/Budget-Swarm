@@ -29,14 +29,9 @@ import OriginInput, { type OriginValue } from "./OriginInput";
 import {
   IconArrowRight,
   IconBus,
-  IconCamera,
   IconCar,
-  IconLandmark,
-  IconMoon,
-  IconMountain,
   IconPlane,
   IconTrain,
-  IconUtensils,
 } from "@/ui/components/common/Icons";
 import { INPUT_CLASS } from "@/ui/theme/theme";
 
@@ -54,12 +49,13 @@ const TRANSPORT_MODES: {
 ];
 
 // Interests map to the engine's preference themes (culture/nature/nightlife/food/tourism).
-const INTERESTS: { key: string; label: string; Icon: IconType }[] = [
-  { key: "culture", label: "Culture", Icon: IconLandmark },
-  { key: "nature", label: "Nature", Icon: IconMountain },
-  { key: "food", label: "Food", Icon: IconUtensils },
-  { key: "nightlife", label: "Nightlife", Icon: IconMoon },
-  { key: "tourism", label: "Sightseeing", Icon: IconCamera },
+// Text-only chips (no icons).
+const INTERESTS: { key: string; label: string }[] = [
+  { key: "culture", label: "Culture" },
+  { key: "nature", label: "Nature" },
+  { key: "food", label: "Food" },
+  { key: "nightlife", label: "Nightlife" },
+  { key: "tourism", label: "Sightseeing" },
 ];
 const DEFAULT_INTERESTS = ["culture", "food", "tourism"];
 
@@ -191,7 +187,9 @@ export default function TripInputForm({
     if (lastPayload.current) void runSubmit(lastPayload.current);
   }
 
-  const numberField = INPUT_CLASS;
+  // Hide the native number spinners so the €/days suffix is the only right-side element and
+  // reads cleanly, centred in the field.
+  const numberField = `${INPUT_CLASS} [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none`;
 
   // While a request is in flight, show the agent-progress screen; on failure, the error
   // state with a retry affordance. Form state persists behind both (same component).
@@ -243,7 +241,7 @@ export default function TripInputForm({
               onChange={(e) => setBudget(e.target.value)}
               className={`${numberField} pr-9`}
             />
-            <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-slate-400">
+            <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-sm text-slate-400">
               €
             </span>
           </div>
@@ -396,13 +394,12 @@ export default function TripInputForm({
                 type="button"
                 aria-pressed={active}
                 onClick={() => toggleInterest(it.key)}
-                className={`flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium transition ${
+                className={`rounded-full border px-4 py-2 text-sm font-medium transition ${
                   active
                     ? "border-teal-500 bg-teal-50 text-teal-700"
                     : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
                 }`}
               >
-                <it.Icon className="h-4 w-4" />
                 {it.label}
               </button>
             );

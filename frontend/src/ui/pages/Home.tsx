@@ -8,10 +8,41 @@
  * to Results. The page brings its own sticky anchor header + teal footer (the shared Navbar/
  * Footer are shown on the Results/Compare views instead).
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import TripInputForm from "@/ui/components/forms/TripInputForm";
 import { useTripResult } from "@/hooks/useTripResult";
+
+const NAV: [string, string][] = [
+  ["plan", "Plan trip"],
+  ["how", "How it works"],
+  ["why", "Why us"],
+  ["faq", "FAQ"],
+];
+
+/** Track which section is in view so the header nav can mark the current one. */
+function useActiveSection(ids: string[]): string {
+  const [active, setActive] = useState(ids[0]);
+  useEffect(() => {
+    if (typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((e) => e.isIntersecting)
+          .sort((a, b) => b.intersectionRatio - a.intersectionRatio);
+        if (visible[0]) setActive(visible[0].target.id);
+      },
+      { rootMargin: "-45% 0px -50% 0px", threshold: [0, 0.2, 0.5, 1] },
+    );
+    for (const id of ids) {
+      const el = document.getElementById(id);
+      if (el) io.observe(el);
+    }
+    return () => io.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ids.join(",")]);
+  return active;
+}
 
 const C = {
   teal: "#0f9488",
@@ -108,6 +139,7 @@ export default function Home() {
 /* ---------------- Header ---------------- */
 
 function Header() {
+  const active = useActiveSection(["plan", "how", "why", "faq"]);
   const link: React.CSSProperties = {
     padding: "7px 14px",
     color: C.muted,
@@ -116,6 +148,13 @@ function Header() {
     whiteSpace: "nowrap",
     fontSize: 13,
     fontWeight: 500,
+  };
+  const activeLink: React.CSSProperties = {
+    ...link,
+    background: "#fff",
+    color: C.ink,
+    fontWeight: 600,
+    boxShadow: "0 1px 2px rgba(0,0,0,.06)",
   };
   return (
     <header
@@ -163,12 +202,19 @@ function Header() {
           </span>
         </button>
         <nav style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-          <a href="#plan" style={{ ...link, background: "#fff", color: C.ink, boxShadow: "0 1px 2px rgba(0,0,0,.06)" }}>
-            Plan trip
-          </a>
-          <a href="#how" style={link}>How it works</a>
-          <a href="#why" style={link}>Why us</a>
-          <a href="#faq" style={link}>FAQ</a>
+          {NAV.map(([id, label]) => {
+            const on = active === id;
+            return (
+              <a
+                key={id}
+                href={`#${id}`}
+                aria-current={on ? "page" : undefined}
+                style={on ? activeLink : link}
+              >
+                {label}
+              </a>
+            );
+          })}
         </nav>
         <button
           type="button"
@@ -200,14 +246,8 @@ function Hero({ onResult }: { onResult: Parameters<typeof TripInputForm>[0]["onR
       style={{ background: "linear-gradient(160deg,#f3f6ea 0%,#eaf6f3 45%,#dff3f0 100%)", scrollMarginTop: 60 }}
     >
       <div
-        style={{
-          ...WRAP,
-          padding: "64px 32px 72px",
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,440px),1fr))",
-          gap: 56,
-          alignItems: "center",
-        }}
+        style={{ maxWidth: 1200, margin: "0 auto", padding: "64px 32px 72px" }}
+        className="grid items-center gap-10 lg:gap-14 lg:grid-cols-[1fr_1.35fr]"
       >
         <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
           <span
