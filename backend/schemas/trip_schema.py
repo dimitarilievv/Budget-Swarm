@@ -308,3 +308,37 @@ class TripResponse(BaseModel):
     ranked_candidates: list[RankedCandidate] = Field(default_factory=list)
     explanation: str | None = None
     meta: TripMeta
+
+
+# --- Saved-trip history (owner-scoped CRUD) ----------------------------------
+
+
+class TripSummary(BaseModel):
+    """A lightweight row in a user's saved-trip list (``GET /api/trips``)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    title: str | None = None
+    notes: str | None = None
+    destination_city: str | None = None
+    destination_country: str | None = None
+    transport_mode: TransportModeStr
+    duration_days: int
+    travelers: int
+    total_cost: float | None = None
+    overall_score: float | None = None
+    created_at: datetime
+
+
+class TripUpdate(BaseModel):
+    """Editable fields of a saved trip (``PATCH /api/trips/{id}``).
+
+    Only the user's own labels are mutable; ownership and computed plan fields are never
+    accepted from the body (``extra="forbid"`` rejects any other key, e.g. ``user_id``).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = Field(default=None, max_length=120)
+    notes: str | None = None

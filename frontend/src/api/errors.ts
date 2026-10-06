@@ -11,7 +11,9 @@ import axios from "axios";
 /** The documented backend error codes (api.md), plus a client-only network sentinel. */
 export type ApiErrorCode =
   | "VALIDATION_ERROR"
+  | "UNAUTHORIZED"
   | "NOT_FOUND"
+  | "CONFLICT"
   | "RATE_LIMITED"
   | "NO_PLAN_AVAILABLE"
   | "INTERNAL_ERROR"

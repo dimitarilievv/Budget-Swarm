@@ -8,7 +8,9 @@ Every error the API returns uses the single envelope documented in api.md::
 The documented ``code`` ↔ HTTP-status pairs are:
 
     | 422 | VALIDATION_ERROR   | request failed schema/range validation |
+    | 401 | UNAUTHORIZED       | missing/invalid/expired access token    |
     | 404 | NOT_FOUND          | resource (e.g. trip id) does not exist  |
+    | 409 | CONFLICT           | resource already exists (e.g. email)    |
     | 429 | RATE_LIMITED       | client exceeded the backend rate limit  |
     | 503 | NO_PLAN_AVAILABLE  | no feasible plan even after fallbacks   |
     | 500 | INTERNAL_ERROR     | unexpected server error                 |
@@ -31,7 +33,9 @@ logger = logging.getLogger(__name__)
 
 # Error codes (api.md). Kept as constants so routes/tests reference one source.
 VALIDATION_ERROR = "VALIDATION_ERROR"
+UNAUTHORIZED = "UNAUTHORIZED"
 NOT_FOUND = "NOT_FOUND"
+CONFLICT = "CONFLICT"
 RATE_LIMITED = "RATE_LIMITED"
 NO_PLAN_AVAILABLE = "NO_PLAN_AVAILABLE"
 INTERNAL_ERROR = "INTERNAL_ERROR"
@@ -40,7 +44,9 @@ INTERNAL_ERROR = "INTERNAL_ERROR"
 # or a plain HTTPException) so they still come out in the documented vocabulary.
 _STATUS_TO_CODE = {
     status.HTTP_422_UNPROCESSABLE_ENTITY: VALIDATION_ERROR,
+    status.HTTP_401_UNAUTHORIZED: UNAUTHORIZED,
     status.HTTP_404_NOT_FOUND: NOT_FOUND,
+    status.HTTP_409_CONFLICT: CONFLICT,
     status.HTTP_429_TOO_MANY_REQUESTS: RATE_LIMITED,
     status.HTTP_503_SERVICE_UNAVAILABLE: NO_PLAN_AVAILABLE,
     status.HTTP_500_INTERNAL_SERVER_ERROR: INTERNAL_ERROR,
@@ -71,11 +77,30 @@ class AppError(Exception):
         self.field = field
 
 
+class UnauthorizedError(AppError):
+    """The request lacks a valid access token (→ 401 UNAUTHORIZED).
+
+    Used for a missing, malformed, or expired ``Authorization: Bearer`` token, and
+    for failed credential checks on login — deliberately generic so a response never
+    reveals whether an email exists or which half of the pair was wrong.
+    """
+
+    code = UNAUTHORIZED
+    status_code = status.HTTP_401_UNAUTHORIZED
+
+
 class NotFoundError(AppError):
     """A requested resource does not exist (→ 404 NOT_FOUND)."""
 
     code = NOT_FOUND
     status_code = status.HTTP_404_NOT_FOUND
+
+
+class ConflictError(AppError):
+    """The resource already exists (→ 409 CONFLICT), e.g. a duplicate email."""
+
+    code = CONFLICT
+    status_code = status.HTTP_409_CONFLICT
 
 
 class RateLimitedError(AppError):
@@ -129,9 +154,14 @@ async def _handle_validation_error(request: Request, exc: RequestValidationError
 
 async def _handle_app_error(request: Request, exc: AppError) -> JSONResponse:
     logger.info("app error on %s: code=%s msg=%s", request.url.path, exc.code, exc.message)
+    # Signal the Bearer scheme on auth failures, per RFC 6750.
+    headers = (
+        {"WWW-Authenticate": "Bearer"} if exc.status_code == status.HTTP_401_UNAUTHORIZED else None
+    )
     return JSONResponse(
         status_code=exc.status_code,
         content=error_body(exc.code, exc.message, exc.field),
+        headers=headers,
     )
 
 

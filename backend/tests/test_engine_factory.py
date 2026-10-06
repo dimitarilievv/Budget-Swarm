@@ -155,6 +155,13 @@ def test_configured_app_persists_and_serves_history(migrated_db):
     assert "db-persistence" in installed
     try:
         client = TestClient(app)
+        # Saving a trip requires an authenticated owner — register through the same wired DB.
+        reg = client.post(
+            "/api/auth/register",
+            json={"email": "factory@example.com", "password": "password123"},
+        )
+        assert reg.status_code == 201, reg.text
+        headers = {"Authorization": f"Bearer {reg.json()['tokens']['access_token']}"}
         request = {
             "budget": 1000.0,
             "duration_days": 5,
@@ -164,11 +171,11 @@ def test_configured_app_persists_and_serves_history(migrated_db):
             "origin_label": "Skopje",
             "vehicle_consumption": 6.5,
         }
-        created = client.post("/api/generate-trip", json=request).json()
+        created = client.post("/api/generate-trip", json=request, headers=headers).json()
         trip_id = created["meta"]["trip_id"]
         assert isinstance(trip_id, int) and trip_id > 0  # persisted through the wired store
 
-        fetched = client.get(f"/api/trips/{trip_id}")
+        fetched = client.get(f"/api/trips/{trip_id}", headers=headers)
         assert fetched.status_code == 200
         assert (
             fetched.json()["destination"]["city"] == created["chosen_plan"]["destination"]["city"]

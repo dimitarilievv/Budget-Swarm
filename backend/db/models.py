@@ -277,18 +277,57 @@ class WeatherForecast(Base):
 
 
 class User(Base):
-    """[REF/HIST] Optional authenticated account (accounts in scope — see ADR-012)."""
+    """[REF/HIST] Authenticated account (accounts in scope — see ADR-012).
+
+    Credentials are stored only as ``password_hash`` (bcrypt) — never in clear text —
+    and the hash is never serialized into an API response (the wire schema omits it).
+    ``email`` is stored lower-cased and uniquely, so lookups and the duplicate check
+    are case-insensitive.
+    """
 
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     email: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    name: Mapped[str | None] = mapped_column(String(120))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
 
     trips: Mapped[list[Trip]] = relationship(back_populates="user")
+    refresh_tokens: Mapped[list[RefreshToken]] = relationship(
+        back_populates="user", passive_deletes=True
+    )
+
+
+class RefreshToken(Base):
+    """[HIST] A hashed, revocable refresh token issued to a user (auth).
+
+    The raw refresh token is returned to the client once and never stored; only its
+    SHA-256 hash lives here, so a database leak cannot be replayed as a login. Each
+    token carries an ``expires_at`` and, once used or logged out, a ``revoked_at`` —
+    rotation on refresh revokes the old row and inserts a new one, so a stolen,
+    already-rotated token is inert. The ``(user_id)`` index serves the common
+    "revoke all of a user's tokens" sweep.
+    """
+
+    __tablename__ = "refresh_tokens"
+    __table_args__ = (Index("idx_refresh_tokens_user", "user_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    user: Mapped[User] = relationship(back_populates="refresh_tokens")
 
 
 class Trip(Base):
@@ -301,7 +340,14 @@ class Trip(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # Owning account. Kept nullable so legacy/anonymous rows and the ON DELETE SET NULL
+    # rule remain valid (ADR-012), but every trip the API now creates is stamped with the
+    # authenticated user's id, and all trip reads/writes are scoped by it — an unowned row
+    # is simply unreachable through the API. Indexed via ``idx_trips_user`` below.
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    # User-editable labels for a saved trip (PATCH /api/trips/{id}); both optional.
+    title: Mapped[str | None] = mapped_column(String(120))
+    notes: Mapped[str | None] = mapped_column(Text)
     budget: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     duration_days: Mapped[int] = mapped_column(Integer, nullable=False)
     travelers: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -420,6 +466,7 @@ __all__ = [
     "DestinationFeature",
     "FuelPrice",
     "RawAccommodationListing",
+    "RefreshToken",
     "TransportOption",
     "Trip",
     "TripActivity",

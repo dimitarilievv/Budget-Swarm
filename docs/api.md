@@ -8,9 +8,43 @@ All requests and responses are `application/json`.
 
 ---
 
+## Authentication
+
+Authentication uses **JWT access tokens** (short-lived, ~15 min) plus **refresh tokens** (~7 days). A plan can be **generated anonymously**, but saving a trip to history and viewing its booking details require being signed in. Send the access token on protected requests via the header:
+
+```
+Authorization: Bearer <access_token>
+```
+
+Refresh tokens are opaque strings stored **hashed** server-side and **rotated** on every refresh (the presented token is single-use); logout revokes a refresh token. Secrets and lifetimes are read from environment variables (`JWT_SECRET`, `ACCESS_TOKEN_EXPIRE_MINUTES`, `REFRESH_TOKEN_EXPIRE_DAYS`).
+
+### `POST /api/auth/register`
+Create an account. Validates email and password (**min 8 chars**); rejects a duplicate email with `409`.
+
+Request: `{ "email": "a@b.com", "password": "password123", "name": "Ann" }` (`name` optional).
+Response `201`: `{ "user": { "id", "email", "name", "created_at", "updated_at" }, "tokens": { "access_token", "refresh_token", "token_type": "bearer", "expires_in" } }`. The password hash is **never** returned.
+
+### `POST /api/auth/login`
+Verify credentials, return the same `{ user, tokens }` body. On failure returns a single generic `401` **"Invalid email or password"** for both an unknown email and a wrong password (no user enumeration).
+
+### `POST /api/auth/refresh`
+Body `{ "refresh_token": "..." }` → `200` with a **new** token pair; the old refresh token is revoked (rotation). An invalid/expired/revoked token → `401`.
+
+### `POST /api/auth/logout`
+Body `{ "refresh_token": "..." }` → `204`. Revokes the refresh token; idempotent.
+
+### `GET /api/auth/me`
+Returns the authenticated user (`401` without a valid token).
+
+> `/login` and `/register` are rate-limited more strictly than other endpoints (default 5/min per IP, `AUTH_RATE_LIMIT_*`).
+
+---
+
 ## `POST /api/generate-trip`
 
 The single primary endpoint. Takes user constraints, runs the full agent → optimize → explain pipeline, and returns the chosen plan plus ranked runner-up candidates.
+
+**Auth is optional here.** Without a token the plan is returned but **not saved** (`meta.trip_id` is `null`) and its **booking links are withheld** (accommodation `listing_url`, flight `booking_url`). With a valid `Authorization: Bearer` token the plan is saved to the user's history (its `trip_id` is returned) and booking links are included. Ownership always comes from the token — a `user_id` in the body is rejected.
 
 ### Request body
 
@@ -142,18 +176,22 @@ The single primary endpoint. Takes user constraints, runs the full agent → opt
 
 ---
 
-## `GET /api/trips/{trip_id}`
+## Saved trips (owner-scoped)
 
-Retrieve a previously generated plan (only if trip history is stored — see `users`/`trips` tables). Returns the same `chosen_plan` shape as above.
+All of the following **require authentication** and operate only on the caller's own trips. A trip owned by another user is reported as **`404`** (identical to a missing one) so its existence is never revealed — never `403`.
 
-### Path parameters
-| Param | Type | Notes |
-|-------|------|-------|
-| `trip_id` | integer | id returned in `meta.trip_id` |
+### `GET /api/trips`
+List the authenticated user's saved trips (newest first). Each item: `{ id, title, notes, destination_city, destination_country, transport_mode, duration_days, travelers, total_cost, overall_score, created_at }`.
 
-### Responses
-- `200` — the stored plan
-- `404` — no trip with that id
+### `GET /api/trips/{trip_id}`
+Return one of the user's own stored plans, in the same `chosen_plan` shape as generate-trip.
+- `200` — the stored plan · `401` — no/invalid token · `404` — unknown id **or** not the caller's trip.
+
+### `PATCH /api/trips/{trip_id}`
+Update the editable labels of the user's own trip. Body: `{ "title"?: string, "notes"?: string }` — any other field (e.g. `user_id`) is rejected (`422`). Returns the updated trip summary. `404` if it isn't the caller's trip.
+
+### `DELETE /api/trips/{trip_id}`
+Delete the user's own trip. `204` on success; `404` if it isn't the caller's trip.
 
 ---
 
@@ -243,7 +281,9 @@ All errors use a consistent envelope.
 | HTTP | `code` | When |
 |------|--------|------|
 | 422 | `VALIDATION_ERROR` | request failed schema/range validation |
-| 404 | `NOT_FOUND` | trip id does not exist |
+| 401 | `UNAUTHORIZED` | missing, invalid, or expired access token; failed login |
+| 404 | `NOT_FOUND` | trip id does not exist (or isn't the caller's) |
+| 409 | `CONFLICT` | resource already exists (e.g. duplicate email on register) |
 | 429 | `RATE_LIMITED` | client exceeded the backend's rate limit |
 | 503 | `NO_PLAN_AVAILABLE` | no feasible plan could be produced even after fallbacks (rare) |
 | 500 | `INTERNAL_ERROR` | unexpected server error |
@@ -254,6 +294,6 @@ All errors use a consistent envelope.
 
 ## Rate limiting & CORS
 
-- **Rate limiting** is applied per client to `/api/generate-trip` to protect the backend's own upstream free tiers (Section 24).
+- **Rate limiting** is applied per client to `/api/generate-trip` to protect the backend's own upstream free tiers (Section 24), and a stricter, separate limit guards `/api/auth/login` and `/api/auth/register` (default 5/min per IP).
 - **CORS** allows only the configured frontend origin(s); no wildcard in production.
 - No external API keys are ever sent to or exposed in the frontend.

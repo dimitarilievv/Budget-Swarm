@@ -171,17 +171,32 @@ CREATE TABLE weather_forecasts (
 -- ============================================================================
 CREATE TABLE users (
     id            SERIAL PRIMARY KEY,
-    email         VARCHAR(255) UNIQUE NOT NULL,
-    password_hash VARCHAR(255) NOT NULL,       -- if not using an external identity provider
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+    email         VARCHAR(255) UNIQUE NOT NULL,  -- stored lower-cased
+    password_hash VARCHAR(255) NOT NULL,       -- bcrypt (cost 12); never returned by the API
+    name          VARCHAR(120),                -- optional display name
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- [HIST] refresh_tokens — hashed, revocable, rotated refresh tokens (auth)
+CREATE TABLE refresh_tokens (
+    id          SERIAL PRIMARY KEY,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash  VARCHAR(64) NOT NULL UNIQUE,   -- sha256 of the raw token (raw is never stored)
+    expires_at  TIMESTAMPTZ NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    revoked_at  TIMESTAMPTZ
+);
+CREATE INDEX idx_refresh_tokens_user ON refresh_tokens(user_id);
 
 -- ============================================================================
 -- [HIST] trips — a generated plan (inputs + chosen destination + totals)
 -- ============================================================================
 CREATE TABLE trips (
     id                  SERIAL PRIMARY KEY,
-    user_id             INTEGER REFERENCES users(id) ON DELETE SET NULL,  -- nullable = anonymous
+    user_id             INTEGER REFERENCES users(id) ON DELETE SET NULL,  -- owner; nullable for legacy/anonymous rows (ADR-012)
+    title               VARCHAR(120),          -- user-editable label (PATCH /api/trips/{id})
+    notes               TEXT,                  -- user-editable notes
     -- inputs
     budget              NUMERIC(10,2) NOT NULL,
     duration_days       INTEGER NOT NULL,

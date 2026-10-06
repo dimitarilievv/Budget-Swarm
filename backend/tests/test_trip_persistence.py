@@ -105,6 +105,23 @@ def client(db_engine):
         app.dependency_overrides.pop(get_trip_store, None)
 
 
+@pytest.fixture
+def auth(client):
+    """Register a fresh user and return ``(headers, user_id)`` for authenticated calls.
+
+    Persistence and the saved-trip reads require a logged-in owner, so these tests run
+    through the real auth flow against the same migrated database.
+    """
+    import uuid
+
+    email = f"persist-{uuid.uuid4().hex[:10]}@example.com"
+    resp = client.post("/api/auth/register", json={"email": email, "password": "password123"})
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    headers = {"Authorization": f"Bearer {body['tokens']['access_token']}"}
+    return headers, body["user"]["id"]
+
+
 _REQUEST = {
     "budget": 1000.0,
     "duration_days": 5,
@@ -117,21 +134,31 @@ _REQUEST = {
 
 
 @pytest.mark.integration
-def test_generate_persists_and_returns_trip_id(client):
-    resp = client.post("/api/generate-trip", json=_REQUEST)
+def test_generate_persists_and_returns_trip_id(client, auth):
+    headers, _ = auth
+    resp = client.post("/api/generate-trip", json=_REQUEST, headers=headers)
     assert resp.status_code == 200
     trip_id = resp.json()["meta"]["trip_id"]
     assert isinstance(trip_id, int) and trip_id > 0
 
 
 @pytest.mark.integration
-def test_generate_then_fetch_by_id_round_trips(client):
-    created = client.post("/api/generate-trip", json=_REQUEST).json()
+def test_anonymous_generate_is_not_persisted(client):
+    """An unauthenticated generation returns a plan but is not saved (no trip_id)."""
+    resp = client.post("/api/generate-trip", json=_REQUEST)
+    assert resp.status_code == 200
+    assert resp.json()["meta"]["trip_id"] is None
+
+
+@pytest.mark.integration
+def test_generate_then_fetch_by_id_round_trips(client, auth):
+    headers, _ = auth
+    created = client.post("/api/generate-trip", json=_REQUEST, headers=headers).json()
     trip_id = created["meta"]["trip_id"]
     # The persisted destination's real id is backfilled onto the response (not left 0).
     assert created["chosen_plan"]["destination"]["id"] > 0
 
-    fetched = client.get(f"/api/trips/{trip_id}")
+    fetched = client.get(f"/api/trips/{trip_id}", headers=headers)
     assert fetched.status_code == 200
     plan = fetched.json()
 
@@ -149,18 +176,21 @@ def test_generate_then_fetch_by_id_round_trips(client):
 
 
 @pytest.mark.integration
-def test_activities_persisted_with_order_and_flags(client, db_engine):
+def test_activities_persisted_with_order_and_flags(client, auth, db_engine):
     from db.models import Trip, TripActivity
     from sqlalchemy import select
     from sqlalchemy.orm import Session
 
-    trip_id = client.post("/api/generate-trip", json=_REQUEST).json()["meta"]["trip_id"]
+    headers, user_id = auth
+    trip_id = client.post("/api/generate-trip", json=_REQUEST, headers=headers).json()["meta"][
+        "trip_id"
+    ]
 
     # Read the rows directly to assert the persisted shape.
     with Session(bind=db_engine) as session:
         trip = session.get(Trip, trip_id)
         assert trip is not None
-        assert trip.user_id is None  # anonymous (ADR-012)
+        assert trip.user_id == user_id  # owned by the authenticated user
         assert trip.chosen_destination is not None
         rows = session.scalars(
             select(TripActivity)
@@ -178,5 +208,6 @@ def test_activities_persisted_with_order_and_flags(client, db_engine):
 
 
 @pytest.mark.integration
-def test_unknown_trip_id_returns_404(client):
-    assert client.get("/api/trips/999999").status_code == 404
+def test_unknown_trip_id_returns_404(client, auth):
+    headers, _ = auth
+    assert client.get("/api/trips/999999", headers=headers).status_code == 404

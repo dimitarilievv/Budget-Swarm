@@ -11,11 +11,14 @@
  */
 import { useEffect, useRef, useState } from "react";
 
+import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { TripProvider } from "@/contexts/TripContext";
 import { useTripResult } from "@/hooks/useTripResult";
+import { navigate, nextTarget, useRoutePath } from "@/router";
 import ErrorBoundary from "@/ui/components/common/ErrorBoundary";
 import Footer from "@/ui/components/common/Footer";
 import Navbar from "@/ui/components/layout/Navbar";
+import AuthPage, { type AuthMode } from "@/ui/pages/AuthPage";
 import ComparisonPage from "@/ui/pages/Comparison";
 import Home from "@/ui/pages/Home";
 import ResultsPage from "@/ui/pages/Results";
@@ -97,12 +100,51 @@ function Shell() {
   );
 }
 
+/**
+ * The `/login` and `/register` screen, wiring {@link AuthPage} to the auth context and the
+ * router: tab switches update the URL, and a successful sign-in redirects to `?next=` (or
+ * home). Already-signed-in users are bounced away from the auth screen.
+ */
+function AuthRoute({ mode }: { mode: AuthMode }) {
+  const { login, register, status } = useAuth();
+
+  useEffect(() => {
+    if (status === "authenticated") navigate(nextTarget());
+  }, [status]);
+
+  return (
+    <AuthPage
+      initialMode={mode}
+      onModeChange={(m) => navigate(`/${m}${window.location.search}`)}
+      onLogin={async ({ email, password, remember }) => {
+        await login(email, password, remember);
+        navigate(nextTarget());
+      }}
+      onRegister={async ({ name, email, password }) => {
+        await register(email, password, name);
+        navigate(nextTarget());
+      }}
+    />
+  );
+}
+
+/** Route the two real URLs to the auth screen; everything else is the single-view shell. */
+function Router() {
+  const path = useRoutePath();
+  if (path === "/login" || path === "/register") {
+    return <AuthRoute mode={path === "/register" ? "register" : "login"} />;
+  }
+  return <Shell />;
+}
+
 export default function App() {
   return (
     <ErrorBoundary>
-      <TripProvider>
-        <Shell />
-      </TripProvider>
+      <AuthProvider>
+        <TripProvider>
+          <Router />
+        </TripProvider>
+      </AuthProvider>
     </ErrorBoundary>
   );
 }
