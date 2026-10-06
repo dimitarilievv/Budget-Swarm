@@ -51,6 +51,8 @@ function trip(over: Partial<SavedTrip> = {}): SavedTrip {
     budget: 1000,
     total_cost: 329,
     overall_score: 0.9,
+    start_date: null,
+    end_date: null,
     created_at: "2026-01-01T00:00:00Z",
     ...over,
   };

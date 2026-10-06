@@ -170,9 +170,12 @@ def test_save_then_fetch_by_id_round_trips(client, auth):
 
     fetched = client.get(f"/api/trips/{trip_id}", headers=headers)
     assert fetched.status_code == 200
-    plan = fetched.json()
+    detail = fetched.json()
+    assert detail["trip_id"] == trip_id
+    assert detail["saved_at"]
+    plan = detail["response"]["chosen_plan"]
 
-    # The stored plan carries the same destination, totals and ordered itinerary.
+    # The stored snapshot carries the same destination, totals and ordered itinerary.
     assert plan["destination"]["city"] == created_plan["destination"]["city"]
     assert plan["total_cost"] == pytest.approx(created_plan["total_cost"])
     original_activities = [
@@ -180,8 +183,9 @@ def test_save_then_fetch_by_id_round_trips(client, auth):
     ]
     stored_activities = [a["name"] for day in plan["itinerary"] for a in day["activities"]]
     assert stored_activities == original_activities
-    # was_rescheduled is persisted per activity.
-    assert all("was_rescheduled" in a for day in plan["itinerary"] for a in day["activities"])
+    # The snapshot preserves the live legs too (not dropped like the old reconstruction).
+    assert plan["transport"] == created_plan["transport"]
+    assert plan["accommodation"] == created_plan["accommodation"]
 
 
 @pytest.mark.integration

@@ -18,7 +18,6 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useTripResult } from "@/hooks/useTripResult";
 import { navigate } from "@/router";
 import type { SavedTrip } from "@/api/endpoints";
-import type { TripResponse } from "@/types/trip";
 
 const TEAL = "#0f9488";
 const TEAL_DARK = "#0b7a70";
@@ -56,6 +55,28 @@ function modeLabel(transportMode: string): Mode {
 function placeCode(name: string | null | undefined): string {
   const letters = (name ?? "").replace(/[^a-zA-Z]/g, "");
   return (letters.slice(0, 3) || "···").toUpperCase();
+}
+
+/** The plan's travel window ("22 Oct – 26 Oct 2026"), or a day count when no dates exist. */
+function fmtDates(
+  start: string | null,
+  end: string | null,
+  days: number,
+): string {
+  if (!start) return `${days} days`;
+  const s = new Date(start);
+  const sStr = s.toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+  });
+  if (!end) return sStr;
+  const e = new Date(end);
+  const eStr = e.toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+  return `${sStr} – ${eStr}`;
 }
 
 /* ---------- Icons ---------- */
@@ -535,7 +556,10 @@ function TripTicket({
             borderTop: "1px solid #edf1f0",
           }}
         >
-          {field("DURATION", `${trip.duration_days} days`)}
+          {field(
+            "DATES",
+            fmtDates(trip.start_date, trip.end_date, trip.duration_days),
+          )}
           {field("TRAVELERS", trip.travelers)}
           {field("TRAVEL", mode)}
         </div>
@@ -773,18 +797,13 @@ export default function MyTripsPage() {
 
   const handleOpen = async (trip: SavedTrip) => {
     try {
-      const plan = await getTrip(trip.id);
-      const response: TripResponse = {
-        chosen_plan: plan,
-        ranked_candidates: [],
-        explanation: null,
-        meta: {
-          trip_id: trip.id,
-          generated_at: new Date().toISOString(),
-          degraded_sources: [],
-        },
-      };
-      setResult(response, null);
+      const detail = await getTrip(trip.id);
+      // The snapshot carries the full plan (transport, stay, booking links, weather, dates);
+      // mark it saved so the results view shows the "saved on …" notice + Refresh.
+      setResult(detail.response, detail.request, {
+        tripId: detail.trip_id,
+        savedAt: detail.saved_at,
+      });
       navigate("/");
     } catch {
       // Leave the user on the page; a transient fetch error shouldn't lose their list.
@@ -1208,8 +1227,8 @@ export default function MyTripsPage() {
                           `${t.destination_city ?? "Saved trip"}${t.destination_country ? `, ${t.destination_country}` : ""}`}
                       </b>
                       <span style={{ fontSize: 13, color: MUTED }}>
-                        {t.duration_days} days · {t.travelers} travelers ·{" "}
-                        {modeLabel(t.transport_mode)}
+                        {fmtDates(t.start_date, t.end_date, t.duration_days)} ·{" "}
+                        {t.travelers} travelers · {modeLabel(t.transport_mode)}
                       </span>
                     </div>
                     <div

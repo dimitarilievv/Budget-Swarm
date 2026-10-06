@@ -181,14 +181,17 @@ The single primary endpoint. Takes user constraints, runs the full agent → opt
 All of the following **require authentication** and operate only on the caller's own trips. A trip owned by another user is reported as **`404`** (identical to a missing one) so its existence is never revealed — never `403`.
 
 ### `POST /api/trips`
-Save a generated plan to the signed-in user's history (the "Save trip" action). Body: `{ "request": <TripRequest>, "response": <TripResponse> }` — the exact request used and the plan received, so the stored trip matches what the user saw. Ownership is taken from the token; a `user_id` in the body is ignored. Returns `201` with the saved trip summary.
+Save a generated plan to the signed-in user's history (the "Save trip" action). Body: `{ "request": <TripRequest>, "response": <TripResponse> }` — the exact request used and the plan received, so the stored trip matches what the user saw. The **full plan is snapshotted** (transport, stay, booking links, weather, dates, ranked candidates). Ownership is taken from the token; a `user_id` in the body is ignored. Returns `201` with the saved trip summary.
+
+### `PUT /api/trips/{trip_id}`
+Overwrite a saved trip's snapshot with a refreshed plan (the "Update saved trip" action after **Refresh prices**). Same body as `POST /api/trips`. Keeps the id and original save date. `404` if it isn't the caller's trip. Returns the updated saved-trip detail.
 
 ### `GET /api/trips`
 List the authenticated user's saved trips (newest first). Each item: `{ id, title, notes, origin_label, destination_city, destination_country, transport_mode, duration_days, travelers, budget, total_cost, overall_score, created_at }`. Powers the **My trips** page.
 
 ### `GET /api/trips/{trip_id}`
-Return one of the user's own stored plans, in the same `chosen_plan` shape as generate-trip.
-- `200` — the stored plan · `401` — no/invalid token · `404` — unknown id **or** not the caller's trip.
+Return one of the user's own saved trips as a **full snapshot**: `{ trip_id, saved_at, start_date, end_date, request, response }`, where `response` is the whole stored plan (with `meta.saved_at` set) and `request` is the original inputs (used by "Refresh prices"). Legacy rows saved before snapshots fall back to a reconstruction.
+- `200` — the snapshot · `401` — no/invalid token · `404` — unknown id **or** not the caller's trip.
 
 ### `PATCH /api/trips/{trip_id}`
 Update the editable labels of the user's own trip. Body: `{ "title"?: string, "notes"?: string }` — any other field (e.g. `user_id`) is rejected (`422`). Returns the updated trip summary. `404` if it isn't the caller's trip.

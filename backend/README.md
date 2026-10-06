@@ -19,9 +19,14 @@ view, edit and delete only their own trips.
   `get_optional_user` (anonymous allowed) read `Authorization: Bearer <token>`.
 - **Authorization**: `generate-trip` is public and stateless (full plan, not saved);
   signed-in users save a plan explicitly via `POST /api/trips`. `GET /api/trips` and
-  `GET/PATCH/DELETE /api/trips/{id}` are owner-scoped and return **404** (not 403) for
+  `GET/PATCH/DELETE/PUT /api/trips/{id}` are owner-scoped and return **404** (not 403) for
   another user's trip. Ownership is taken from the token, never the request body. Booking
   and saving are gated in the UI (signed-out users are sent to login).
+- **Saved-trip snapshots**: a saved trip stores the full plan + the request as JSONB
+  (`plan_snapshot`/`request_snapshot`) plus `start_date`/`end_date`, so `GET /api/trips/{id}`
+  returns the exact plan the user saw (transport, stay, booking links, weather, dates).
+  `PUT /api/trips/{id}` overwrites the snapshot after a "Refresh prices" re-plan. Legacy rows
+  fall back to the header+activities reconstruction.
 - **Required env**: `JWT_SECRET` (fail-fast at startup). Optional: `JWT_ALGORITHM`,
   `ACCESS_TOKEN_EXPIRE_MINUTES`, `REFRESH_TOKEN_EXPIRE_DAYS`, `AUTH_RATE_LIMIT_*` — see
   `../.env.example`.

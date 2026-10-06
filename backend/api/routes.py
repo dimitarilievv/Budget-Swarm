@@ -36,7 +36,7 @@ from db.session import get_db
 from errors import NotFoundError
 from fastapi import APIRouter, Depends, Response, status
 from schemas.trip_schema import (
-    ChosenPlan,
+    SavedTripDetail,
     SaveTripRequest,
     TripRequest,
     TripResponse,
@@ -99,6 +99,8 @@ def _trip_summary(trip: Trip, dest: Destination | None) -> TripSummary:
         budget=float(trip.budget),
         total_cost=float(trip.total_cost) if trip.total_cost is not None else None,
         overall_score=float(trip.overall_score) if trip.overall_score is not None else None,
+        start_date=trip.start_date,
+        end_date=trip.end_date,
         created_at=trip.created_at,
     )
 
@@ -190,21 +192,41 @@ def list_trips(
     ]
 
 
-@router.get("/trips/{trip_id}", response_model=ChosenPlan, tags=["trips"])
+@router.get("/trips/{trip_id}", response_model=SavedTripDetail, tags=["trips"])
 def get_trip(
     trip_id: int,
     user: User = Depends(get_current_user),
     store: TripStore = Depends(get_trip_store),
-) -> ChosenPlan:
-    """Return one of the user's own stored plans (same ``chosen_plan`` shape).
+) -> SavedTripDetail:
+    """Return one of the user's own saved trips as a full snapshot.
 
-    A trip that does not exist, or belongs to another user, both yield **404** — the
-    store is queried by id *and* ``user_id`` so ownership is never leaked.
+    The ``response`` is the whole stored plan (transport, stay, booking links, weather,
+    dates, ranked candidates) with ``meta.saved_at`` set, plus the original ``request`` for
+    the "Refresh prices" action. A trip that does not exist, or belongs to another user,
+    both yield **404** — queried by id *and* ``user_id`` so ownership is never leaked.
     """
-    plan = store.get_chosen_plan(trip_id, user.id)
-    if plan is None:
+    detail = store.get_detail(trip_id, user.id)
+    if detail is None:
         raise NotFoundError(f"no trip with id {trip_id}")
-    return plan
+    return detail
+
+
+@router.put("/trips/{trip_id}", response_model=SavedTripDetail, tags=["trips"])
+def update_trip_snapshot(
+    trip_id: int,
+    body: SaveTripRequest,
+    user: User = Depends(get_current_user),
+    persister: TripPersister = Depends(get_trip_persister),
+) -> SavedTripDetail:
+    """Overwrite the user's saved trip with a refreshed plan (the "Update saved trip" action).
+
+    Takes the same ``{request, response}`` shape as save; replaces the stored snapshot in
+    place (same id, original save date kept). 404 when the trip isn't the caller's.
+    """
+    detail = persister.update(trip_id, user.id, body.request, body.response)
+    if detail is None:
+        raise NotFoundError(f"no trip with id {trip_id}")
+    return detail
 
 
 @router.patch("/trips/{trip_id}", response_model=TripSummary, tags=["trips"])

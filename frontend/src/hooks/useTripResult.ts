@@ -15,3 +15,8 @@ export function useTripResult(): TripContextValue {
   }
   return ctx;
 }
+
+/** Like {@link useTripResult} but returns ``null`` outside a provider (for standalone use). */
+export function useOptionalTripResult(): TripContextValue | null {
+  return useContext(TripContext);
+}

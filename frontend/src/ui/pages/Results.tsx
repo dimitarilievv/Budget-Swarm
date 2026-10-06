@@ -13,9 +13,11 @@
  */
 import { useEffect, useMemo, useState } from "react";
 
-import { saveTrip } from "@/api/endpoints";
+import { generateTrip, saveTrip, updateTripSnapshot } from "@/api/endpoints";
 import { fetchDestinationSummary } from "@/api/wikipedia";
 import { useOptionalAuth } from "@/contexts/AuthContext";
+import type { SavedTripRef } from "@/contexts/TripContext";
+import { useOptionalTripResult } from "@/hooks/useTripResult";
 import { navigate } from "@/router";
 import type {
   ChosenPlan,
@@ -396,6 +398,8 @@ interface ResultsPageProps {
   response: TripResponse;
   /** The request that produced the plan (budget, preferences, origin) — optional in tests. */
   request?: TripRequestPayload | null;
+  /** Set when this view is (or was opened from) a saved trip — drives the saved banner. */
+  saved?: SavedTripRef | null;
   onBack?: () => void;
   onPlanAnother?: () => void;
   onCompare?: () => void;
@@ -404,6 +408,7 @@ interface ResultsPageProps {
 export default function ResultsPage({
   response,
   request = null,
+  saved = null,
   onBack,
   onPlanAnother,
   onCompare,
@@ -444,6 +449,54 @@ export default function ResultsPage({
         : saveState === "error"
           ? "Couldn't save — retry"
           : "Save trip";
+
+  // Saved-trip view: a snapshot opened from My Trips. `isCleanSnapshot` is the stored plan
+  // as saved; after a refresh the fresh plan has no trip_id → `isRefreshedUnsaved`.
+  const trip = useOptionalTripResult();
+  const setResult = trip?.setResult;
+  const isSaved = saved != null;
+  const isRefreshedUnsaved = isSaved && response.meta.trip_id == null;
+  const [refreshState, setRefreshState] = useState<
+    "idle" | "refreshing" | "error"
+  >("idle");
+  const [updateState, setUpdateState] = useState<"idle" | "saving" | "error">(
+    "idle",
+  );
+
+  const handleRefresh = async () => {
+    if (!request || !saved) return;
+    setRefreshState("refreshing");
+    try {
+      const fresh = await generateTrip(request);
+      // Keep the saved association; the fresh plan has no trip_id → "refreshed, unsaved".
+      setResult?.(fresh, request, saved);
+      setRefreshState("idle");
+    } catch {
+      setRefreshState("error");
+    }
+  };
+
+  const handleUpdateSaved = async () => {
+    if (!request || !saved) return;
+    if (auth?.status !== "authenticated") {
+      goToLogin();
+      return;
+    }
+    setUpdateState("saving");
+    try {
+      const detail = await updateTripSnapshot(saved.tripId, {
+        request,
+        response,
+      });
+      setResult?.(detail.response, detail.request, {
+        tripId: detail.trip_id,
+        savedAt: detail.saved_at,
+      });
+      setUpdateState("idle");
+    } catch {
+      setUpdateState("error");
+    }
+  };
 
   const nextBest = useMemo(() => {
     const other = response.ranked_candidates.find(
@@ -495,6 +548,74 @@ export default function ResultsPage({
       className="animate-enter"
     >
       <div className="flex flex-col gap-6">
+        {/* Saved-trip banner: snapshot notice + refresh, or the "update saved" prompt. */}
+        {isSaved && (
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              alignItems: "center",
+              gap: 12,
+              padding: "12px 16px",
+              borderRadius: 14,
+              fontSize: 13,
+              background: isRefreshedUnsaved ? C.tealTint : C.warnBg,
+              color: isRefreshedUnsaved ? C.tealDark : C.warnInk,
+            }}
+          >
+            <span style={{ flex: 1, minWidth: 220, lineHeight: 1.5 }}>
+              {isRefreshedUnsaved ? (
+                <>
+                  <b>Showing refreshed prices.</b> These reflect current
+                  availability and aren't saved yet.
+                </>
+              ) : (
+                <>
+                  <b>
+                    Saved on{" "}
+                    {saved
+                      ? new Date(saved.savedAt).toLocaleDateString("en-GB", {
+                          day: "numeric",
+                          month: "short",
+                          year: "numeric",
+                        })
+                      : ""}
+                    .
+                  </b>{" "}
+                  Prices and availability may have changed since then.
+                </>
+              )}
+            </span>
+            {isRefreshedUnsaved ? (
+              <button
+                type="button"
+                onClick={handleUpdateSaved}
+                disabled={updateState === "saving"}
+                style={btnStyle(C.teal)}
+              >
+                {updateState === "saving"
+                  ? "Updating…"
+                  : updateState === "error"
+                    ? "Retry update"
+                    : "Update saved trip"}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleRefresh}
+                disabled={refreshState === "refreshing"}
+                style={btnStyle(C.teal)}
+              >
+                {refreshState === "refreshing"
+                  ? "Refreshing…"
+                  : refreshState === "error"
+                    ? "Retry refresh"
+                    : "Refresh prices"}
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Back bar + estimated chip */}
         <div className="flex items-center justify-between text-[13px]">
           <button
@@ -683,17 +804,20 @@ export default function ResultsPage({
                 Compare destinations
               </button>
             )}
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={saveState === "saving" || saveState === "saved"}
-              style={{
-                ...btnStyle(C.teal),
-                opacity: saveState === "saving" ? 0.7 : 1,
-              }}
-            >
-              {saveLabel}
-            </button>
+            {/* Save is for a fresh plan; a saved trip uses the banner's Refresh/Update. */}
+            {!isSaved && (
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={saveState === "saving" || saveState === "saved"}
+                style={{
+                  ...btnStyle(C.teal),
+                  opacity: saveState === "saving" ? 0.7 : 1,
+                }}
+              >
+                {saveLabel}
+              </button>
+            )}
             <button
               type="button"
               onClick={onPlanAnother ?? onBack}

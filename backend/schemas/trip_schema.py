@@ -291,6 +291,9 @@ class TripMeta(BaseModel):
 
     trip_id: int | None = None
     generated_at: datetime
+    # When this plan was saved to history (set only when serving a stored snapshot), so the
+    # UI can show "saved on …" and the prices-may-have-changed notice.
+    saved_at: datetime | None = None
     degraded_sources: list[str] = Field(default_factory=list)
     elapsed_ms: int | None = None
 
@@ -330,6 +333,8 @@ class TripSummary(BaseModel):
     budget: float
     total_cost: float | None = None
     overall_score: float | None = None
+    start_date: date | None = None
+    end_date: date | None = None
     created_at: datetime
 
 
@@ -347,7 +352,7 @@ class TripUpdate(BaseModel):
 
 
 class SaveTripRequest(BaseModel):
-    """Body for ``POST /api/trips`` — save a generated plan to the user's history.
+    """Body for ``POST /api/trips`` / ``PUT /api/trips/{id}`` — save (or re-save) a plan.
 
     The client sends back the exact ``request`` it used and the ``response`` it received, so
     the stored trip matches what the user saw (re-running the live pipeline could differ).
@@ -355,4 +360,20 @@ class SaveTripRequest(BaseModel):
     """
 
     request: TripRequest
+    response: TripResponse
+
+
+class SavedTripDetail(BaseModel):
+    """``GET /api/trips/{id}`` — a saved trip's full snapshot for re-display + refresh.
+
+    ``response`` is the full stored plan (or a reconstruction for legacy rows), with its
+    ``meta.trip_id``/``meta.saved_at`` set so the UI can show the "saved on …, prices may
+    have changed" notice. ``request`` is the original inputs, used to re-price ("Refresh").
+    """
+
+    trip_id: int
+    saved_at: datetime
+    start_date: date | None = None
+    end_date: date | None = None
+    request: TripRequest | None = None
     response: TripResponse

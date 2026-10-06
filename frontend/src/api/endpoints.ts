@@ -10,11 +10,7 @@ import type { AxiosInstance } from "axios";
 
 import apiClient from "@/api/axios";
 import { ApiError, toApiError } from "@/api/errors";
-import type {
-  ChosenPlan,
-  TripRequestPayload,
-  TripResponse,
-} from "@/types/trip";
+import type { TripRequestPayload, TripResponse } from "@/types/trip";
 
 /** `POST /api/generate-trip` — run the pipeline and return the full plan. */
 export async function generateTrip(
@@ -32,13 +28,40 @@ export async function generateTrip(
   }
 }
 
-/** `GET /api/trips/{id}` — fetch a previously generated plan by id. */
+/** A saved trip's full snapshot (`GET /api/trips/{id}`): the plan as saved + the request. */
+export interface SavedTripDetail {
+  trip_id: number;
+  saved_at: string;
+  start_date: string | null;
+  end_date: string | null;
+  request: TripRequestPayload | null;
+  response: TripResponse;
+}
+
+/** `GET /api/trips/{id}` — fetch a saved trip's full snapshot (for re-display + refresh). */
 export async function getTrip(
   tripId: number,
   client: AxiosInstance = apiClient,
-): Promise<ChosenPlan> {
+): Promise<SavedTripDetail> {
   try {
-    const { data } = await client.get<ChosenPlan>(`/api/trips/${tripId}`);
+    const { data } = await client.get<SavedTripDetail>(`/api/trips/${tripId}`);
+    return data;
+  } catch (err) {
+    throw toApiError(err);
+  }
+}
+
+/** `PUT /api/trips/{id}` — overwrite a saved trip with a refreshed plan ("Update saved trip"). */
+export async function updateTripSnapshot(
+  tripId: number,
+  payload: { request: TripRequestPayload; response: TripResponse },
+  client: AxiosInstance = apiClient,
+): Promise<SavedTripDetail> {
+  try {
+    const { data } = await client.put<SavedTripDetail>(
+      `/api/trips/${tripId}`,
+      payload,
+    );
     return data;
   } catch (err) {
     throw toApiError(err);
@@ -59,6 +82,8 @@ export interface SavedTrip {
   budget: number;
   total_cost: number | null;
   overall_score: number | null;
+  start_date: string | null;
+  end_date: string | null;
   created_at: string;
 }
 

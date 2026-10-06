@@ -348,6 +348,16 @@ class Trip(Base):
     # User-editable labels for a saved trip (PATCH /api/trips/{id}); both optional.
     title: Mapped[str | None] = mapped_column(String(120))
     notes: Mapped[str | None] = mapped_column(Text)
+    # Full plan snapshot (the generated TripResponse) + the request that produced it, stored
+    # as JSON so an opened saved trip shows exactly what the user saw — transport, stay,
+    # booking links, weather, dates, ranked candidates — and can be re-priced ("Refresh")
+    # from the same inputs. Nullable: legacy rows (saved before snapshots) fall back to a
+    # reconstruction from the header + activities.
+    plan_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    request_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    # The plan's travel window (from the chosen option), surfaced on the ticket/summary.
+    start_date: Mapped[date | None] = mapped_column(Date)
+    end_date: Mapped[date | None] = mapped_column(Date)
     budget: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     duration_days: Mapped[int] = mapped_column(Integer, nullable=False)
     travelers: Mapped[int] = mapped_column(Integer, nullable=False)

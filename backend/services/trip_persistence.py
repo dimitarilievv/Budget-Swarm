@@ -39,6 +39,8 @@ from schemas.trip_schema import (
     ItineraryActivity,
     ItineraryDay,
     PlanDestination,
+    SavedTripDetail,
+    TripMeta,
     TripRequest,
     TripResponse,
 )
@@ -65,6 +67,10 @@ class TripPersister(Protocol):
         self, request: TripRequest, response: TripResponse, *, user_id: int | None = None
     ) -> int | None: ...
 
+    def update(
+        self, trip_id: int, user_id: int, request: TripRequest, response: TripResponse
+    ) -> SavedTripDetail | None: ...
+
 
 class NullTripPersister:
     """No-op persister (the default): the plan is not stored and ``trip_id`` stays null.
@@ -76,6 +82,11 @@ class NullTripPersister:
     def persist(
         self, request: TripRequest, response: TripResponse, *, user_id: int | None = None
     ) -> int | None:
+        return None
+
+    def update(
+        self, trip_id: int, user_id: int, request: TripRequest, response: TripResponse
+    ) -> SavedTripDetail | None:
         return None
 
 
@@ -117,6 +128,11 @@ class DbTripPersister:
                 activities_cost=plan.cost_breakdown.activities,
                 overall_score=plan.overall_score,
                 explanation=response.explanation,
+                # Full snapshot (JSON-safe) so the saved trip re-displays exactly + can refresh.
+                plan_snapshot=response.model_dump(mode="json"),
+                request_snapshot=request.model_dump(mode="json"),
+                start_date=plan.start_date,
+                end_date=plan.end_date,
             )
             session.add(trip)
             session.flush()  # assign trip.id
@@ -143,6 +159,54 @@ class DbTripPersister:
             trip_id = trip.id
         logger.info("trip_persistence: stored trip id=%s (%s)", trip_id, plan.destination.city)
         return trip_id
+
+    def update(
+        self, trip_id: int, user_id: int, request: TripRequest, response: TripResponse
+    ) -> SavedTripDetail | None:
+        """Overwrite an owned trip's snapshot with a refreshed plan (the "Update" action).
+
+        Returns the re-saved detail, or ``None`` when the trip doesn't exist / isn't the
+        user's. The original ``created_at`` (saved_at) is preserved; the itinerary rows are
+        left as-is since the snapshot JSON is the source of truth for re-display.
+        """
+        plan = response.chosen_plan
+        with self._session_factory() as session:
+            trip = session.get(Trip, trip_id)
+            if trip is None or trip.user_id != user_id:
+                return None
+            destination = _resolve_destination(session, plan.destination)
+            plan.destination.id = destination.id
+            trip.budget = request.budget
+            trip.duration_days = request.duration_days
+            trip.travelers = request.travelers
+            trip.transport_mode = request.transport_mode
+            trip.preferences = dict(request.preferences)
+            trip.origin_label = request.origin_label
+            trip.chosen_destination = destination.id
+            trip.total_cost = plan.total_cost
+            trip.transport_cost = plan.cost_breakdown.transport
+            trip.accommodation_cost = plan.cost_breakdown.accommodation
+            trip.activities_cost = plan.cost_breakdown.activities
+            trip.overall_score = plan.overall_score
+            trip.explanation = response.explanation
+            trip.plan_snapshot = response.model_dump(mode="json")
+            trip.request_snapshot = request.model_dump(mode="json")
+            trip.start_date = plan.start_date
+            trip.end_date = plan.end_date
+            saved_at = trip.created_at
+            session.commit()
+            trip_id_val = trip.id
+        response.meta.trip_id = trip_id_val
+        response.meta.saved_at = saved_at
+        logger.info("trip_persistence: updated trip id=%s (%s)", trip_id_val, plan.destination.city)
+        return SavedTripDetail(
+            trip_id=trip_id_val,
+            saved_at=saved_at,
+            start_date=plan.start_date,
+            end_date=plan.end_date,
+            request=request,
+            response=response,
+        )
 
 
 class DbTripStore:
@@ -180,6 +244,55 @@ class DbTripStore:
                 .order_by(TripActivity.day_number, TripActivity.slot_order)
             ).all()
             return _to_chosen_plan(trip, destination, activities)
+
+    def get_detail(self, trip_id: int, user_id: int) -> SavedTripDetail | None:
+        """Return the owner's saved trip as a full snapshot (for re-display + refresh).
+
+        Prefers the stored ``plan_snapshot`` (exact fidelity: transport, stay, booking links,
+        weather, dates, ranked candidates). Falls back to the header+activities
+        reconstruction for legacy rows saved before snapshots existed.
+        """
+        with self._session_factory() as session:
+            trip = session.get(Trip, trip_id)
+            if trip is None or trip.user_id != user_id:
+                logger.info("trip_store: no trip id=%s for user=%s", trip_id, user_id)
+                return None
+
+            if trip.plan_snapshot:
+                response = TripResponse.model_validate(trip.plan_snapshot)
+            else:
+                destination = (
+                    session.get(Destination, trip.chosen_destination)
+                    if trip.chosen_destination is not None
+                    else None
+                )
+                if destination is None:
+                    logger.warning("trip_store: trip id=%s not reconstructable", trip_id)
+                    return None
+                activities = session.scalars(
+                    select(TripActivity)
+                    .where(TripActivity.trip_id == trip_id)
+                    .order_by(TripActivity.day_number, TripActivity.slot_order)
+                ).all()
+                response = TripResponse(
+                    chosen_plan=_to_chosen_plan(trip, destination, activities),
+                    explanation=trip.explanation,
+                    meta=TripMeta(generated_at=trip.created_at),
+                )
+
+            response.meta.trip_id = trip.id
+            response.meta.saved_at = trip.created_at
+            request = (
+                TripRequest.model_validate(trip.request_snapshot) if trip.request_snapshot else None
+            )
+            return SavedTripDetail(
+                trip_id=trip.id,
+                saved_at=trip.created_at,
+                start_date=trip.start_date,
+                end_date=trip.end_date,
+                request=request,
+                response=response,
+            )
 
 
 # --- reconstruction ----------------------------------------------------------
