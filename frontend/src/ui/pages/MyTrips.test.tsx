@@ -5,7 +5,7 @@ import type { SavedTrip } from "@/api/endpoints";
 
 // Mock the API, auth and trip-context dependencies so the page renders standalone.
 const listTrips = vi.fn();
-const deleteTrip = vi.fn(async (_id: number) => {});
+const deleteTrip = vi.fn(async (id: number) => id);
 const getTrip = vi.fn();
 const updateTrip = vi.fn();
 
