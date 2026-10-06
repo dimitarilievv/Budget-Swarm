@@ -112,17 +112,28 @@ function AuthRoute({ mode }: { mode: AuthMode }) {
     if (status === "authenticated") navigate(nextTarget());
   }, [status]);
 
+  const params = new URLSearchParams(window.location.search);
+  const notice =
+    mode === "login" && params.get("registered")
+      ? "Account created — please log in."
+      : undefined;
+
   return (
     <AuthPage
       initialMode={mode}
+      notice={notice}
       onModeChange={(m) => navigate(`/${m}${window.location.search}`)}
       onLogin={async ({ email, password, remember }) => {
         await login(email, password, remember);
         navigate(nextTarget());
       }}
       onRegister={async ({ name, email, password }) => {
+        // Registration does not sign the user in — send them to the login tab (keeping
+        // the ?next= return target), with a success notice.
         await register(email, password, name);
-        navigate(nextTarget());
+        const sp = new URLSearchParams(window.location.search);
+        sp.set("registered", "1");
+        navigate(`/login?${sp.toString()}`);
       }}
     />
   );

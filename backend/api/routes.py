@@ -30,19 +30,26 @@ from __future__ import annotations
 
 import logging
 
-from db.models import Destination, User
+from db.models import Destination, Trip, User
 from db.repositories import TripRepository
 from db.session import get_db
 from errors import NotFoundError
 from fastapi import APIRouter, Depends, Response, status
-from schemas.trip_schema import ChosenPlan, TripRequest, TripResponse, TripSummary, TripUpdate
+from schemas.trip_schema import (
+    ChosenPlan,
+    SaveTripRequest,
+    TripRequest,
+    TripResponse,
+    TripSummary,
+    TripUpdate,
+)
 from services.coordinator_service import CoordinatorService, TripEngine
 from services.engine_stub import StubTripEngine
 from services.trip_persistence import NullTripPersister, TripPersister
 from services.trip_store import StubTripStore, TripStore
 from sqlalchemy.orm import Session
 
-from api.deps import get_current_user, get_optional_user
+from api.deps import get_current_user
 from api.rate_limit import enforce_rate_limit
 
 logger = logging.getLogger(__name__)
@@ -77,49 +84,42 @@ def get_trip_persister() -> TripPersister:
     return NullTripPersister()
 
 
-def _redact_booking_details(response: TripResponse) -> None:
-    """Strip booking links from a plan returned to an anonymous caller.
-
-    The plan itself (destination, costs, itinerary, schedule) stays visible; only the
-    actionable *booking* links are removed, so seeing where/how to book requires signing
-    in. Mutates the response in place.
-    """
-    plan = response.chosen_plan
-    if plan.accommodation is not None:
-        plan.accommodation.listing_url = None
-    if plan.transport is not None and plan.transport.flight is not None:
-        plan.transport.flight.booking_url = None
+def _trip_summary(trip: Trip, dest: Destination | None) -> TripSummary:
+    """Map a persisted :class:`Trip` (+ its destination) to the wire :class:`TripSummary`."""
+    return TripSummary(
+        id=trip.id,
+        title=trip.title,
+        notes=trip.notes,
+        destination_city=dest.city if dest is not None else None,
+        destination_country=dest.country if dest is not None else None,
+        transport_mode=trip.transport_mode,
+        duration_days=trip.duration_days,
+        travelers=trip.travelers,
+        total_cost=float(trip.total_cost) if trip.total_cost is not None else None,
+        overall_score=float(trip.overall_score) if trip.overall_score is not None else None,
+        created_at=trip.created_at,
+    )
 
 
 @router.post(
     "/generate-trip",
     response_model=TripResponse,
-    response_model_exclude_none=False,
     tags=["trips"],
     dependencies=[Depends(enforce_rate_limit)],  # per-client 429 guard (BS-093)
 )
 def generate_trip(
     request: TripRequest,
     service: CoordinatorService = Depends(get_coordinator_service),
-    persister: TripPersister = Depends(get_trip_persister),
-    user: User | None = Depends(get_optional_user),
 ) -> TripResponse:
     """Run the agent→optimize→explain pipeline for the given constraints.
 
-    When the caller is authenticated, the generated plan is saved to their history and its
-    ``trip_id`` is returned in ``meta`` (fetch later via ``GET /api/trips/{trip_id}``).
-    An anonymous caller still gets a full plan, but it is not saved and its booking links
-    are withheld. A :class:`NoPlanAvailableError` from the engine propagates to the global
-    handler, which renders the 503 NO_PLAN_AVAILABLE envelope (api.md).
+    Public and stateless: anyone can generate a plan in full detail (including booking
+    links). The plan is **not** saved here — a signed-in user saves it explicitly via
+    ``POST /api/trips`` (the "Save trip" action), and booking/saving are gated in the UI.
+    A :class:`NoPlanAvailableError` from the engine propagates to the global handler, which
+    renders the 503 NO_PLAN_AVAILABLE envelope (api.md).
     """
-    response = service.generate_trip(request)
-    user_id = user.id if user is not None else None
-    trip_id = persister.persist(request, response, user_id=user_id)
-    if trip_id is not None:
-        response.meta.trip_id = trip_id
-    if user is None:
-        _redact_booking_details(response)
-    return response
+    return service.generate_trip(request)
 
 
 def get_trip_store() -> TripStore:
@@ -129,6 +129,40 @@ def get_trip_store() -> TripStore:
     (BS-081). Tests override this dependency to control what is "stored".
     """
     return StubTripStore()
+
+
+@router.post(
+    "/trips",
+    response_model=TripSummary,
+    status_code=status.HTTP_201_CREATED,
+    tags=["trips"],
+)
+def save_trip(
+    body: SaveTripRequest,
+    user: User = Depends(get_current_user),
+    persister: TripPersister = Depends(get_trip_persister),
+    db: Session = Depends(get_db),
+) -> TripSummary:
+    """Save a generated plan to the signed-in user's history (the "Save trip" action).
+
+    The client sends back the exact ``request`` + generated ``response`` so the stored trip
+    matches what the user saw (re-running the live pipeline could yield a different plan).
+    Ownership is taken from the token, never the body. Returns the saved trip summary.
+    """
+    trip_id = persister.persist(body.request, body.response, user_id=user.id)
+    if trip_id is None:
+        # Only happens without a DB-backed persister (database unavailable).
+        raise RuntimeError("trip persistence is not available")
+    trip = TripRepository(db).get_for_user(trip_id, user.id)
+    if trip is None:  # pragma: no cover - persisted row must be readable back
+        raise NotFoundError(f"no trip with id {trip_id}")
+    dest = (
+        db.get(Destination, trip.chosen_destination)
+        if trip.chosen_destination is not None
+        else None
+    )
+    logger.info("trips: user id=%s saved trip id=%s", user.id, trip_id)
+    return _trip_summary(trip, dest)
 
 
 @router.get("/trips", response_model=list[TripSummary], tags=["trips"])
@@ -145,27 +179,13 @@ def list_trips(
         destinations = {
             d.id: d for d in db.query(Destination).filter(Destination.id.in_(dest_ids)).all()
         }
-    summaries: list[TripSummary] = []
-    for trip in trips:
-        dest = destinations.get(trip.chosen_destination) if trip.chosen_destination else None
-        summaries.append(
-            TripSummary(
-                id=trip.id,
-                title=trip.title,
-                notes=trip.notes,
-                destination_city=dest.city if dest is not None else None,
-                destination_country=dest.country if dest is not None else None,
-                transport_mode=trip.transport_mode,
-                duration_days=trip.duration_days,
-                travelers=trip.travelers,
-                total_cost=float(trip.total_cost) if trip.total_cost is not None else None,
-                overall_score=(
-                    float(trip.overall_score) if trip.overall_score is not None else None
-                ),
-                created_at=trip.created_at,
-            )
+    return [
+        _trip_summary(
+            trip,
+            destinations.get(trip.chosen_destination) if trip.chosen_destination else None,
         )
-    return summaries
+        for trip in trips
+    ]
 
 
 @router.get("/trips/{trip_id}", response_model=ChosenPlan, tags=["trips"])
@@ -207,19 +227,7 @@ def update_trip(
         if trip.chosen_destination is not None
         else None
     )
-    return TripSummary(
-        id=trip.id,
-        title=trip.title,
-        notes=trip.notes,
-        destination_city=dest.city if dest is not None else None,
-        destination_country=dest.country if dest is not None else None,
-        transport_mode=trip.transport_mode,
-        duration_days=trip.duration_days,
-        travelers=trip.travelers,
-        total_cost=float(trip.total_cost) if trip.total_cost is not None else None,
-        overall_score=float(trip.overall_score) if trip.overall_score is not None else None,
-        created_at=trip.created_at,
-    )
+    return _trip_summary(trip, dest)
 
 
 @router.delete("/trips/{trip_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["trips"])

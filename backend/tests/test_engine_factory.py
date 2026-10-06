@@ -171,8 +171,12 @@ def test_configured_app_persists_and_serves_history(migrated_db):
             "origin_label": "Skopje",
             "vehicle_consumption": 6.5,
         }
-        created = client.post("/api/generate-trip", json=request, headers=headers).json()
-        trip_id = created["meta"]["trip_id"]
+        created = client.post("/api/generate-trip", json=request).json()
+        saved = client.post(
+            "/api/trips", json={"request": request, "response": created}, headers=headers
+        )
+        assert saved.status_code == 201, saved.text
+        trip_id = saved.json()["id"]
         assert isinstance(trip_id, int) and trip_id > 0  # persisted through the wired store
 
         fetched = client.get(f"/api/trips/{trip_id}", headers=headers)

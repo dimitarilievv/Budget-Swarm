@@ -6,6 +6,8 @@
  * upcoming tickets, so they render disabled rather than as dead links). Right: a Profile
  * action. Kept intentionally minimal — a single hairline divider, no shadow.
  */
+import { useOptionalAuth } from "@/contexts/AuthContext";
+import { navigate } from "@/router";
 import {
   IconBriefcase,
   IconCompare,
@@ -27,6 +29,8 @@ export default function Navbar({
   onCompare,
   compareActive = false,
 }: NavbarProps) {
+  const auth = useOptionalAuth();
+  const authed = auth?.status === "authenticated";
   const navItems = [
     {
       key: "plan",
@@ -97,13 +101,34 @@ export default function Navbar({
           ))}
         </ul>
 
-        <button
-          type="button"
-          className="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-1.5 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-900"
-        >
-          <IconUser className="h-4 w-4 text-teal-600" />
-          Profile
-        </button>
+        {authed ? (
+          <div className="flex items-center gap-3">
+            <span className="hidden items-center gap-2 text-sm font-medium text-slate-700 sm:flex">
+              <IconUser className="h-4 w-4 text-teal-600" />
+              {auth?.user?.name || auth?.user?.email}
+            </span>
+            <button
+              type="button"
+              onClick={() => auth?.logout()}
+              className="rounded-full border border-slate-200 bg-white px-4 py-1.5 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-900"
+            >
+              Log out
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() =>
+              navigate(
+                `/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`,
+              )
+            }
+            className="flex items-center gap-2 rounded-full bg-teal-600 px-4 py-1.5 text-sm font-semibold text-white transition hover:bg-teal-700"
+          >
+            <IconUser className="h-4 w-4" />
+            Log in
+          </button>
+        )}
       </nav>
     </header>
   );

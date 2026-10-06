@@ -133,41 +133,50 @@ _REQUEST = {
 }
 
 
+def _generate_and_save(client, headers):
+    """Generate a plan (public) then save it (auth); return (generated_response, saved_summary)."""
+    gen = client.post("/api/generate-trip", json=_REQUEST)
+    assert gen.status_code == 200, gen.text
+    saved = client.post(
+        "/api/trips",
+        json={"request": _REQUEST, "response": gen.json()},
+        headers=headers,
+    )
+    assert saved.status_code == 201, saved.text
+    return gen.json(), saved.json()
+
+
 @pytest.mark.integration
-def test_generate_persists_and_returns_trip_id(client, auth):
+def test_save_returns_trip_id(client, auth):
     headers, _ = auth
-    resp = client.post("/api/generate-trip", json=_REQUEST, headers=headers)
-    assert resp.status_code == 200
-    trip_id = resp.json()["meta"]["trip_id"]
-    assert isinstance(trip_id, int) and trip_id > 0
+    _, saved = _generate_and_save(client, headers)
+    assert isinstance(saved["id"], int) and saved["id"] > 0
 
 
 @pytest.mark.integration
 def test_anonymous_generate_is_not_persisted(client):
-    """An unauthenticated generation returns a plan but is not saved (no trip_id)."""
+    """Generating a plan is never persisted on its own (no trip_id)."""
     resp = client.post("/api/generate-trip", json=_REQUEST)
     assert resp.status_code == 200
     assert resp.json()["meta"]["trip_id"] is None
 
 
 @pytest.mark.integration
-def test_generate_then_fetch_by_id_round_trips(client, auth):
+def test_save_then_fetch_by_id_round_trips(client, auth):
     headers, _ = auth
-    created = client.post("/api/generate-trip", json=_REQUEST, headers=headers).json()
-    trip_id = created["meta"]["trip_id"]
-    # The persisted destination's real id is backfilled onto the response (not left 0).
-    assert created["chosen_plan"]["destination"]["id"] > 0
+    generated, saved = _generate_and_save(client, headers)
+    trip_id = saved["id"]
+    created_plan = generated["chosen_plan"]
 
     fetched = client.get(f"/api/trips/{trip_id}", headers=headers)
     assert fetched.status_code == 200
     plan = fetched.json()
 
     # The stored plan carries the same destination, totals and ordered itinerary.
-    assert plan["destination"]["city"] == created["chosen_plan"]["destination"]["city"]
-    assert plan["destination"]["id"] == created["chosen_plan"]["destination"]["id"]
-    assert plan["total_cost"] == pytest.approx(created["chosen_plan"]["total_cost"])
+    assert plan["destination"]["city"] == created_plan["destination"]["city"]
+    assert plan["total_cost"] == pytest.approx(created_plan["total_cost"])
     original_activities = [
-        a["name"] for day in created["chosen_plan"]["itinerary"] for a in day["activities"]
+        a["name"] for day in created_plan["itinerary"] for a in day["activities"]
     ]
     stored_activities = [a["name"] for day in plan["itinerary"] for a in day["activities"]]
     assert stored_activities == original_activities
@@ -182,9 +191,8 @@ def test_activities_persisted_with_order_and_flags(client, auth, db_engine):
     from sqlalchemy.orm import Session
 
     headers, user_id = auth
-    trip_id = client.post("/api/generate-trip", json=_REQUEST, headers=headers).json()["meta"][
-        "trip_id"
-    ]
+    _, saved = _generate_and_save(client, headers)
+    trip_id = saved["id"]
 
     # Read the rows directly to assert the persisted shape.
     with Session(bind=db_engine) as session:

@@ -168,7 +168,6 @@ export default function SearchingCard({
   const stage = done ? 5 : (stageProp ?? Math.min(4, Math.floor(p * 5)));
   const local = done ? 1 : p * 5 - Math.min(4, Math.floor(p * 5));
   const pulse = usePulse(!reduced);
-  const pct = Math.round(p * 100);
   const motion = (value: string) => (reduced ? "none" : value);
 
   const [tip, setTip] = useState(0);
@@ -416,49 +415,6 @@ export default function SearchingCard({
             ? "Done. Your best match is ready."
             : findings[Math.min(4, stage)]}
         </span>
-      </div>
-
-      {/* Progress */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <div
-          style={{
-            height: 8,
-            borderRadius: 4,
-            background: "#edf1f0",
-            overflow: "hidden",
-          }}
-          role="progressbar"
-          aria-valuenow={pct}
-          aria-valuemin={0}
-          aria-valuemax={100}
-        >
-          <div
-            style={{
-              width: `${pct}%`,
-              height: "100%",
-              borderRadius: 4,
-              background: TEAL,
-              transition: motion("width .2s linear"),
-            }}
-          />
-        </div>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            fontSize: 13,
-            color: "#5d6b69",
-          }}
-        >
-          <span>
-            {done
-              ? "All done"
-              : p > 0.75
-                ? "Almost there… a few seconds left"
-                : "This usually takes 10–25 seconds"}
-          </span>
-          <b style={{ color: "#12201e" }}>{pct}%</b>
-        </div>
       </div>
 
       {/* Rotating tip */}

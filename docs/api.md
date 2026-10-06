@@ -44,7 +44,7 @@ Returns the authenticated user (`401` without a valid token).
 
 The single primary endpoint. Takes user constraints, runs the full agent → optimize → explain pipeline, and returns the chosen plan plus ranked runner-up candidates.
 
-**Auth is optional here.** Without a token the plan is returned but **not saved** (`meta.trip_id` is `null`) and its **booking links are withheld** (accommodation `listing_url`, flight `booking_url`). With a valid `Authorization: Bearer` token the plan is saved to the user's history (its `trip_id` is returned) and booking links are included. Ownership always comes from the token — a `user_id` in the body is rejected.
+**Public and stateless.** Anyone can generate a plan in full detail (including booking links); it is **not** saved here (`meta.trip_id` is always `null`). To keep a plan, a signed-in user saves it explicitly via `POST /api/trips`. Booking and saving are gated in the UI (a signed-out user is sent to login), not by withholding data here.
 
 ### Request body
 
@@ -179,6 +179,9 @@ The single primary endpoint. Takes user constraints, runs the full agent → opt
 ## Saved trips (owner-scoped)
 
 All of the following **require authentication** and operate only on the caller's own trips. A trip owned by another user is reported as **`404`** (identical to a missing one) so its existence is never revealed — never `403`.
+
+### `POST /api/trips`
+Save a generated plan to the signed-in user's history (the "Save trip" action). Body: `{ "request": <TripRequest>, "response": <TripResponse> }` — the exact request used and the plan received, so the stored trip matches what the user saw. Ownership is taken from the token; a `user_id` in the body is ignored. Returns `201` with the saved trip summary.
 
 ### `GET /api/trips`
 List the authenticated user's saved trips (newest first). Each item: `{ id, title, notes, destination_city, destination_country, transport_mode, duration_days, travelers, total_cost, overall_score, created_at }`.

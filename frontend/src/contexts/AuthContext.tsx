@@ -174,11 +174,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const register = useCallback(
     async (email: string, password: string, name?: string | null) => {
-      const result = await registerRequest({ email, password, name });
-      // A fresh account is remembered by default so the user stays signed in.
-      saveTokens(result.tokens, true);
-      setUser(result.user);
-      setStatus("authenticated");
+      // Create the account only — the user then signs in explicitly (register → login).
+      // We intentionally discard the tokens the endpoint returns so registration never
+      // auto-authenticates.
+      await registerRequest({ email, password, name });
     },
     [],
   );
@@ -209,4 +208,14 @@ export function useAuth(): AuthContextValue {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error("useAuth must be used within an AuthProvider");
   return ctx;
+}
+
+/**
+ * Like {@link useAuth} but returns ``null`` outside a provider instead of throwing.
+ * Use in presentational components that may be rendered standalone (e.g. in tests) and
+ * only need to adapt to auth state when it's available.
+ */
+// eslint-disable-next-line react-refresh/only-export-components
+export function useOptionalAuth(): AuthContextValue | null {
+  return useContext(AuthContext);
 }

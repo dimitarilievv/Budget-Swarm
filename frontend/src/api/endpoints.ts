@@ -45,4 +45,38 @@ export async function getTrip(
   }
 }
 
+/** A saved trip's summary, as returned by `POST /api/trips` / `GET /api/trips`. */
+export interface SavedTrip {
+  id: number;
+  title: string | null;
+  notes: string | null;
+  destination_city: string | null;
+  destination_country: string | null;
+  transport_mode: string;
+  duration_days: number;
+  travelers: number;
+  total_cost: number | null;
+  overall_score: number | null;
+  created_at: string;
+}
+
+/**
+ * `POST /api/trips` — save a generated plan to the signed-in user's history.
+ *
+ * Sends back the exact request + generated response so the stored trip matches what the
+ * user saw. Requires a valid access token (attached by the auth layer); a 401 surfaces as
+ * an {@link ApiError} the caller can use to redirect to login.
+ */
+export async function saveTrip(
+  payload: { request: TripRequestPayload; response: TripResponse },
+  client: AxiosInstance = apiClient,
+): Promise<SavedTrip> {
+  try {
+    const { data } = await client.post<SavedTrip>("/api/trips", payload);
+    return data;
+  } catch (err) {
+    throw toApiError(err);
+  }
+}
+
 export { ApiError };

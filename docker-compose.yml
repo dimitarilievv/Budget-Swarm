@@ -25,6 +25,14 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: ${DATABASE_URL}
+      # Auth (BS-110): JWT_SECRET is REQUIRED — compose fails fast with a clear message if
+      # it isn't set in .env (see .env.example). The rest have sane defaults.
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set in .env — see .env.example}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-15}
+      REFRESH_TOKEN_EXPIRE_DAYS: ${REFRESH_TOKEN_EXPIRE_DAYS:-7}
+      AUTH_RATE_LIMIT_REQUESTS: ${AUTH_RATE_LIMIT_REQUESTS:-5}
+      AUTH_RATE_LIMIT_WINDOW_SECONDS: ${AUTH_RATE_LIMIT_WINDOW_SECONDS:-60}
       # /app is the working dir; ai_engine is mounted under it so `import ai_engine`
       # resolves in the backend container (BS-081).
       PYTHONPATH: /app

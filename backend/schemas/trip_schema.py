@@ -342,3 +342,15 @@ class TripUpdate(BaseModel):
 
     title: str | None = Field(default=None, max_length=120)
     notes: str | None = None
+
+
+class SaveTripRequest(BaseModel):
+    """Body for ``POST /api/trips`` — save a generated plan to the user's history.
+
+    The client sends back the exact ``request`` it used and the ``response`` it received, so
+    the stored trip matches what the user saw (re-running the live pipeline could differ).
+    Ownership is taken from the auth token, never from this body.
+    """
+
+    request: TripRequest
+    response: TripResponse
