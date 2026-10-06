@@ -91,3 +91,45 @@ body {
       transparent 19rem
     );
 }
+
+/* --- My Trips tickets (boarding-pass cards) ------------------------------- */
+/* Desktop: main area + a fixed-width torn stub beside it. */
+.mt-ticket {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 150px;
+}
+
+/* Below ~720px: stack the stub under the main part and flip the perforation
+   (tear line + notches) from vertical to horizontal so the torn edge stays between
+   the two halves. */
+@media (max-width: 720px) {
+  .mt-ticket {
+    grid-template-columns: 1fr;
+  }
+  .mt-ticket-stub {
+    border-radius: 0 0 22px 22px !important;
+  }
+  .mt-tear {
+    left: 16px !important;
+    right: 16px;
+    top: -1px !important;
+    bottom: auto !important;
+    border-left: none !important;
+    border-top: 2px dashed rgba(255, 255, 255, 0.45);
+  }
+  .mt-notch-tl {
+    top: -12px !important;
+    left: -12px !important;
+    bottom: auto !important;
+  }
+  .mt-notch-bl {
+    top: -12px !important;
+    left: auto !important;
+    right: -12px;
+    bottom: auto !important;
+  }
+  .mt-list-row {
+    grid-template-columns: 56px minmax(0, 1fr) !important;
+    row-gap: 10px !important;
+  }
+}

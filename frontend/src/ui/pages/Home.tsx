@@ -356,6 +356,22 @@ function Header() {
         </nav>
         {authed ? (
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <button
+              type="button"
+              onClick={() => navigate("/my-trips")}
+              style={{
+                all: "unset",
+                cursor: "pointer",
+                padding: "7px 14px",
+                borderRadius: 99,
+                fontSize: 13,
+                fontWeight: 600,
+                color: C.teal,
+                whiteSpace: "nowrap",
+              }}
+            >
+              My trips
+            </button>
             <span
               style={{ fontSize: 13, color: C.muted, whiteSpace: "nowrap" }}
               className="hidden sm:inline"

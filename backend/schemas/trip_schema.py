@@ -321,11 +321,13 @@ class TripSummary(BaseModel):
     id: int
     title: str | None = None
     notes: str | None = None
+    origin_label: str | None = None
     destination_city: str | None = None
     destination_country: str | None = None
     transport_mode: TransportModeStr
     duration_days: int
     travelers: int
+    budget: float
     total_cost: float | None = None
     overall_score: float | None = None
     created_at: datetime

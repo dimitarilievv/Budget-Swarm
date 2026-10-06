@@ -21,6 +21,7 @@ import Navbar from "@/ui/components/layout/Navbar";
 import AuthPage, { type AuthMode } from "@/ui/pages/AuthPage";
 import ComparisonPage from "@/ui/pages/Comparison";
 import Home from "@/ui/pages/Home";
+import MyTripsPage from "@/ui/pages/MyTrips";
 import ResultsPage from "@/ui/pages/Results";
 
 type ResultView = "results" | "compare";
@@ -139,11 +140,26 @@ function AuthRoute({ mode }: { mode: AuthMode }) {
   );
 }
 
-/** Route the two real URLs to the auth screen; everything else is the single-view shell. */
+/** The signed-in-only saved-trips page; signed-out visitors are sent to login. */
+function MyTripsRoute() {
+  const { status } = useAuth();
+
+  useEffect(() => {
+    if (status === "unauthenticated") navigate("/login?next=/my-trips");
+  }, [status]);
+
+  if (status !== "authenticated") return null; // brief: while loading or before redirect
+  return <MyTripsPage />;
+}
+
+/** Route the real URLs to their screens; everything else is the single-view shell. */
 function Router() {
   const path = useRoutePath();
   if (path === "/login" || path === "/register") {
     return <AuthRoute mode={path === "/register" ? "register" : "login"} />;
+  }
+  if (path === "/my-trips") {
+    return <MyTripsRoute />;
   }
   return <Shell />;
 }
