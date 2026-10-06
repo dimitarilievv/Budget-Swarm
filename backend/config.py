@@ -88,3 +88,28 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Return the process-wide settings singleton (cached after first load)."""
     return Settings()
+
+
+class _MigrationSettings(BaseSettings):
+    """Minimal settings for migrations/DB tooling — only the database URL is required.
+
+    Running ``alembic`` must not depend on the *application's* secrets (e.g. ``JWT_SECRET``):
+    a migration only needs ``DATABASE_URL``. Validating the full :class:`Settings` there
+    would make ``alembic upgrade`` fail wherever the app secrets aren't set (notably CI's
+    migration step, which provides only ``DATABASE_URL``). This loads the same env/.env but
+    validates nothing beyond the connection string.
+    """
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    database_url: str
+
+
+def get_database_url() -> str:
+    """The database URL for migrations/tooling, without requiring the rest of the config."""
+    return _MigrationSettings().database_url

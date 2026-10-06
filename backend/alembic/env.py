@@ -9,7 +9,7 @@ ORM autogenerate can be wired up in BS-028 once models exist.
 from logging.config import fileConfig
 
 from alembic import context
-from config import get_settings
+from config import get_database_url
 from sqlalchemy import engine_from_config, pool
 
 config = context.config
@@ -17,8 +17,9 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Inject the URL from settings (env/.env) into the Alembic config.
-config.set_main_option("sqlalchemy.url", get_settings().database_url)
+# Inject the URL from settings (env/.env) into the Alembic config. Migrations need only
+# the DB URL — not the full app config/secrets — so this uses the minimal resolver.
+config.set_main_option("sqlalchemy.url", get_database_url())
 
 target_metadata = None
 
