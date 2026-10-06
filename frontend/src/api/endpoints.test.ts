@@ -166,10 +166,24 @@ describe("generateTrip", () => {
 });
 
 describe("getTrip", () => {
-  it("fetches a stored plan by id", async () => {
+  it("fetches a saved trip snapshot by id", async () => {
     const calls: unknown[][] = [];
-    const plan = await getTrip(341, okClient(CHOSEN_PLAN, calls));
-    expect(plan.destination.city).toBe("Budapest");
+    const detail = await getTrip(
+      341,
+      okClient(
+        {
+          trip_id: 341,
+          saved_at: "2026-08-15T10:22:00Z",
+          start_date: null,
+          end_date: null,
+          request: null,
+          response: TRIP_RESPONSE,
+        },
+        calls,
+      ),
+    );
+    expect(detail.trip_id).toBe(341);
+    expect(detail.response.chosen_plan.destination.city).toBe("Budapest");
     expect(calls[0][0]).toBe("/api/trips/341");
   });
 

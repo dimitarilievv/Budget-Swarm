@@ -326,3 +326,45 @@ def test_patch_forbids_ownership_fields(client):
     trip_id = _create_trip(client, user["headers"])
     resp = client.patch(f"/api/trips/{trip_id}", json={"user_id": 1}, headers=user["headers"])
     assert resp.status_code == 422
+
+
+@pytest.mark.integration
+def test_get_saved_trip_returns_full_snapshot_and_request(client):
+    """Opening a saved trip returns the full plan snapshot + the request (for refresh)."""
+    user = _register(client)
+    trip_id = _create_trip(client, user["headers"])
+    detail = client.get(f"/api/trips/{trip_id}", headers=user["headers"]).json()
+    assert detail["trip_id"] == trip_id
+    assert detail["saved_at"]
+    assert detail["request"]["budget"] == _TRIP_REQUEST["budget"]
+    assert detail["response"]["chosen_plan"]["destination"]["city"]
+    assert detail["response"]["meta"]["saved_at"]
+
+
+@pytest.mark.integration
+def test_update_saved_trip_overwrites_snapshot(client):
+    """PUT replaces an owned trip's snapshot in place (the 'Update saved trip' action)."""
+    user = _register(client)
+    trip_id = _create_trip(client, user["headers"])
+    refreshed = client.post("/api/generate-trip", json=_TRIP_REQUEST).json()
+    resp = client.put(
+        f"/api/trips/{trip_id}",
+        json={"request": _TRIP_REQUEST, "response": refreshed},
+        headers=user["headers"],
+    )
+    assert resp.status_code == 200
+    assert resp.json()["trip_id"] == trip_id
+
+
+@pytest.mark.integration
+def test_update_other_users_trip_is_404(client):
+    alice = _register(client)
+    bob = _register(client)
+    bob_trip = _create_trip(client, bob["headers"])
+    refreshed = client.post("/api/generate-trip", json=_TRIP_REQUEST).json()
+    resp = client.put(
+        f"/api/trips/{bob_trip}",
+        json={"request": _TRIP_REQUEST, "response": refreshed},
+        headers=alice["headers"],
+    )
+    assert resp.status_code == 404

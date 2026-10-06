@@ -348,4 +348,39 @@ describe("ResultsPage (redesign)", () => {
       screen.getByText(/no accommodation details available/i),
     ).toBeInTheDocument();
   });
+
+  it("shows the saved-trip banner + Refresh and hides Save for a clean snapshot", () => {
+    const r = fixture();
+    r.meta.trip_id = 5; // a stored snapshot carries its trip id
+    render(
+      <ResultsPage
+        response={r}
+        request={request()}
+        saved={{ tripId: 5, savedAt: "2026-01-02T00:00:00Z" }}
+      />,
+    );
+    expect(screen.getByText(/saved on/i)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /refresh prices/i }),
+    ).toBeInTheDocument();
+    // Already saved → no "Save trip" button.
+    expect(
+      screen.queryByRole("button", { name: /^save trip$/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("prompts to update after a refresh (saved ref, but the plan isn't persisted)", () => {
+    const r = fixture(); // no meta.trip_id → a refreshed, unsaved plan
+    render(
+      <ResultsPage
+        response={r}
+        request={request()}
+        saved={{ tripId: 5, savedAt: "2026-01-02T00:00:00Z" }}
+      />,
+    );
+    expect(screen.getByText(/showing refreshed prices/i)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /update saved trip/i }),
+    ).toBeInTheDocument();
+  });
 });

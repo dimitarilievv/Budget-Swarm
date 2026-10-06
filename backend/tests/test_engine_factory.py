@@ -181,9 +181,8 @@ def test_configured_app_persists_and_serves_history(migrated_db):
 
         fetched = client.get(f"/api/trips/{trip_id}", headers=headers)
         assert fetched.status_code == 200
-        assert (
-            fetched.json()["destination"]["city"] == created["chosen_plan"]["destination"]["city"]
-        )
+        plan = fetched.json()["response"]["chosen_plan"]
+        assert plan["destination"]["city"] == created["chosen_plan"]["destination"]["city"]
     finally:
         app.dependency_overrides.pop(get_trip_persister, None)
         app.dependency_overrides.pop(get_trip_store, None)

@@ -40,14 +40,16 @@ def as_owner(client):
         app.dependency_overrides.pop(get_current_user, None)
 
 
-def test_get_trip_found_returns_chosen_plan(as_owner):
+def test_get_trip_found_returns_saved_detail(as_owner):
     resp = as_owner.get(f"/api/trips/{SEEDED_TRIP_ID}")
     assert resp.status_code == 200
     body = resp.json()
-    plan = ChosenPlan.model_validate(body)
+    # GET now returns the full saved-trip snapshot: trip_id + saved_at + the plan response.
+    assert body["trip_id"] == SEEDED_TRIP_ID
+    assert body["saved_at"]
+    plan = ChosenPlan.model_validate(body["response"]["chosen_plan"])
     assert plan.destination.city == "Budapest"
-    assert "chosen_plan" not in body
-    assert "ranked_candidates" not in body
+    assert body["response"]["meta"]["saved_at"]
 
 
 def test_get_trip_other_user_gets_404(client):

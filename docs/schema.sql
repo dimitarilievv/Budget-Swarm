@@ -197,6 +197,10 @@ CREATE TABLE trips (
     user_id             INTEGER REFERENCES users(id) ON DELETE SET NULL,  -- owner; nullable for legacy/anonymous rows (ADR-012)
     title               VARCHAR(120),          -- user-editable label (PATCH /api/trips/{id})
     notes               TEXT,                  -- user-editable notes
+    plan_snapshot       JSONB,                 -- full saved plan (TripResponse) for exact re-display
+    request_snapshot    JSONB,                 -- original request, for "Refresh prices"
+    start_date          DATE,                  -- plan's travel window (for the ticket/summary)
+    end_date            DATE,
     -- inputs
     budget              NUMERIC(10,2) NOT NULL,
     duration_days       INTEGER NOT NULL,
