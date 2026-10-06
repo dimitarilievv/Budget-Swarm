@@ -184,7 +184,7 @@ All of the following **require authentication** and operate only on the caller's
 Save a generated plan to the signed-in user's history (the "Save trip" action). Body: `{ "request": <TripRequest>, "response": <TripResponse> }` — the exact request used and the plan received, so the stored trip matches what the user saw. Ownership is taken from the token; a `user_id` in the body is ignored. Returns `201` with the saved trip summary.
 
 ### `GET /api/trips`
-List the authenticated user's saved trips (newest first). Each item: `{ id, title, notes, destination_city, destination_country, transport_mode, duration_days, travelers, total_cost, overall_score, created_at }`.
+List the authenticated user's saved trips (newest first). Each item: `{ id, title, notes, origin_label, destination_city, destination_country, transport_mode, duration_days, travelers, budget, total_cost, overall_score, created_at }`. Powers the **My trips** page.
 
 ### `GET /api/trips/{trip_id}`
 Return one of the user's own stored plans, in the same `chosen_plan` shape as generate-trip.

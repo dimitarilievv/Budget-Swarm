@@ -45,8 +45,8 @@ export default function Navbar({
       label: "My Trips",
       Icon: IconBriefcase,
       active: false,
-      onClick: undefined,
-      enabled: false,
+      onClick: () => navigate("/my-trips"),
+      enabled: true,
     },
     {
       key: "compare",

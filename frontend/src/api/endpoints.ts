@@ -50,14 +50,57 @@ export interface SavedTrip {
   id: number;
   title: string | null;
   notes: string | null;
+  origin_label: string | null;
   destination_city: string | null;
   destination_country: string | null;
   transport_mode: string;
   duration_days: number;
   travelers: number;
+  budget: number;
   total_cost: number | null;
   overall_score: number | null;
   created_at: string;
+}
+
+/** `GET /api/trips` — the signed-in user's saved trips (newest first). */
+export async function listTrips(
+  client: AxiosInstance = apiClient,
+): Promise<SavedTrip[]> {
+  try {
+    const { data } = await client.get<SavedTrip[]>("/api/trips");
+    return data;
+  } catch (err) {
+    throw toApiError(err);
+  }
+}
+
+/** `PATCH /api/trips/{id}` — update a saved trip's label/notes. */
+export async function updateTrip(
+  tripId: number,
+  payload: { title?: string | null; notes?: string | null },
+  client: AxiosInstance = apiClient,
+): Promise<SavedTrip> {
+  try {
+    const { data } = await client.patch<SavedTrip>(
+      `/api/trips/${tripId}`,
+      payload,
+    );
+    return data;
+  } catch (err) {
+    throw toApiError(err);
+  }
+}
+
+/** `DELETE /api/trips/{id}` — delete a saved trip. */
+export async function deleteTrip(
+  tripId: number,
+  client: AxiosInstance = apiClient,
+): Promise<void> {
+  try {
+    await client.delete(`/api/trips/${tripId}`);
+  } catch (err) {
+    throw toApiError(err);
+  }
 }
 
 /**
