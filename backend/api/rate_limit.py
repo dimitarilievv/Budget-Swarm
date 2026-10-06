@@ -90,6 +90,20 @@ def get_rate_limiter() -> SlidingWindowRateLimiter:
     )
 
 
+@lru_cache
+def get_auth_rate_limiter() -> SlidingWindowRateLimiter:
+    """A separate, stricter limiter for the credential endpoints (login/register).
+
+    Kept distinct from the generate-trip limiter so brute-force protection on
+    ``/api/auth/*`` can be tuned independently (``AUTH_RATE_LIMIT_*``). Cached, and
+    overridable in tests with a small window.
+    """
+    settings = get_settings()
+    return SlidingWindowRateLimiter(
+        settings.auth_rate_limit_requests, settings.auth_rate_limit_window_seconds
+    )
+
+
 def enforce_rate_limit(
     request: Request,
     limiter: SlidingWindowRateLimiter = Depends(get_rate_limiter),
@@ -102,3 +116,18 @@ def enforce_rate_limit(
     if not get_settings().rate_limit_enabled:
         return
     limiter.check(client_key(request))
+
+
+def enforce_auth_rate_limit(
+    request: Request,
+    limiter: SlidingWindowRateLimiter = Depends(get_auth_rate_limiter),
+) -> None:
+    """FastAPI dependency: enforce the stricter per-client limit on auth endpoints.
+
+    Keys the limit under an ``auth:`` namespace so credential attempts are counted
+    separately from generate-trip traffic from the same IP. Governed by the same
+    ``RATE_LIMIT_ENABLED`` master switch.
+    """
+    if not get_settings().rate_limit_enabled:
+        return
+    limiter.check(f"auth:{client_key(request)}")

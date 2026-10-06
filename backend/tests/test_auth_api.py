@@ -1,0 +1,311 @@
+"""Integration tests for the auth endpoints + trip authorization (auth).
+
+Run end to end through the real application against a migrated database (skipped when
+none is reachable). Covers the task's matrix: register (success / duplicate / invalid),
+login (success / failure, generic message), /me, token refresh + rotation, logout, and
+the authorization rules on trips — no token → 401, and user A cannot read/update/delete
+user B's trips (404, never 403).
+"""
+
+from __future__ import annotations
+
+import uuid
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+
+_TRIP_REQUEST = {
+    "budget": 1000.0,
+    "duration_days": 5,
+    "travelers": 2,
+    "transport_mode": "car",
+    "preferences": {"culture": 0.9, "food": 0.8},
+    "origin_label": "Skopje",
+    "vehicle_consumption": 6.5,
+}
+
+
+def _db_reachable(url: str) -> bool:
+    from sqlalchemy import create_engine, text
+
+    try:
+        eng = create_engine(url, connect_args={"connect_timeout": 2})
+        with eng.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return True
+    except Exception:
+        return False
+
+
+@pytest.fixture(scope="module")
+def db_engine():
+    from alembic import command
+    from alembic.config import Config
+    from config import get_settings
+    from sqlalchemy import create_engine
+
+    url = get_settings().database_url
+    if not _db_reachable(url):
+        pytest.skip("no reachable database — integration test skipped")
+
+    cfg = Config(str(BACKEND_DIR / "alembic.ini"))
+    cfg.set_main_option("script_location", str(BACKEND_DIR / "alembic"))
+    command.downgrade(cfg, "base")
+    command.upgrade(cfg, "head")
+    eng = create_engine(url)
+    try:
+        yield eng
+    finally:
+        eng.dispose()
+        command.downgrade(cfg, "base")
+
+
+@pytest.fixture
+def client(db_engine):
+    """TestClient with the DB-backed trip persister + store wired to the test engine."""
+    from api.routes import get_trip_persister, get_trip_store
+    from main import app
+    from services.trip_persistence import DbTripPersister, DbTripStore
+    from sqlalchemy.orm import sessionmaker
+
+    factory = sessionmaker(bind=db_engine, expire_on_commit=False)
+    app.dependency_overrides[get_trip_persister] = lambda: DbTripPersister(factory)
+    app.dependency_overrides[get_trip_store] = lambda: DbTripStore(factory)
+    try:
+        yield TestClient(app)
+    finally:
+        app.dependency_overrides.pop(get_trip_persister, None)
+        app.dependency_overrides.pop(get_trip_store, None)
+
+
+def _register(client: TestClient, password: str = "password123") -> dict:
+    """Register a unique user; return {'email','password','headers','user_id','tokens'}."""
+    email = f"user-{uuid.uuid4().hex[:12]}@example.com"
+    resp = client.post("/api/auth/register", json={"email": email, "password": password})
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    return {
+        "email": email,
+        "password": password,
+        "tokens": body["tokens"],
+        "user_id": body["user"]["id"],
+        "headers": {"Authorization": f"Bearer {body['tokens']['access_token']}"},
+    }
+
+
+def _create_trip(client: TestClient, headers: dict) -> int:
+    resp = client.post("/api/generate-trip", json=_TRIP_REQUEST, headers=headers)
+    assert resp.status_code == 200, resp.text
+    trip_id = resp.json()["meta"]["trip_id"]
+    assert isinstance(trip_id, int) and trip_id > 0
+    return trip_id
+
+
+# --- register ----------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_register_success_returns_user_without_hash_and_tokens(client):
+    user = _register(client)
+    me_resp = client.get("/api/auth/me", headers=user["headers"])
+    assert me_resp.status_code == 200
+    body = me_resp.json()
+    assert body["email"] == user["email"]
+    assert "password_hash" not in body and "password" not in body
+    assert user["tokens"]["access_token"] and user["tokens"]["refresh_token"]
+    assert user["tokens"]["token_type"] == "bearer"
+
+
+@pytest.mark.integration
+def test_register_duplicate_email_returns_409(client):
+    user = _register(client)
+    dup = client.post(
+        "/api/auth/register", json={"email": user["email"], "password": "password123"}
+    )
+    assert dup.status_code == 409
+    assert dup.json()["error"]["code"] == "CONFLICT"
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"email": "not-an-email", "password": "password123"},
+        {"email": "user@example.com", "password": "short"},
+        {"email": "user@example.com"},
+    ],
+)
+def test_register_invalid_input_returns_422(client, payload):
+    resp = client.post("/api/auth/register", json=payload)
+    assert resp.status_code == 422
+    assert resp.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+# --- login -------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_login_success_returns_tokens(client):
+    user = _register(client)
+    resp = client.post(
+        "/api/auth/login", json={"email": user["email"], "password": user["password"]}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["tokens"]["access_token"]
+
+
+@pytest.mark.integration
+def test_login_wrong_password_is_generic_401(client):
+    user = _register(client)
+    resp = client.post("/api/auth/login", json={"email": user["email"], "password": "wrongpass1"})
+    assert resp.status_code == 401
+    assert resp.json()["error"]["message"] == "Invalid email or password"
+
+
+@pytest.mark.integration
+def test_login_unknown_email_is_same_generic_401(client):
+    resp = client.post(
+        "/api/auth/login", json={"email": "nobody@example.com", "password": "whatever12"}
+    )
+    assert resp.status_code == 401
+    assert resp.json()["error"]["message"] == "Invalid email or password"
+
+
+# --- /me and token handling --------------------------------------------------
+
+
+@pytest.mark.integration
+def test_me_requires_token(client):
+    assert client.get("/api/auth/me").status_code == 401
+
+
+@pytest.mark.integration
+def test_me_rejects_garbage_token(client):
+    resp = client.get("/api/auth/me", headers={"Authorization": "Bearer not.a.jwt"})
+    assert resp.status_code == 401
+    assert resp.json()["error"]["code"] == "UNAUTHORIZED"
+
+
+@pytest.mark.integration
+def test_refresh_rotates_and_old_token_is_revoked(client):
+    user = _register(client)
+    old_refresh = user["tokens"]["refresh_token"]
+
+    first = client.post("/api/auth/refresh", json={"refresh_token": old_refresh})
+    assert first.status_code == 200
+    rotated = first.json()
+    assert rotated["refresh_token"] != old_refresh  # rotated
+    assert rotated["access_token"]
+
+    # The old refresh token is now revoked and can't be reused.
+    reuse = client.post("/api/auth/refresh", json={"refresh_token": old_refresh})
+    assert reuse.status_code == 401
+    # The new one works and lets us authenticate.
+    new_access = {"Authorization": f"Bearer {rotated['access_token']}"}
+    assert client.get("/api/auth/me", headers=new_access).status_code == 200
+
+
+@pytest.mark.integration
+def test_logout_revokes_refresh_token(client):
+    user = _register(client)
+    refresh = user["tokens"]["refresh_token"]
+    assert client.post("/api/auth/logout", json={"refresh_token": refresh}).status_code == 204
+    # After logout the refresh token is dead.
+    assert client.post("/api/auth/refresh", json={"refresh_token": refresh}).status_code == 401
+    # Logout is idempotent — a second call still succeeds.
+    assert client.post("/api/auth/logout", json={"refresh_token": refresh}).status_code == 204
+
+
+# --- trip authorization ------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_trip_endpoints_require_token(client):
+    assert client.get("/api/trips").status_code == 401
+    assert client.get("/api/trips/1").status_code == 401
+    assert client.patch("/api/trips/1", json={"title": "x"}).status_code == 401
+    assert client.delete("/api/trips/1").status_code == 401
+
+
+@pytest.mark.integration
+def test_generate_trip_is_public_but_anonymous_is_not_saved(client):
+    resp = client.post("/api/generate-trip", json=_TRIP_REQUEST)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["meta"]["trip_id"] is None
+    # Booking links are withheld from an anonymous caller.
+    accom = body["chosen_plan"].get("accommodation")
+    if accom is not None:
+        assert accom.get("listing_url") is None
+
+
+@pytest.mark.integration
+def test_created_trip_is_owned_by_authenticated_user(client):
+    user = _register(client)
+    trip_id = _create_trip(client, user["headers"])
+    # It appears in the owner's list and is fetchable by the owner.
+    listed = client.get("/api/trips", headers=user["headers"]).json()
+    assert any(t["id"] == trip_id for t in listed)
+    assert client.get(f"/api/trips/{trip_id}", headers=user["headers"]).status_code == 200
+
+
+@pytest.mark.integration
+def test_body_cannot_set_ownership(client):
+    """Ownership comes from the token only — a user_id in the body is rejected, not honored."""
+    user = _register(client)
+    resp = client.post(
+        "/api/generate-trip",
+        json={**_TRIP_REQUEST, "user_id": 999999},
+        headers=user["headers"],
+    )
+    assert resp.status_code == 422  # extra field forbidden; body can never influence owner
+
+
+@pytest.mark.integration
+def test_user_a_cannot_access_user_b_trips(client):
+    alice = _register(client)
+    bob = _register(client)
+    bob_trip = _create_trip(client, bob["headers"])
+
+    # Alice sees none of Bob's trips, and every by-id access is a 404 (not 403).
+    assert client.get("/api/trips", headers=alice["headers"]).json() == []
+    assert client.get(f"/api/trips/{bob_trip}", headers=alice["headers"]).status_code == 404
+    assert (
+        client.patch(
+            f"/api/trips/{bob_trip}", json={"title": "hijack"}, headers=alice["headers"]
+        ).status_code
+        == 404
+    )
+    assert client.delete(f"/api/trips/{bob_trip}", headers=alice["headers"]).status_code == 404
+
+    # Bob's trip is untouched and still his.
+    assert client.get(f"/api/trips/{bob_trip}", headers=bob["headers"]).status_code == 200
+
+
+@pytest.mark.integration
+def test_owner_can_update_and_delete_their_trip(client):
+    user = _register(client)
+    trip_id = _create_trip(client, user["headers"])
+
+    patched = client.patch(
+        f"/api/trips/{trip_id}",
+        json={"title": "Summer break", "notes": "with the family"},
+        headers=user["headers"],
+    )
+    assert patched.status_code == 200
+    assert patched.json()["title"] == "Summer break"
+    assert patched.json()["notes"] == "with the family"
+
+    assert client.delete(f"/api/trips/{trip_id}", headers=user["headers"]).status_code == 204
+    assert client.get(f"/api/trips/{trip_id}", headers=user["headers"]).status_code == 404
+
+
+@pytest.mark.integration
+def test_patch_forbids_ownership_fields(client):
+    user = _register(client)
+    trip_id = _create_trip(client, user["headers"])
+    resp = client.patch(f"/api/trips/{trip_id}", json={"user_id": 1}, headers=user["headers"])
+    assert resp.status_code == 422

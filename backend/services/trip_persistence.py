@@ -53,9 +53,17 @@ SessionFactory = Callable[[], Session]
 
 @runtime_checkable
 class TripPersister(Protocol):
-    """Write side of trip history: persist a generated plan, return its id (or ``None``)."""
+    """Write side of trip history: persist a generated plan, return its id (or ``None``).
 
-    def persist(self, request: TripRequest, response: TripResponse) -> int | None: ...
+    ``user_id`` is the owning account. It is supplied by the route from the authenticated
+    user (never from the request body); an anonymous generation passes ``None`` and the
+    DB-backed persister then declines to store (see :meth:`DbTripPersister.persist`), so a
+    trip is saved only when a user owns it.
+    """
+
+    def persist(
+        self, request: TripRequest, response: TripResponse, *, user_id: int | None = None
+    ) -> int | None: ...
 
 
 class NullTripPersister:
@@ -65,17 +73,29 @@ class NullTripPersister:
     DB-backed :class:`DbTripPersister` is injected wherever a database is available.
     """
 
-    def persist(self, request: TripRequest, response: TripResponse) -> int | None:
+    def persist(
+        self, request: TripRequest, response: TripResponse, *, user_id: int | None = None
+    ) -> int | None:
         return None
 
 
 class DbTripPersister:
-    """Writes the trip header + ordered activities and returns the new ``trip_id``."""
+    """Writes the trip header + ordered activities and returns the new ``trip_id``.
+
+    Only authenticated generations are stored: with ``user_id is None`` (an anonymous
+    caller) nothing is written and ``None`` is returned, so saving a trip to history
+    requires being logged in.
+    """
 
     def __init__(self, session_factory: SessionFactory) -> None:
         self._session_factory = session_factory
 
-    def persist(self, request: TripRequest, response: TripResponse) -> int:
+    def persist(
+        self, request: TripRequest, response: TripResponse, *, user_id: int | None = None
+    ) -> int | None:
+        if user_id is None:
+            # Anonymous generation is not persisted — a saved trip must have an owner.
+            return None
         plan = response.chosen_plan
         with self._session_factory() as session:
             destination = _resolve_destination(session, plan.destination)
@@ -83,7 +103,7 @@ class DbTripPersister:
             # "not yet stored"), so the returned plan matches the persisted row.
             plan.destination.id = destination.id
             trip = Trip(
-                user_id=None,  # anonymous (ADR-012)
+                user_id=user_id,  # owner from the authenticated token, never the body
                 budget=request.budget,
                 duration_days=request.duration_days,
                 travelers=request.travelers,
@@ -126,16 +146,24 @@ class DbTripPersister:
 
 
 class DbTripStore:
-    """Reconstructs a stored plan's ``chosen_plan`` from ``trips`` + ``trip_activities``."""
+    """Reconstructs a stored plan's ``chosen_plan`` from ``trips`` + ``trip_activities``.
+
+    Reads are scoped to ``user_id``: a trip belonging to another user is reported the same
+    as a missing one (``None`` → the route's 404), so existence is never leaked.
+    """
 
     def __init__(self, session_factory: SessionFactory) -> None:
         self._session_factory = session_factory
 
-    def get_chosen_plan(self, trip_id: int) -> ChosenPlan | None:
+    def get_chosen_plan(self, trip_id: int, user_id: int) -> ChosenPlan | None:
         with self._session_factory() as session:
             trip = session.get(Trip, trip_id)
-            if trip is None:
-                logger.info("trip_store: no stored trip with id=%s", trip_id)
+            if trip is None or trip.user_id != user_id:
+                logger.info(
+                    "trip_store: no trip id=%s for user=%s (missing or not owned)",
+                    trip_id,
+                    user_id,
+                )
                 return None
             destination = (
                 session.get(Destination, trip.chosen_destination)

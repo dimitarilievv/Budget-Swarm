@@ -20,7 +20,16 @@ if str(_REPO_ROOT) not in sys.path:
 
 os.environ.setdefault("DATABASE_URL", "postgresql+psycopg://test:test@localhost:5432/test")
 
+# JWT signing secret is required at startup (config.py); a fixed non-secret value keeps
+# the suite self-contained without a real .env. Tokens signed here never leave the tests.
+os.environ.setdefault("JWT_SECRET", "test-jwt-secret-not-for-production")
+
 # Keep the per-client rate limit effectively unlimited for the general suite (many
 # tests POST /api/generate-trip from the same TestClient host in quick succession);
 # the dedicated rate-limit test overrides the limiter to a small window on purpose.
 os.environ.setdefault("RATE_LIMIT_REQUESTS", "1000000")
+
+# Likewise relax the stricter credential-endpoint limiter for the general suite (many
+# auth-integration tests register/login from the same TestClient host); the dedicated
+# auth rate-limit test overrides the limiter to a small window on purpose.
+os.environ.setdefault("AUTH_RATE_LIMIT_REQUESTS", "1000000")

@@ -36,18 +36,24 @@ _SAMPLE_INPUT = EngineInput(
 )
 
 
+# The user the stub's seeded trip belongs to (ownership is enforced even in the stub,
+# so the no-DB unit tests can exercise the "not my trip → None" path).
+SEEDED_TRIP_USER_ID = 1
+
+
 @runtime_checkable
 class TripStore(Protocol):
-    """Read side of trip history: fetch a stored plan by id, or ``None``."""
+    """Read side of trip history: fetch a user's stored plan by id, or ``None``."""
 
-    def get_chosen_plan(self, trip_id: int) -> ChosenPlan | None: ...
+    def get_chosen_plan(self, trip_id: int, user_id: int) -> ChosenPlan | None: ...
 
 
 class StubTripStore:
     """In-memory stand-in for trip persistence (BS-081).
 
-    Seeds a single sample plan (id :data:`SEEDED_TRIP_ID`) built from the engine
-    stub, so a "found" lookup succeeds; every other id is unknown → ``None``.
+    Seeds a single sample plan (id :data:`SEEDED_TRIP_ID`) owned by
+    :data:`SEEDED_TRIP_USER_ID`, so a "found" lookup by its owner succeeds; any other id
+    — or the seeded id requested by a different user — is unknown/not-owned → ``None``.
     """
 
     def __init__(self) -> None:
@@ -55,9 +61,11 @@ class StubTripStore:
         self._plans: dict[int, ChosenPlan] = {
             SEEDED_TRIP_ID: ChosenPlan.model_validate(sample["chosen_plan"])
         }
+        self._owners: dict[int, int] = {SEEDED_TRIP_ID: SEEDED_TRIP_USER_ID}
 
-    def get_chosen_plan(self, trip_id: int) -> ChosenPlan | None:
-        plan = self._plans.get(trip_id)
-        if plan is None:
-            logger.info("trip_store: no stored trip with id=%s", trip_id)
-        return plan
+    def get_chosen_plan(self, trip_id: int, user_id: int) -> ChosenPlan | None:
+        if self._owners.get(trip_id) != user_id:
+            # Missing, or owned by someone else — indistinguishable to the caller.
+            logger.info("trip_store: no trip id=%s for user=%s", trip_id, user_id)
+            return None
+        return self._plans.get(trip_id)

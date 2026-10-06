@@ -6,3 +6,5 @@ alembic
 psycopg[binary]
 httpx
 ortools
+bcrypt
+pyjwt

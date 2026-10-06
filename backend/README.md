@@ -5,6 +5,30 @@ the AI engine. NO scoring / optimization / agent logic lives here.
 Key files: main.py, api/routes.py, services/coordinator_service.py,
 schemas/trip_schema.py, db/models.py.
 
+## Authentication & authorization (auth)
+
+JWT auth with rotating refresh tokens. Users register/sign in; each user can save,
+view, edit and delete only their own trips.
+
+- **Endpoints** (`api/auth.py`, under `/api/auth`): `register`, `login`, `refresh`,
+  `logout`, `me`. See `docs/api.md` for the full contract.
+- **Primitives** (`services/auth.py`): bcrypt (cost 12) password hashing; HS256 JWT
+  access tokens; opaque refresh tokens stored **hashed** (`refresh_tokens` table) and
+  **rotated** on each refresh.
+- **Dependencies** (`api/deps.py`): `get_current_user` (required → 401) and
+  `get_optional_user` (anonymous allowed) read `Authorization: Bearer <token>`.
+- **Authorization**: `generate-trip` is public but only saves (and reveals booking
+  links) for a signed-in user; `GET /api/trips`, `GET/PATCH/DELETE /api/trips/{id}` are
+  owner-scoped and return **404** (not 403) for another user's trip. Ownership is taken
+  from the token, never the request body.
+- **Required env**: `JWT_SECRET` (fail-fast at startup). Optional: `JWT_ALGORITHM`,
+  `ACCESS_TOKEN_EXPIRE_MINUTES`, `REFRESH_TOKEN_EXPIRE_DAYS`, `AUTH_RATE_LIMIT_*` — see
+  `../.env.example`.
+
+`trips.user_id` stays **nullable** (ADR-012): the app now stamps every API-created trip
+with its owner and scopes all access by it, so no new unowned rows are created, while any
+pre-existing anonymous rows remain valid and simply unreachable through the API.
+
 ## Database & migrations (BS-018)
 
 - Connectivity: `db/session.py` builds the SQLAlchemy engine/`SessionLocal`

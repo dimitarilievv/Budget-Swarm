@@ -28,6 +28,7 @@ from db.models import (
     DestinationFeature,
     FuelPrice,
     RawAccommodationListing,
+    RefreshToken,
     TransportOption,
     Trip,
     TripActivity,
@@ -166,12 +167,52 @@ class UserRepository(Repository[User]):
         return self.session.scalars(select(User).where(User.email == email)).first()
 
 
+class RefreshTokenRepository(Repository[RefreshToken]):
+    model = RefreshToken
+
+    def get_active_by_hash(self, token_hash: str, *, now: datetime) -> RefreshToken | None:
+        """Return the matching token row only if it is neither revoked nor expired."""
+        stmt = select(RefreshToken).where(
+            RefreshToken.token_hash == token_hash,
+            RefreshToken.revoked_at.is_(None),
+            RefreshToken.expires_at > now,
+        )
+        return self.session.scalars(stmt).first()
+
+    def revoke(self, token: RefreshToken, *, now: datetime) -> None:
+        """Mark a token revoked (idempotent) and flush."""
+        if token.revoked_at is None:
+            token.revoked_at = now
+        self.session.flush()
+
+    def revoke_all_for_user(self, user_id: int, *, now: datetime) -> int:
+        """Revoke every still-active token for a user; return how many were revoked."""
+        stmt = select(RefreshToken).where(
+            RefreshToken.user_id == user_id, RefreshToken.revoked_at.is_(None)
+        )
+        tokens = self.session.scalars(stmt).all()
+        for token in tokens:
+            token.revoked_at = now
+        self.session.flush()
+        return len(tokens)
+
+
 class TripRepository(Repository[Trip]):
     model = Trip
 
     def list_for_user(self, user_id: int) -> list[Trip]:
         stmt = select(Trip).where(Trip.user_id == user_id).order_by(Trip.created_at.desc())
         return list(self.session.scalars(stmt).all())
+
+    def get_for_user(self, trip_id: int, user_id: int) -> Trip | None:
+        """Return the trip only if it exists *and* belongs to ``user_id``.
+
+        Scoping the lookup by both keys is what lets the route answer **404** for a
+        trip owned by someone else — identical to an unknown id — so ownership of a
+        resource is never leaked (no 403 that would confirm it exists).
+        """
+        stmt = select(Trip).where(Trip.id == trip_id, Trip.user_id == user_id)
+        return self.session.scalars(stmt).first()
 
 
 class TripActivityRepository(Repository[TripActivity]):
