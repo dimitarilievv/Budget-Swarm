@@ -200,15 +200,15 @@ describe("ResultsPage (redesign)", () => {
     expect(screen.queryByText(/free sights/i)).not.toBeInTheDocument();
   });
 
-  it("renders the flights card with both legs and a reserve link", () => {
+  it("renders the flights card with both legs and a reserve button", () => {
     render(<ResultsPage response={fixture()} request={request()} />);
     expect(screen.getByText("14:20")).toBeInTheDocument();
     expect(screen.getByText("18:40")).toBeInTheDocument();
-    const reserve = screen.getByRole("link", { name: /reserve flight/i });
-    expect(reserve).toHaveAttribute(
-      "href",
-      "https://www.aviasales.com/search/SKP2210SAW26102",
-    );
+    // Reserve is a gated action (sign-in required), so it's a button, not a raw link —
+    // the booking URL is never exposed in the DOM for an anonymous viewer.
+    expect(
+      screen.getByRole("button", { name: /reserve flight/i }),
+    ).toBeInTheDocument();
   });
 
   it("renders the stay with amenities (+N), nights total, reserve + map buttons", () => {
@@ -218,9 +218,10 @@ describe("ResultsPage (redesign)", () => {
     expect(screen.getByText("+1")).toBeInTheDocument(); // 5 amenities → 4 shown + "+1"
     expect(screen.getByText(/× 4 nights/i)).toBeInTheDocument(); // 188 / 47 = 4
     expect(screen.getByText(/★ 4.8/)).toBeInTheDocument();
-    // The booking button is now "Reserve accommodation" (still the real Airbnb listing link).
-    const link = screen.getByRole("link", { name: /reserve accommodation/i });
-    expect(link).toHaveAttribute("href", "https://www.airbnb.com/rooms/12345");
+    // The booking action is a sign-in-gated button (not a raw link).
+    expect(
+      screen.getByRole("button", { name: /reserve accommodation/i }),
+    ).toBeInTheDocument();
     // The stay has coordinates, so it offers a "Show on map" button.
     expect(
       screen.getByRole("button", { name: /show on map/i }),
@@ -262,7 +263,7 @@ describe("ResultsPage (redesign)", () => {
     fireEvent.click(screen.getByRole("button", { name: /fly home/i }));
     expect(screen.getByText(/return flights total/i)).toBeInTheDocument();
     expect(
-      screen.getByRole("link", { name: /reserve flights/i }),
+      screen.getByRole("button", { name: /reserve flights/i }),
     ).toBeInTheDocument();
   });
 

@@ -46,6 +46,8 @@ export interface AuthPageProps {
   onForgotPassword?: () => void;
   /** Called when the user switches tabs, so the parent can update the URL. */
   onModeChange?: (mode: AuthMode) => void;
+  /** Optional success/info banner shown above the form (e.g. "Account created — log in"). */
+  notice?: string;
   homeHref?: string;
 }
 
@@ -271,6 +273,7 @@ export default function AuthPage({
   onRegister,
   onForgotPassword,
   onModeChange,
+  notice,
   homeHref = "/",
 }: AuthPageProps) {
   const [mode, setMode] = useState<AuthMode>(initialMode);
@@ -483,6 +486,21 @@ export default function AuthPage({
               );
             })}
           </div>
+
+          {notice && !errors.form && (
+            <div
+              role="status"
+              style={{
+                padding: "10px 14px",
+                borderRadius: 12,
+                background: "#e7f6ee",
+                color: "#1f7a52",
+                fontSize: 13,
+              }}
+            >
+              {notice}
+            </div>
+          )}
 
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             {isReg && (

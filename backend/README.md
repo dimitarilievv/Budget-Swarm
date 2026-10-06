@@ -17,10 +17,11 @@ view, edit and delete only their own trips.
   **rotated** on each refresh.
 - **Dependencies** (`api/deps.py`): `get_current_user` (required → 401) and
   `get_optional_user` (anonymous allowed) read `Authorization: Bearer <token>`.
-- **Authorization**: `generate-trip` is public but only saves (and reveals booking
-  links) for a signed-in user; `GET /api/trips`, `GET/PATCH/DELETE /api/trips/{id}` are
-  owner-scoped and return **404** (not 403) for another user's trip. Ownership is taken
-  from the token, never the request body.
+- **Authorization**: `generate-trip` is public and stateless (full plan, not saved);
+  signed-in users save a plan explicitly via `POST /api/trips`. `GET /api/trips` and
+  `GET/PATCH/DELETE /api/trips/{id}` are owner-scoped and return **404** (not 403) for
+  another user's trip. Ownership is taken from the token, never the request body. Booking
+  and saving are gated in the UI (signed-out users are sent to login).
 - **Required env**: `JWT_SECRET` (fail-fast at startup). Optional: `JWT_ALGORITHM`,
   `ACCESS_TOKEN_EXPIRE_MINUTES`, `REFRESH_TOKEN_EXPIRE_DAYS`, `AUTH_RATE_LIMIT_*` — see
   `../.env.example`.

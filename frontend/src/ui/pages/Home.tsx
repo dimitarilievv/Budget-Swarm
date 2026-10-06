@@ -10,6 +10,8 @@
  */
 import { useEffect, useRef, useState } from "react";
 
+import { useOptionalAuth } from "@/contexts/AuthContext";
+import { navigate } from "@/router";
 import TripInputForm from "@/ui/components/forms/TripInputForm";
 import { useTripResult } from "@/hooks/useTripResult";
 
@@ -285,6 +287,8 @@ function Header() {
     fontWeight: 600,
     boxShadow: "0 1px 2px rgba(0,0,0,.06)",
   };
+  const auth = useOptionalAuth();
+  const authed = auth?.status === "authenticated";
   return (
     <header
       style={{
@@ -350,22 +354,55 @@ function Header() {
             );
           })}
         </nav>
-        <button
-          type="button"
-          style={{
-            all: "unset",
-            cursor: "pointer",
-            padding: "7px 14px",
-            borderRadius: 99,
-            border: "1px solid #d7e2df",
-            fontSize: 13,
-            background: "#fff",
-            color: C.ink,
-            whiteSpace: "nowrap",
-          }}
-        >
-          Profile
-        </button>
+        {authed ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span
+              style={{ fontSize: 13, color: C.muted, whiteSpace: "nowrap" }}
+              className="hidden sm:inline"
+            >
+              {auth?.user?.name || auth?.user?.email}
+            </span>
+            <button
+              type="button"
+              onClick={() => auth?.logout()}
+              style={{
+                all: "unset",
+                cursor: "pointer",
+                padding: "7px 14px",
+                borderRadius: 99,
+                border: "1px solid #d7e2df",
+                fontSize: 13,
+                background: "#fff",
+                color: C.ink,
+                whiteSpace: "nowrap",
+              }}
+            >
+              Log out
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() =>
+              navigate(
+                `/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`,
+              )
+            }
+            style={{
+              all: "unset",
+              cursor: "pointer",
+              padding: "7px 16px",
+              borderRadius: 99,
+              fontSize: 13,
+              fontWeight: 700,
+              background: C.teal,
+              color: "#fff",
+              whiteSpace: "nowrap",
+            }}
+          >
+            Log in
+          </button>
+        )}
       </div>
     </header>
   );

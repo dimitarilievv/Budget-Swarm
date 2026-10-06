@@ -97,9 +97,16 @@ def _register(client: TestClient, password: str = "password123") -> dict:
 
 
 def _create_trip(client: TestClient, headers: dict) -> int:
-    resp = client.post("/api/generate-trip", json=_TRIP_REQUEST, headers=headers)
-    assert resp.status_code == 200, resp.text
-    trip_id = resp.json()["meta"]["trip_id"]
+    """Generate a plan (public), then save it to the user's history via POST /api/trips."""
+    gen = client.post("/api/generate-trip", json=_TRIP_REQUEST)
+    assert gen.status_code == 200, gen.text
+    saved = client.post(
+        "/api/trips",
+        json={"request": _TRIP_REQUEST, "response": gen.json()},
+        headers=headers,
+    )
+    assert saved.status_code == 201, saved.text
+    trip_id = saved.json()["id"]
     assert isinstance(trip_id, int) and trip_id > 0
     return trip_id
 
@@ -231,15 +238,18 @@ def test_trip_endpoints_require_token(client):
 
 
 @pytest.mark.integration
-def test_generate_trip_is_public_but_anonymous_is_not_saved(client):
+def test_save_requires_token(client):
+    gen = client.post("/api/generate-trip", json=_TRIP_REQUEST).json()
+    resp = client.post("/api/trips", json={"request": _TRIP_REQUEST, "response": gen})
+    assert resp.status_code == 401
+
+
+@pytest.mark.integration
+def test_generate_trip_is_public_and_not_saved(client):
+    """Generating a plan is public and stateless — it is never persisted on its own."""
     resp = client.post("/api/generate-trip", json=_TRIP_REQUEST)
     assert resp.status_code == 200
-    body = resp.json()
-    assert body["meta"]["trip_id"] is None
-    # Booking links are withheld from an anonymous caller.
-    accom = body["chosen_plan"].get("accommodation")
-    if accom is not None:
-        assert accom.get("listing_url") is None
+    assert resp.json()["meta"]["trip_id"] is None
 
 
 @pytest.mark.integration
@@ -253,15 +263,22 @@ def test_created_trip_is_owned_by_authenticated_user(client):
 
 
 @pytest.mark.integration
-def test_body_cannot_set_ownership(client):
-    """Ownership comes from the token only — a user_id in the body is rejected, not honored."""
-    user = _register(client)
-    resp = client.post(
-        "/api/generate-trip",
-        json={**_TRIP_REQUEST, "user_id": 999999},
-        headers=user["headers"],
+def test_save_ignores_user_id_in_body(client):
+    """Ownership comes from the token only — a user_id in the save body is ignored."""
+    alice = _register(client)
+    bob = _register(client)
+    gen = client.post("/api/generate-trip", json=_TRIP_REQUEST).json()
+    # Alice saves but tries to assign the trip to Bob via the body.
+    saved = client.post(
+        "/api/trips",
+        json={"request": _TRIP_REQUEST, "response": gen, "user_id": bob["user_id"]},
+        headers=alice["headers"],
     )
-    assert resp.status_code == 422  # extra field forbidden; body can never influence owner
+    assert saved.status_code == 201
+    trip_id = saved.json()["id"]
+    # It belongs to Alice (the token), not Bob.
+    assert client.get(f"/api/trips/{trip_id}", headers=alice["headers"]).status_code == 200
+    assert client.get(f"/api/trips/{trip_id}", headers=bob["headers"]).status_code == 404
 
 
 @pytest.mark.integration

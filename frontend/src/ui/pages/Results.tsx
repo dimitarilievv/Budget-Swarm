@@ -13,7 +13,10 @@
  */
 import { useEffect, useMemo, useState } from "react";
 
+import { saveTrip } from "@/api/endpoints";
 import { fetchDestinationSummary } from "@/api/wikipedia";
+import { useOptionalAuth } from "@/contexts/AuthContext";
+import { navigate } from "@/router";
 import type {
   ChosenPlan,
   ItineraryActivity,
@@ -335,6 +338,56 @@ function btnStyle(
   };
 }
 
+/** Send the viewer to the login screen, returning here after they sign in. */
+function goToLogin(): void {
+  const next = window.location.pathname + window.location.search;
+  navigate(`/login?next=${encodeURIComponent(next)}`);
+}
+
+/**
+ * A "Reserve …" action that is always shown. When the viewer isn't signed in, clicking it
+ * sends them to login (and back); when signed in, it opens the provider's booking link.
+ * Booking/saving behind sign-in is the product rule (see api.md), surfaced here as a gate
+ * on the action rather than a hidden button.
+ */
+function ReserveButton({
+  url,
+  label,
+  style,
+}: {
+  url?: string | null;
+  label: string;
+  style: React.CSSProperties;
+}) {
+  const auth = useOptionalAuth();
+  const authed = auth?.status === "authenticated";
+  const unavailable = authed && !url; // signed in but this option has no booking link
+  const handle = () => {
+    if (!authed) {
+      goToLogin();
+      return;
+    }
+    if (url) window.open(url, "_blank", "noopener,noreferrer");
+  };
+  return (
+    <button
+      type="button"
+      onClick={handle}
+      disabled={unavailable}
+      title={
+        unavailable ? "No booking link available for this option" : undefined
+      }
+      style={{
+        ...style,
+        opacity: unavailable ? 0.5 : 1,
+        cursor: unavailable ? "not-allowed" : "pointer",
+      }}
+    >
+      {label} <IconArrowRight className="h-4 w-4" />
+    </button>
+  );
+}
+
 /* -------------------------------------------------------------------------- */
 /* Page                                                                         */
 /* -------------------------------------------------------------------------- */
@@ -362,6 +415,35 @@ export default function ResultsPage({
   const budget = request?.budget ?? null;
   const left = budget != null ? Math.round(budget - total) : null;
   const score = scoreOutOf100(plan.overall_score);
+
+  // "Save trip": requires sign-in (redirect to login, returning here), then persists the
+  // exact plan the user is viewing to their history.
+  const auth = useOptionalAuth();
+  const [saveState, setSaveState] = useState<
+    "idle" | "saving" | "saved" | "error"
+  >("idle");
+  const handleSave = async () => {
+    if (auth?.status !== "authenticated") {
+      goToLogin();
+      return;
+    }
+    if (!request) return;
+    setSaveState("saving");
+    try {
+      await saveTrip({ request, response });
+      setSaveState("saved");
+    } catch {
+      setSaveState("error");
+    }
+  };
+  const saveLabel =
+    saveState === "saved"
+      ? "Saved ✓"
+      : saveState === "saving"
+        ? "Saving…"
+        : saveState === "error"
+          ? "Couldn't save — retry"
+          : "Save trip";
 
   const nextBest = useMemo(() => {
     const other = response.ranked_candidates.find(
@@ -591,7 +673,7 @@ export default function ResultsPage({
               ? `Not quite right? Compare it with ${nextBest} or start over.`
               : "Not quite right? Start over."}
           </span>
-          <div className="flex gap-2.5">
+          <div className="flex flex-wrap gap-2.5">
             {onCompare && (
               <button
                 type="button"
@@ -601,6 +683,17 @@ export default function ResultsPage({
                 Compare destinations
               </button>
             )}
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saveState === "saving" || saveState === "saved"}
+              style={{
+                ...btnStyle(C.teal),
+                opacity: saveState === "saving" ? 0.7 : 1,
+              }}
+            >
+              {saveLabel}
+            </button>
             <button
               type="button"
               onClick={onPlanAnother ?? onBack}
@@ -1066,16 +1159,11 @@ function TransportSummaryCard({
             <div style={{ fontSize: 20, fontWeight: 700 }}>{euro(cost)}</div>
             <div style={{ fontSize: 12, color: C.muted }}>total, return</div>
           </div>
-          {f.booking_url && (
-            <a
-              href={f.booking_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={btnStyle(C.teal)}
-            >
-              Reserve flight <IconArrowRight className="h-4 w-4" />
-            </a>
-          )}
+          <ReserveButton
+            url={f.booking_url}
+            label="Reserve flight"
+            style={btnStyle(C.teal)}
+          />
         </div>
       </div>
     );
@@ -1258,16 +1346,11 @@ function StayCard({
                 Show on map
               </button>
             )}
-            {a.listing_url && (
-              <a
-                href={a.listing_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={btnStyle(C.teal)}
-              >
-                Reserve accommodation <IconArrowRight className="h-4 w-4" />
-              </a>
-            )}
+            <ReserveButton
+              url={a.listing_url}
+              label="Reserve accommodation"
+              style={btnStyle(C.teal)}
+            />
           </div>
         </div>
       </div>
@@ -1705,16 +1788,11 @@ function FlightDetail({
       >
         <div style={{ fontSize: 13, color: C.muted }}>Return flights total</div>
         <div style={{ fontSize: 24, fontWeight: 800 }}>{euro(cost)}</div>
-        {f.booking_url && (
-          <a
-            href={f.booking_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{ ...btnStyle(C.teal), justifyContent: "center" }}
-          >
-            Reserve flights <IconArrowRight className="h-4 w-4" />
-          </a>
-        )}
+        <ReserveButton
+          url={f.booking_url}
+          label="Reserve flights"
+          style={{ ...btnStyle(C.teal), justifyContent: "center" }}
+        />
       </div>
     </div>
   );
