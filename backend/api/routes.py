@@ -305,12 +305,17 @@ def update_trip(
     updates = body.model_dump(exclude_unset=True)
     for field, value in updates.items():
         setattr(trip, field, value)
-    # A trip can only be locked as 'reserved' once both transport and stay are marked booked.
-    if trip.status == "reserved" and not (trip.transport_reserved and trip.stay_reserved):
-        raise ValidationError(
-            "Mark transport and stay as reserved before locking the trip.",
-            field="status",
-        )
+    # Lock as 'reserved' only once the bookable parts are marked: the stay always, and the
+    # flight when flying (car/bus/train have nothing to "book" on our side).
+    if trip.status == "reserved":
+        needs_transport = trip.transport_mode == "airplane"
+        if not trip.stay_reserved or (needs_transport and not trip.transport_reserved):
+            raise ValidationError(
+                "Mark your stay"
+                + (" and flight" if needs_transport else "")
+                + " as reserved before locking the trip.",
+                field="status",
+            )
     db.commit()
     db.refresh(trip)
     dest = (

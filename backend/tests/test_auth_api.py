@@ -404,6 +404,48 @@ def test_reservation_lock_flow(client):
 
 
 @pytest.mark.integration
+def test_car_trip_locks_with_stay_only(client):
+    """A car trip has no flight to book — marking the stay is enough to lock it."""
+    user = _register(client)
+    trip_id = _create_trip(client, user["headers"])  # _TRIP_REQUEST is car
+    client.patch(f"/api/trips/{trip_id}", json={"stay_reserved": True}, headers=user["headers"])
+    locked = client.patch(
+        f"/api/trips/{trip_id}", json={"status": "reserved"}, headers=user["headers"]
+    )
+    assert locked.status_code == 200
+    assert locked.json()["status"] == "reserved"
+
+
+@pytest.mark.integration
+def test_airplane_trip_requires_flight_to_lock(client):
+    """An airplane trip needs both the flight and the stay marked before it locks."""
+    air_request = {**_TRIP_REQUEST, "transport_mode": "airplane"}
+    user = _register(client)
+    gen = client.post("/api/generate-trip", json=air_request).json()
+    trip_id = client.post(
+        "/api/trips",
+        json={"request": air_request, "response": gen},
+        headers=user["headers"],
+    ).json()["id"]
+
+    client.patch(f"/api/trips/{trip_id}", json={"stay_reserved": True}, headers=user["headers"])
+    # Stay alone isn't enough when flying.
+    assert (
+        client.patch(
+            f"/api/trips/{trip_id}", json={"status": "reserved"}, headers=user["headers"]
+        ).status_code
+        == 422
+    )
+    client.patch(
+        f"/api/trips/{trip_id}", json={"transport_reserved": True}, headers=user["headers"]
+    )
+    locked = client.patch(
+        f"/api/trips/{trip_id}", json={"status": "reserved"}, headers=user["headers"]
+    )
+    assert locked.status_code == 200
+
+
+@pytest.mark.integration
 def test_refresh_weather_updates_snapshot(client):
     from api.routes import get_weather_refresher
     from main import app

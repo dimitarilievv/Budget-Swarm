@@ -365,7 +365,7 @@ describe("ResultsPage (redesign)", () => {
         }}
       />,
     );
-    expect(screen.getByText(/saved on/i)).toBeInTheDocument();
+    expect(screen.getByText(/may have changed/i)).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /refresh prices/i }),
     ).toBeInTheDocument();
@@ -390,7 +390,7 @@ describe("ResultsPage (redesign)", () => {
         }}
       />,
     );
-    expect(screen.getByText(/showing refreshed prices/i)).toBeInTheDocument();
+    expect(screen.getByText(/aren't saved yet/i)).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /update saved trip/i }),
     ).toBeInTheDocument();
@@ -413,9 +413,14 @@ describe("ResultsPage (redesign)", () => {
       />,
     );
     expect(screen.getByText(/mark what you've reserved/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/transport reserved/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/stay reserved/i)).toBeInTheDocument();
-    // Lock only appears once both boxes are ticked.
+    // Airplane trip → a Flight toggle + a Stay toggle (role=checkbox).
+    expect(
+      screen.getByRole("checkbox", { name: /flight reserved/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("checkbox", { name: /stay reserved/i }),
+    ).toBeInTheDocument();
+    // Lock only appears once the required boxes are ticked.
     expect(
       screen.queryByRole("button", { name: /lock as reserved/i }),
     ).not.toBeInTheDocument();
@@ -437,7 +442,7 @@ describe("ResultsPage (redesign)", () => {
         }}
       />,
     );
-    expect(screen.getByText(/reserved\./i)).toBeInTheDocument();
+    expect(screen.getByText(/🔒 Reserved/)).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /refresh weather/i }),
     ).toBeInTheDocument();
@@ -448,5 +453,33 @@ describe("ResultsPage (redesign)", () => {
     expect(
       screen.queryByRole("button", { name: /refresh prices/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("a non-flying trip shows only the Stay toggle and locks with it alone", () => {
+    const r = fixture();
+    r.meta.trip_id = 5;
+    render(
+      <ResultsPage
+        response={r}
+        request={{ ...request(), transport_mode: "car" }}
+        saved={{
+          tripId: 5,
+          savedAt: "2026-01-02T00:00:00Z",
+          status: "planned",
+          transportReserved: false,
+          stayReserved: true,
+        }}
+      />,
+    );
+    expect(
+      screen.queryByRole("checkbox", { name: /flight reserved/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("checkbox", { name: /stay reserved/i }),
+    ).toBeInTheDocument();
+    // Stay alone unlocks the Lock for a car trip.
+    expect(
+      screen.getByRole("button", { name: /lock as reserved/i }),
+    ).toBeInTheDocument();
   });
 });
