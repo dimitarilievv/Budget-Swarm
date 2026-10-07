@@ -72,7 +72,13 @@ class TripPersister(Protocol):
         self, trip_id: int, user_id: int, request: TripRequest, response: TripResponse
     ) -> SavedTripDetail | None: ...
 
-    def update_weather(self, trip_id: int, user_id: int, weather: list[PlanWeatherDay]) -> bool: ...
+    def update_weather(
+        self,
+        trip_id: int,
+        user_id: int,
+        weather: list[PlanWeatherDay],
+        itinerary: list[ItineraryDay] | None = None,
+    ) -> bool: ...
 
 
 class NullTripPersister:
@@ -92,7 +98,13 @@ class NullTripPersister:
     ) -> SavedTripDetail | None:
         return None
 
-    def update_weather(self, trip_id: int, user_id: int, weather: list[PlanWeatherDay]) -> bool:
+    def update_weather(
+        self,
+        trip_id: int,
+        user_id: int,
+        weather: list[PlanWeatherDay],
+        itinerary: list[ItineraryDay] | None = None,
+    ) -> bool:
         return False
 
 
@@ -221,14 +233,22 @@ class DbTripPersister:
             response=response,
         )
 
-    def update_weather(self, trip_id: int, user_id: int, weather: list[PlanWeatherDay]) -> bool:
-        """Replace only the weather in an owned trip's snapshot. Returns whether it was written."""
+    def update_weather(
+        self,
+        trip_id: int,
+        user_id: int,
+        weather: list[PlanWeatherDay],
+        itinerary: list[ItineraryDay] | None = None,
+    ) -> bool:
+        """Replace the weather (and optionally the re-planned itinerary) in the snapshot."""
         with self._session_factory() as session:
             trip = session.get(Trip, trip_id)
             if trip is None or trip.user_id != user_id or not trip.plan_snapshot:
                 return False
             response = TripResponse.model_validate(trip.plan_snapshot)
             response.chosen_plan.weather = weather
+            if itinerary is not None:
+                response.chosen_plan.itinerary = itinerary
             trip.plan_snapshot = response.model_dump(mode="json")
             session.commit()
         logger.info("trip_persistence: refreshed weather for trip id=%s", trip_id)

@@ -462,3 +462,36 @@ def test_refresh_weather_out_of_horizon_leaves_plan(client):
         assert after == orig  # the stored plan is untouched
     finally:
         app.dependency_overrides.pop(get_weather_refresher, None)
+
+
+@pytest.mark.integration
+def test_refresh_weather_replans_activities_on_conflict(client):
+    """A new conflict day re-plans the itinerary (outdoor stops move off the bad day)."""
+    from api.routes import get_weather_refresher
+    from main import app
+    from schemas.trip_schema import PlanWeatherDay
+
+    user = _register(client)
+    trip_id = _create_trip(client, user["headers"])
+
+    class _StubRefresher:
+        def refresh(self, lat, lon, label, start, end):
+            days = [
+                PlanWeatherDay(forecast_date="2026-11-01", weather_conflict=True),
+                PlanWeatherDay(forecast_date="2026-11-02", weather_conflict=False),
+            ]
+            return days, True, "Weather updated from the latest forecast."
+
+    app.dependency_overrides[get_weather_refresher] = lambda: _StubRefresher()
+    try:
+        resp = client.post(f"/api/trips/{trip_id}/refresh-weather", headers=user["headers"])
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["updated"] is True
+        assert "re-planned" in body["message"].lower()
+        itinerary = body["detail"]["response"]["chosen_plan"]["itinerary"]
+        day1 = next((d for d in itinerary if d["day_number"] == 1), None)
+        if day1 is not None:
+            assert all(a["indoor_outdoor"] != "outdoor" for a in day1["activities"])
+    finally:
+        app.dependency_overrides.pop(get_weather_refresher, None)

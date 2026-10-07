@@ -30,9 +30,12 @@ view, edit and delete only their own trips.
 - **Reserve & lock**: a trip has a `status` (`planned`|`reserved`) + `transport_reserved`/
   `stay_reserved` flags (manual — we only link out). `PATCH` ticks the flags and locks via
   `status=reserved` (requires both reserved). A reserved trip is locked against price/
-  destination re-planning. `POST /api/trips/{id}/refresh-weather` re-fetches **only** the
-  forecast for the saved destination+dates (engine's Open-Meteo weather agent, built lazily
-  in `services/weather_refresh.py`); out of the ~16-day horizon it reports `updated=false`.
+  destination re-planning. `POST /api/trips/{id}/refresh-weather` re-fetches the forecast
+  for the saved destination+dates (engine's Open-Meteo weather agent,
+  `services/weather_refresh.py`) **and re-plans the days** when conflict days change —
+  re-scheduling the existing activities via the engine's public `ActivityScheduler`
+  (`services/activity_replan.py`), destination/transport/stay fixed. Out of the ~16-day
+  horizon it reports `updated=false`. Both are built lazily + degrade gracefully.
 - **Required env**: `JWT_SECRET` (fail-fast at startup). Optional: `JWT_ALGORITHM`,
   `ACCESS_TOKEN_EXPIRE_MINUTES`, `REFRESH_TOKEN_EXPIRE_DAYS`, `AUTH_RATE_LIMIT_*` — see
   `../.env.example`.

@@ -44,6 +44,7 @@ from schemas.trip_schema import (
     TripUpdate,
     WeatherRefreshResult,
 )
+from services.activity_replan import ActivityReplanner, EngineActivityReplanner
 from services.coordinator_service import CoordinatorService, TripEngine
 from services.engine_stub import StubTripEngine
 from services.trip_persistence import NullTripPersister, TripPersister
@@ -143,6 +144,11 @@ def get_trip_store() -> TripStore:
 def get_weather_refresher() -> WeatherRefresher:
     """Provide the weather-only refresher (engine-backed; degrades gracefully). Overridable."""
     return EngineWeatherRefresher()
+
+
+def get_activity_replanner() -> ActivityReplanner:
+    """Provide the phase-2 activity re-planner (engine-backed; degrades gracefully)."""
+    return EngineActivityReplanner()
 
 
 @router.post(
@@ -250,11 +256,14 @@ def refresh_trip_weather(
     store: TripStore = Depends(get_trip_store),
     persister: TripPersister = Depends(get_trip_persister),
     refresher: WeatherRefresher = Depends(get_weather_refresher),
+    replanner: ActivityReplanner = Depends(get_activity_replanner),
 ) -> WeatherRefreshResult:
-    """Re-fetch **only** the weather for the user's saved trip (same destination + dates).
+    """Re-fetch the weather for the user's saved trip and re-plan its days around it.
 
-    Useful for a reserved/locked trip whose plan shouldn't change but whose forecast still
-    moves. Out of the ~16-day horizon it reports ``updated=false`` and leaves the plan as-is.
+    For a reserved/locked trip the destination/transport/stay stay fixed, but the forecast
+    still moves — so this refreshes the forecast and, when the weather-conflict days change,
+    re-schedules the existing activities (outdoor stops move off the now-bad days). Out of
+    the ~16-day horizon it reports ``updated=false`` and leaves the plan as-is.
     """
     detail = store.get_detail(trip_id, user.id)
     if detail is None:
@@ -268,7 +277,15 @@ def refresh_trip_weather(
         detail.end_date.isoformat() if detail.end_date else None,
     )
     if updated and days:
-        persister.update_weather(trip_id, user.id, days)
+        duration = (
+            detail.request.duration_days
+            if detail.request is not None
+            else (len(detail.response.chosen_plan.itinerary) or len(days))
+        )
+        itinerary = replanner.replan(detail.response, days, duration)
+        persister.update_weather(trip_id, user.id, days, itinerary)
+        if itinerary is not None:
+            message = "Weather updated — your day plan was re-planned around the new forecast."
         detail = store.get_detail(trip_id, user.id) or detail
     return WeatherRefreshResult(updated=updated, message=message, detail=detail)
 
