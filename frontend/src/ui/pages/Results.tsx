@@ -13,7 +13,13 @@
  */
 import { useEffect, useMemo, useState } from "react";
 
-import { generateTrip, saveTrip, updateTripSnapshot } from "@/api/endpoints";
+import {
+  generateTrip,
+  refreshTripWeather,
+  saveTrip,
+  updateTrip,
+  updateTripSnapshot,
+} from "@/api/endpoints";
 import { fetchDestinationSummary } from "@/api/wikipedia";
 import { useOptionalAuth } from "@/contexts/AuthContext";
 import type { SavedTripRef } from "@/contexts/TripContext";
@@ -405,6 +411,39 @@ interface ResultsPageProps {
   onCompare?: () => void;
 }
 
+/** A small reservation checkbox used in the saved-trip panel. */
+function ReserveCheck({
+  checked,
+  onChange,
+  children,
+}: {
+  checked: boolean;
+  onChange: (next: boolean) => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <label
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 8,
+        cursor: "pointer",
+        fontSize: 13,
+        fontWeight: 600,
+        color: C.ink,
+      }}
+    >
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        style={{ width: 16, height: 16, accentColor: C.teal }}
+      />
+      {children}
+    </label>
+  );
+}
+
 export default function ResultsPage({
   response,
   request = null,
@@ -491,10 +530,66 @@ export default function ResultsPage({
       setResult?.(detail.response, detail.request, {
         tripId: detail.trip_id,
         savedAt: detail.saved_at,
+        status: detail.status,
+        transportReserved: detail.transport_reserved,
+        stayReserved: detail.stay_reserved,
       });
       setUpdateState("idle");
     } catch {
       setUpdateState("error");
+    }
+  };
+
+  // Reservation: a saved trip is 'planned' (editable/refreshable) or 'reserved' (locked).
+  const isReserved = saved?.status === "reserved";
+  const [weatherState, setWeatherState] = useState<"idle" | "loading">("idle");
+  const [weatherMsg, setWeatherMsg] = useState<string | null>(null);
+
+  // Patch a reservation field and reflect it back into the saved ref (optimistic).
+  const patchReservation = async (
+    patch: {
+      status?: "planned" | "reserved";
+      transport_reserved?: boolean;
+      stay_reserved?: boolean;
+    },
+    optimistic: Partial<SavedTripRef>,
+  ) => {
+    if (!saved) return;
+    const base: SavedTripRef = { ...saved, ...optimistic };
+    setResult?.(response, request, base);
+    try {
+      const summary = await updateTrip(saved.tripId, patch);
+      setResult?.(response, request, {
+        ...base,
+        status: summary.status,
+        transportReserved: summary.transport_reserved,
+        stayReserved: summary.stay_reserved,
+      });
+    } catch {
+      setResult?.(response, request, saved); // revert on failure
+    }
+  };
+
+  const handleRefreshWeather = async () => {
+    if (!saved) return;
+    setWeatherState("loading");
+    setWeatherMsg(null);
+    try {
+      const res = await refreshTripWeather(saved.tripId);
+      setWeatherMsg(res.message);
+      if (res.updated) {
+        setResult?.(res.detail.response, res.detail.request, {
+          tripId: res.detail.trip_id,
+          savedAt: res.detail.saved_at,
+          status: res.detail.status,
+          transportReserved: res.detail.transport_reserved,
+          stayReserved: res.detail.stay_reserved,
+        });
+      }
+    } catch {
+      setWeatherMsg("Couldn't refresh the weather right now.");
+    } finally {
+      setWeatherState("idle");
     }
   };
 
@@ -548,29 +643,94 @@ export default function ResultsPage({
       className="animate-enter"
     >
       <div className="flex flex-col gap-6">
-        {/* Saved-trip banner: snapshot notice + refresh, or the "update saved" prompt. */}
+        {/* Saved-trip panel: reserved (locked) / refreshed-unsaved / planned snapshot. */}
         {isSaved && (
-          <div
-            style={{
-              display: "flex",
-              flexWrap: "wrap",
-              alignItems: "center",
-              gap: 12,
-              padding: "12px 16px",
-              borderRadius: 14,
-              fontSize: 13,
-              background: isRefreshedUnsaved ? C.tealTint : C.warnBg,
-              color: isRefreshedUnsaved ? C.tealDark : C.warnInk,
-            }}
-          >
-            <span style={{ flex: 1, minWidth: 220, lineHeight: 1.5 }}>
-              {isRefreshedUnsaved ? (
-                <>
+          <div className="flex flex-col gap-3">
+            {isReserved ? (
+              <div
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                  gap: 12,
+                  padding: "12px 16px",
+                  borderRadius: 14,
+                  fontSize: 13,
+                  background: C.tealTint,
+                  color: C.tealDark,
+                }}
+              >
+                <span style={{ flex: 1, minWidth: 220, lineHeight: 1.5 }}>
+                  🔒 <b>Reserved.</b> Your transport and stay are booked, so
+                  this plan is locked. The weather can still change.
+                </span>
+                <button
+                  type="button"
+                  onClick={handleRefreshWeather}
+                  disabled={weatherState === "loading"}
+                  style={btnStyle(C.teal)}
+                >
+                  {weatherState === "loading" ? "Checking…" : "Refresh weather"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    patchReservation(
+                      { status: "planned" },
+                      { status: "planned" },
+                    )
+                  }
+                  style={btnStyle("#fff", C.ink, `1px solid ${C.line}`)}
+                >
+                  Unlock
+                </button>
+              </div>
+            ) : isRefreshedUnsaved ? (
+              <div
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                  gap: 12,
+                  padding: "12px 16px",
+                  borderRadius: 14,
+                  fontSize: 13,
+                  background: C.tealTint,
+                  color: C.tealDark,
+                }}
+              >
+                <span style={{ flex: 1, minWidth: 220, lineHeight: 1.5 }}>
                   <b>Showing refreshed prices.</b> These reflect current
                   availability and aren't saved yet.
-                </>
-              ) : (
-                <>
+                </span>
+                <button
+                  type="button"
+                  onClick={handleUpdateSaved}
+                  disabled={updateState === "saving"}
+                  style={btnStyle(C.teal)}
+                >
+                  {updateState === "saving"
+                    ? "Updating…"
+                    : updateState === "error"
+                      ? "Retry update"
+                      : "Update saved trip"}
+                </button>
+              </div>
+            ) : (
+              <div
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                  gap: 12,
+                  padding: "12px 16px",
+                  borderRadius: 14,
+                  fontSize: 13,
+                  background: C.warnBg,
+                  color: C.warnInk,
+                }}
+              >
+                <span style={{ flex: 1, minWidth: 220, lineHeight: 1.5 }}>
                   <b>
                     Saved on{" "}
                     {saved
@@ -583,35 +743,79 @@ export default function ResultsPage({
                     .
                   </b>{" "}
                   Prices and availability may have changed since then.
-                </>
-              )}
-            </span>
-            {isRefreshedUnsaved ? (
-              <button
-                type="button"
-                onClick={handleUpdateSaved}
-                disabled={updateState === "saving"}
-                style={btnStyle(C.teal)}
+                </span>
+                <button
+                  type="button"
+                  onClick={handleRefresh}
+                  disabled={refreshState === "refreshing"}
+                  style={btnStyle(C.teal)}
+                >
+                  {refreshState === "refreshing"
+                    ? "Refreshing…"
+                    : refreshState === "error"
+                      ? "Retry refresh"
+                      : "Refresh prices"}
+                </button>
+              </div>
+            )}
+
+            {weatherMsg && (
+              <div style={{ fontSize: 12.5, color: C.muted, paddingLeft: 2 }}>
+                {weatherMsg}
+              </div>
+            )}
+
+            {/* Reservation checklist — only on a clean planned snapshot. */}
+            {!isReserved && !isRefreshedUnsaved && saved && (
+              <div
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                  gap: 16,
+                  padding: "12px 16px",
+                  borderRadius: 14,
+                  border: `1px solid ${C.line}`,
+                  background: "#fff",
+                }}
               >
-                {updateState === "saving"
-                  ? "Updating…"
-                  : updateState === "error"
-                    ? "Retry update"
-                    : "Update saved trip"}
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={handleRefresh}
-                disabled={refreshState === "refreshing"}
-                style={btnStyle(C.teal)}
-              >
-                {refreshState === "refreshing"
-                  ? "Refreshing…"
-                  : refreshState === "error"
-                    ? "Retry refresh"
-                    : "Refresh prices"}
-              </button>
+                <span style={{ fontSize: 13, color: C.muted }}>
+                  Booked it? Mark what you've reserved:
+                </span>
+                <ReserveCheck
+                  checked={saved.transportReserved}
+                  onChange={(v) =>
+                    patchReservation(
+                      { transport_reserved: v },
+                      { transportReserved: v },
+                    )
+                  }
+                >
+                  Transport reserved
+                </ReserveCheck>
+                <ReserveCheck
+                  checked={saved.stayReserved}
+                  onChange={(v) =>
+                    patchReservation({ stay_reserved: v }, { stayReserved: v })
+                  }
+                >
+                  Stay reserved
+                </ReserveCheck>
+                {saved.transportReserved && saved.stayReserved && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      patchReservation(
+                        { status: "reserved" },
+                        { status: "reserved" },
+                      )
+                    }
+                    style={btnStyle(C.teal)}
+                  >
+                    Lock as reserved
+                  </button>
+                )}
+              </div>
             )}
           </div>
         )}

@@ -356,7 +356,13 @@ describe("ResultsPage (redesign)", () => {
       <ResultsPage
         response={r}
         request={request()}
-        saved={{ tripId: 5, savedAt: "2026-01-02T00:00:00Z" }}
+        saved={{
+          tripId: 5,
+          savedAt: "2026-01-02T00:00:00Z",
+          status: "planned",
+          transportReserved: false,
+          stayReserved: false,
+        }}
       />,
     );
     expect(screen.getByText(/saved on/i)).toBeInTheDocument();
@@ -375,12 +381,72 @@ describe("ResultsPage (redesign)", () => {
       <ResultsPage
         response={r}
         request={request()}
-        saved={{ tripId: 5, savedAt: "2026-01-02T00:00:00Z" }}
+        saved={{
+          tripId: 5,
+          savedAt: "2026-01-02T00:00:00Z",
+          status: "planned",
+          transportReserved: false,
+          stayReserved: false,
+        }}
       />,
     );
     expect(screen.getByText(/showing refreshed prices/i)).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /update saved trip/i }),
     ).toBeInTheDocument();
+  });
+
+  it("offers the reservation checklist on a planned saved trip", () => {
+    const r = fixture();
+    r.meta.trip_id = 5;
+    render(
+      <ResultsPage
+        response={r}
+        request={request()}
+        saved={{
+          tripId: 5,
+          savedAt: "2026-01-02T00:00:00Z",
+          status: "planned",
+          transportReserved: false,
+          stayReserved: false,
+        }}
+      />,
+    );
+    expect(screen.getByText(/mark what you've reserved/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/transport reserved/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/stay reserved/i)).toBeInTheDocument();
+    // Lock only appears once both boxes are ticked.
+    expect(
+      screen.queryByRole("button", { name: /lock as reserved/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows the Reserved lock banner with refresh-weather + unlock", () => {
+    const r = fixture();
+    r.meta.trip_id = 5;
+    render(
+      <ResultsPage
+        response={r}
+        request={request()}
+        saved={{
+          tripId: 5,
+          savedAt: "2026-01-02T00:00:00Z",
+          status: "reserved",
+          transportReserved: true,
+          stayReserved: true,
+        }}
+      />,
+    );
+    expect(screen.getByText(/reserved\./i)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /refresh weather/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^unlock$/i }),
+    ).toBeInTheDocument();
+    // Prices are locked — no price refresh on a reserved trip.
+    expect(
+      screen.queryByRole("button", { name: /refresh prices/i }),
+    ).not.toBeInTheDocument();
   });
 });

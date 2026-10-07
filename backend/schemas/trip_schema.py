@@ -26,6 +26,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 TransportModeStr = Literal["airplane", "car", "bus", "train"]
 QualityFlagStr = Literal["real", "cached", "estimated"]
 IndoorOutdoorStr = Literal["indoor", "outdoor", "mixed"]
+# A saved trip's lifecycle: planned (editable/refreshable) or reserved (booked → locked).
+TripStatusStr = Literal["planned", "reserved"]
 
 
 # --- Request -----------------------------------------------------------------
@@ -335,6 +337,9 @@ class TripSummary(BaseModel):
     overall_score: float | None = None
     start_date: date | None = None
     end_date: date | None = None
+    status: TripStatusStr = "planned"
+    transport_reserved: bool = False
+    stay_reserved: bool = False
     created_at: datetime
 
 
@@ -349,6 +354,11 @@ class TripUpdate(BaseModel):
 
     title: str | None = Field(default=None, max_length=120)
     notes: str | None = None
+    # Reservation: tick what's booked, then lock by setting status='reserved'. The route
+    # rejects status='reserved' unless both are (or become) true.
+    status: TripStatusStr | None = None
+    transport_reserved: bool | None = None
+    stay_reserved: bool | None = None
 
 
 class SaveTripRequest(BaseModel):
@@ -375,5 +385,21 @@ class SavedTripDetail(BaseModel):
     saved_at: datetime
     start_date: date | None = None
     end_date: date | None = None
+    status: TripStatusStr = "planned"
+    transport_reserved: bool = False
+    stay_reserved: bool = False
     request: TripRequest | None = None
     response: TripResponse
+
+
+class WeatherRefreshResult(BaseModel):
+    """``POST /api/trips/{id}/refresh-weather`` — outcome of re-fetching the forecast.
+
+    ``updated`` is true only when a **live** forecast replaced the stored weather (the
+    destination/dates were within the ~16-day horizon); otherwise ``detail`` is unchanged
+    and ``message`` explains why (too far out, or no forecast available).
+    """
+
+    updated: bool
+    message: str
+    detail: SavedTripDetail

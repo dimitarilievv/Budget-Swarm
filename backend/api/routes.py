@@ -33,7 +33,7 @@ import logging
 from db.models import Destination, Trip, User
 from db.repositories import TripRepository
 from db.session import get_db
-from errors import NotFoundError
+from errors import NotFoundError, ValidationError
 from fastapi import APIRouter, Depends, Response, status
 from schemas.trip_schema import (
     SavedTripDetail,
@@ -42,11 +42,14 @@ from schemas.trip_schema import (
     TripResponse,
     TripSummary,
     TripUpdate,
+    WeatherRefreshResult,
 )
+from services.activity_replan import ActivityReplanner, EngineActivityReplanner
 from services.coordinator_service import CoordinatorService, TripEngine
 from services.engine_stub import StubTripEngine
 from services.trip_persistence import NullTripPersister, TripPersister
 from services.trip_store import StubTripStore, TripStore
+from services.weather_refresh import EngineWeatherRefresher, WeatherRefresher
 from sqlalchemy.orm import Session
 
 from api.deps import get_current_user
@@ -101,6 +104,9 @@ def _trip_summary(trip: Trip, dest: Destination | None) -> TripSummary:
         overall_score=float(trip.overall_score) if trip.overall_score is not None else None,
         start_date=trip.start_date,
         end_date=trip.end_date,
+        status=trip.status,
+        transport_reserved=trip.transport_reserved,
+        stay_reserved=trip.stay_reserved,
         created_at=trip.created_at,
     )
 
@@ -133,6 +139,16 @@ def get_trip_store() -> TripStore:
     (BS-081). Tests override this dependency to control what is "stored".
     """
     return StubTripStore()
+
+
+def get_weather_refresher() -> WeatherRefresher:
+    """Provide the weather-only refresher (engine-backed; degrades gracefully). Overridable."""
+    return EngineWeatherRefresher()
+
+
+def get_activity_replanner() -> ActivityReplanner:
+    """Provide the phase-2 activity re-planner (engine-backed; degrades gracefully)."""
+    return EngineActivityReplanner()
 
 
 @router.post(
@@ -229,6 +245,51 @@ def update_trip_snapshot(
     return detail
 
 
+@router.post(
+    "/trips/{trip_id}/refresh-weather",
+    response_model=WeatherRefreshResult,
+    tags=["trips"],
+)
+def refresh_trip_weather(
+    trip_id: int,
+    user: User = Depends(get_current_user),
+    store: TripStore = Depends(get_trip_store),
+    persister: TripPersister = Depends(get_trip_persister),
+    refresher: WeatherRefresher = Depends(get_weather_refresher),
+    replanner: ActivityReplanner = Depends(get_activity_replanner),
+) -> WeatherRefreshResult:
+    """Re-fetch the weather for the user's saved trip and re-plan its days around it.
+
+    For a reserved/locked trip the destination/transport/stay stay fixed, but the forecast
+    still moves — so this refreshes the forecast and, when the weather-conflict days change,
+    re-schedules the existing activities (outdoor stops move off the now-bad days). Out of
+    the ~16-day horizon it reports ``updated=false`` and leaves the plan as-is.
+    """
+    detail = store.get_detail(trip_id, user.id)
+    if detail is None:
+        raise NotFoundError(f"no trip with id {trip_id}")
+    dest = detail.response.chosen_plan.destination
+    days, updated, message = refresher.refresh(
+        dest.latitude,
+        dest.longitude,
+        f"{dest.city}, {dest.country}",
+        detail.start_date.isoformat() if detail.start_date else None,
+        detail.end_date.isoformat() if detail.end_date else None,
+    )
+    if updated and days:
+        duration = (
+            detail.request.duration_days
+            if detail.request is not None
+            else (len(detail.response.chosen_plan.itinerary) or len(days))
+        )
+        itinerary = replanner.replan(detail.response, days, duration)
+        persister.update_weather(trip_id, user.id, days, itinerary)
+        if itinerary is not None:
+            message = "Weather updated — your day plan was re-planned around the new forecast."
+        detail = store.get_detail(trip_id, user.id) or detail
+    return WeatherRefreshResult(updated=updated, message=message, detail=detail)
+
+
 @router.patch("/trips/{trip_id}", response_model=TripSummary, tags=["trips"])
 def update_trip(
     trip_id: int,
@@ -244,6 +305,12 @@ def update_trip(
     updates = body.model_dump(exclude_unset=True)
     for field, value in updates.items():
         setattr(trip, field, value)
+    # A trip can only be locked as 'reserved' once both transport and stay are marked booked.
+    if trip.status == "reserved" and not (trip.transport_reserved and trip.stay_reserved):
+        raise ValidationError(
+            "Mark transport and stay as reserved before locking the trip.",
+            field="status",
+        )
     db.commit()
     db.refresh(trip)
     dest = (

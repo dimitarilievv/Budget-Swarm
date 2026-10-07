@@ -53,6 +53,9 @@ function trip(over: Partial<SavedTrip> = {}): SavedTrip {
     overall_score: 0.9,
     start_date: null,
     end_date: null,
+    status: "planned",
+    transport_reserved: false,
+    stay_reserved: false,
     created_at: "2026-01-01T00:00:00Z",
     ...over,
   };
