@@ -190,11 +190,14 @@ Overwrite a saved trip's snapshot with a refreshed plan (the "Update saved trip"
 List the authenticated user's saved trips (newest first). Each item: `{ id, title, notes, origin_label, destination_city, destination_country, transport_mode, duration_days, travelers, budget, total_cost, overall_score, created_at }`. Powers the **My trips** page.
 
 ### `GET /api/trips/{trip_id}`
-Return one of the user's own saved trips as a **full snapshot**: `{ trip_id, saved_at, start_date, end_date, request, response }`, where `response` is the whole stored plan (with `meta.saved_at` set) and `request` is the original inputs (used by "Refresh prices"). Legacy rows saved before snapshots fall back to a reconstruction.
+Return one of the user's own saved trips as a **full snapshot**: `{ trip_id, saved_at, start_date, end_date, status, transport_reserved, stay_reserved, request, response }`, where `response` is the whole stored plan (with `meta.saved_at` set) and `request` is the original inputs (used by "Refresh prices"). Legacy rows saved before snapshots fall back to a reconstruction.
 - `200` — the snapshot · `401` — no/invalid token · `404` — unknown id **or** not the caller's trip.
 
 ### `PATCH /api/trips/{trip_id}`
-Update the editable labels of the user's own trip. Body: `{ "title"?: string, "notes"?: string }` — any other field (e.g. `user_id`) is rejected (`422`). Returns the updated trip summary. `404` if it isn't the caller's trip.
+Update the user's own trip. Body: `{ "title"?, "notes"?, "transport_reserved"?: bool, "stay_reserved"?: bool, "status"?: "planned"|"reserved" }` — any other field (e.g. `user_id`) is rejected (`422`). **Reservation:** tick `transport_reserved`/`stay_reserved`, then lock by setting `status: "reserved"` (rejected `422` unless both are reserved); a reserved trip is locked against price/destination re-planning. Set `status: "planned"` to unlock. Returns the updated trip summary. `404` if it isn't the caller's trip.
+
+### `POST /api/trips/{trip_id}/refresh-weather`
+Re-fetch **only** the forecast for the saved trip's destination + dates (useful for a reserved trip whose plan is locked but whose weather still moves). Returns `{ "updated": bool, "message": string, "detail": <SavedTripDetail> }`. Out of the ~16-day forecast horizon, `updated` is `false` and the plan is left unchanged. `404` if it isn't the caller's trip.
 
 ### `DELETE /api/trips/{trip_id}`
 Delete the user's own trip. `204` on success; `404` if it isn't the caller's trip.

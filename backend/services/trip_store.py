@@ -87,6 +87,9 @@ class StubTripStore:
             saved_at=saved_at,
             start_date=plan.start_date,
             end_date=plan.end_date,
+            status="planned",
+            transport_reserved=False,
+            stay_reserved=False,
             request=_SAMPLE_REQUEST,
             response=response,
         )

@@ -34,8 +34,18 @@ export interface SavedTripDetail {
   saved_at: string;
   start_date: string | null;
   end_date: string | null;
+  status: "planned" | "reserved";
+  transport_reserved: boolean;
+  stay_reserved: boolean;
   request: TripRequestPayload | null;
   response: TripResponse;
+}
+
+/** `POST /api/trips/{id}/refresh-weather` result. */
+export interface WeatherRefreshResult {
+  updated: boolean;
+  message: string;
+  detail: SavedTripDetail;
 }
 
 /** `GET /api/trips/{id}` — fetch a saved trip's full snapshot (for re-display + refresh). */
@@ -84,6 +94,9 @@ export interface SavedTrip {
   overall_score: number | null;
   start_date: string | null;
   end_date: string | null;
+  status: "planned" | "reserved";
+  transport_reserved: boolean;
+  stay_reserved: boolean;
   created_at: string;
 }
 
@@ -99,16 +112,37 @@ export async function listTrips(
   }
 }
 
-/** `PATCH /api/trips/{id}` — update a saved trip's label/notes. */
+/** `PATCH /api/trips/{id}` — update a saved trip's label/notes or reservation state. */
 export async function updateTrip(
   tripId: number,
-  payload: { title?: string | null; notes?: string | null },
+  payload: {
+    title?: string | null;
+    notes?: string | null;
+    status?: "planned" | "reserved";
+    transport_reserved?: boolean;
+    stay_reserved?: boolean;
+  },
   client: AxiosInstance = apiClient,
 ): Promise<SavedTrip> {
   try {
     const { data } = await client.patch<SavedTrip>(
       `/api/trips/${tripId}`,
       payload,
+    );
+    return data;
+  } catch (err) {
+    throw toApiError(err);
+  }
+}
+
+/** `POST /api/trips/{id}/refresh-weather` — re-fetch only the forecast for a saved trip. */
+export async function refreshTripWeather(
+  tripId: number,
+  client: AxiosInstance = apiClient,
+): Promise<WeatherRefreshResult> {
+  try {
+    const { data } = await client.post<WeatherRefreshResult>(
+      `/api/trips/${tripId}/refresh-weather`,
     );
     return data;
   } catch (err) {

@@ -201,6 +201,10 @@ CREATE TABLE trips (
     request_snapshot    JSONB,                 -- original request, for "Refresh prices"
     start_date          DATE,                  -- plan's travel window (for the ticket/summary)
     end_date            DATE,
+    status              VARCHAR(10) NOT NULL DEFAULT 'planned'  -- 'planned' | 'reserved' (locked)
+                         CHECK (status IN ('planned','reserved')),
+    transport_reserved  BOOLEAN NOT NULL DEFAULT false,         -- user-confirmed bookings
+    stay_reserved       BOOLEAN NOT NULL DEFAULT false,
     -- inputs
     budget              NUMERIC(10,2) NOT NULL,
     duration_days       INTEGER NOT NULL,

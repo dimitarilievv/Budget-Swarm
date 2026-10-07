@@ -39,6 +39,7 @@ from schemas.trip_schema import (
     ItineraryActivity,
     ItineraryDay,
     PlanDestination,
+    PlanWeatherDay,
     SavedTripDetail,
     TripMeta,
     TripRequest,
@@ -71,6 +72,8 @@ class TripPersister(Protocol):
         self, trip_id: int, user_id: int, request: TripRequest, response: TripResponse
     ) -> SavedTripDetail | None: ...
 
+    def update_weather(self, trip_id: int, user_id: int, weather: list[PlanWeatherDay]) -> bool: ...
+
 
 class NullTripPersister:
     """No-op persister (the default): the plan is not stored and ``trip_id`` stays null.
@@ -88,6 +91,9 @@ class NullTripPersister:
         self, trip_id: int, user_id: int, request: TripRequest, response: TripResponse
     ) -> SavedTripDetail | None:
         return None
+
+    def update_weather(self, trip_id: int, user_id: int, weather: list[PlanWeatherDay]) -> bool:
+        return False
 
 
 class DbTripPersister:
@@ -193,7 +199,11 @@ class DbTripPersister:
             trip.request_snapshot = request.model_dump(mode="json")
             trip.start_date = plan.start_date
             trip.end_date = plan.end_date
+            # Reservation state is preserved across a refresh/update (not reset here).
             saved_at = trip.created_at
+            status = trip.status
+            transport_reserved = trip.transport_reserved
+            stay_reserved = trip.stay_reserved
             session.commit()
             trip_id_val = trip.id
         response.meta.trip_id = trip_id_val
@@ -204,9 +214,25 @@ class DbTripPersister:
             saved_at=saved_at,
             start_date=plan.start_date,
             end_date=plan.end_date,
+            status=status,
+            transport_reserved=transport_reserved,
+            stay_reserved=stay_reserved,
             request=request,
             response=response,
         )
+
+    def update_weather(self, trip_id: int, user_id: int, weather: list[PlanWeatherDay]) -> bool:
+        """Replace only the weather in an owned trip's snapshot. Returns whether it was written."""
+        with self._session_factory() as session:
+            trip = session.get(Trip, trip_id)
+            if trip is None or trip.user_id != user_id or not trip.plan_snapshot:
+                return False
+            response = TripResponse.model_validate(trip.plan_snapshot)
+            response.chosen_plan.weather = weather
+            trip.plan_snapshot = response.model_dump(mode="json")
+            session.commit()
+        logger.info("trip_persistence: refreshed weather for trip id=%s", trip_id)
+        return True
 
 
 class DbTripStore:
@@ -290,6 +316,9 @@ class DbTripStore:
                 saved_at=trip.created_at,
                 start_date=trip.start_date,
                 end_date=trip.end_date,
+                status=trip.status,
+                transport_reserved=trip.transport_reserved,
+                stay_reserved=trip.stay_reserved,
                 request=request,
                 response=response,
             )

@@ -336,6 +336,7 @@ class Trip(Base):
     __tablename__ = "trips"
     __table_args__ = (
         CheckConstraint(f"transport_mode IN {_TRANSPORT_MODES}", name="trips_transport_mode_check"),
+        CheckConstraint("status IN ('planned','reserved')", name="trips_status_check"),
         Index("idx_trips_user", "user_id"),
     )
 
@@ -358,6 +359,14 @@ class Trip(Base):
     # The plan's travel window (from the chosen option), surfaced on the ticket/summary.
     start_date: Mapped[date | None] = mapped_column(Date)
     end_date: Mapped[date | None] = mapped_column(Date)
+    # Trip lifecycle: 'planned' (editable/refreshable) or 'reserved' (the user confirmed they
+    # booked transport + stay, so the plan is locked against price/destination re-planning —
+    # only the weather can still be refreshed). Booking is manual (we only link out).
+    status: Mapped[str] = mapped_column(
+        String(10), nullable=False, server_default=text("'planned'")
+    )
+    transport_reserved: Mapped[bool] = mapped_column(nullable=False, server_default=text("false"))
+    stay_reserved: Mapped[bool] = mapped_column(nullable=False, server_default=text("false"))
     budget: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     duration_days: Mapped[int] = mapped_column(Integer, nullable=False)
     travelers: Mapped[int] = mapped_column(Integer, nullable=False)

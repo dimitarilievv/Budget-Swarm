@@ -13,6 +13,9 @@ import type { TripRequestPayload, TripResponse } from "@/types/trip";
 export interface SavedTripRef {
   tripId: number;
   savedAt: string;
+  status: "planned" | "reserved";
+  transportReserved: boolean;
+  stayReserved: boolean;
 }
 
 export interface TripContextValue {

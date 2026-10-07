@@ -396,11 +396,11 @@ function TripTicket({
               letterSpacing: ".06em",
               textTransform: "uppercase",
               whiteSpace: "nowrap",
-              background: "#e6f5f2",
-              color: TEAL_DARK,
+              background: trip.status === "reserved" ? TEAL : "#e6f5f2",
+              color: trip.status === "reserved" ? "#fff" : TEAL_DARK,
             }}
           >
-            Saved
+            {trip.status === "reserved" ? "🔒 Reserved" : "Saved"}
           </span>
           <button
             type="button"
@@ -803,6 +803,9 @@ export default function MyTripsPage() {
       setResult(detail.response, detail.request, {
         tripId: detail.trip_id,
         savedAt: detail.saved_at,
+        status: detail.status,
+        transportReserved: detail.transport_reserved,
+        stayReserved: detail.stay_reserved,
       });
       navigate("/");
     } catch {
