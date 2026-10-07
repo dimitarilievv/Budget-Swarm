@@ -411,8 +411,8 @@ interface ResultsPageProps {
   onCompare?: () => void;
 }
 
-/** A small reservation checkbox used in the saved-trip panel. */
-function ReserveCheck({
+/** A reservation toggle chip used in the saved-trip panel (nicer than a bare checkbox). */
+function ReserveToggle({
   checked,
   onChange,
   children,
@@ -422,25 +422,47 @@ function ReserveCheck({
   children: React.ReactNode;
 }) {
   return (
-    <label
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
       style={{
         display: "inline-flex",
         alignItems: "center",
-        gap: 8,
-        cursor: "pointer",
+        gap: 9,
+        padding: "9px 14px",
+        borderRadius: 12,
+        border: `1.5px solid ${checked ? C.teal : "#dbe5e2"}`,
+        background: checked ? C.tealTint : "#fff",
+        color: checked ? C.tealDark : C.ink,
         fontSize: 13,
         fontWeight: 600,
-        color: C.ink,
+        cursor: "pointer",
+        fontFamily: "inherit",
+        transition: "background .15s, border-color .15s",
       }}
     >
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-        style={{ width: 16, height: 16, accentColor: C.teal }}
-      />
+      <span
+        aria-hidden="true"
+        style={{
+          flex: "none",
+          width: 18,
+          height: 18,
+          borderRadius: 6,
+          display: "grid",
+          placeItems: "center",
+          fontSize: 11,
+          fontWeight: 800,
+          color: "#fff",
+          background: checked ? C.teal : "#fff",
+          border: `1.5px solid ${checked ? C.teal : "#cfdcd9"}`,
+        }}
+      >
+        {checked ? "✓" : ""}
+      </span>
       {children}
-    </label>
+    </button>
   );
 }
 
@@ -542,6 +564,12 @@ export default function ResultsPage({
 
   // Reservation: a saved trip is 'planned' (editable/refreshable) or 'reserved' (locked).
   const isReserved = saved?.status === "reserved";
+  // Only flights are "booked" on our side — car/bus/train have no transport checkbox.
+  const isFlying =
+    (request?.transport_mode ?? plan.transport?.mode) === "airplane";
+  const canLock = Boolean(
+    saved?.stayReserved && (!isFlying || saved?.transportReserved),
+  );
   const [weatherState, setWeatherState] = useState<"idle" | "loading">("idle");
   const [weatherMsg, setWeatherMsg] = useState<string | null>(null);
 
@@ -643,183 +671,6 @@ export default function ResultsPage({
       className="animate-enter"
     >
       <div className="flex flex-col gap-6">
-        {/* Saved-trip panel: reserved (locked) / refreshed-unsaved / planned snapshot. */}
-        {isSaved && (
-          <div className="flex flex-col gap-3">
-            {isReserved ? (
-              <div
-                style={{
-                  display: "flex",
-                  flexWrap: "wrap",
-                  alignItems: "center",
-                  gap: 12,
-                  padding: "12px 16px",
-                  borderRadius: 14,
-                  fontSize: 13,
-                  background: C.tealTint,
-                  color: C.tealDark,
-                }}
-              >
-                <span style={{ flex: 1, minWidth: 220, lineHeight: 1.5 }}>
-                  🔒 <b>Reserved.</b> Your transport and stay are booked, so
-                  this plan is locked. The weather can still change.
-                </span>
-                <button
-                  type="button"
-                  onClick={handleRefreshWeather}
-                  disabled={weatherState === "loading"}
-                  style={btnStyle(C.teal)}
-                >
-                  {weatherState === "loading" ? "Checking…" : "Refresh weather"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    patchReservation(
-                      { status: "planned" },
-                      { status: "planned" },
-                    )
-                  }
-                  style={btnStyle("#fff", C.ink, `1px solid ${C.line}`)}
-                >
-                  Unlock
-                </button>
-              </div>
-            ) : isRefreshedUnsaved ? (
-              <div
-                style={{
-                  display: "flex",
-                  flexWrap: "wrap",
-                  alignItems: "center",
-                  gap: 12,
-                  padding: "12px 16px",
-                  borderRadius: 14,
-                  fontSize: 13,
-                  background: C.tealTint,
-                  color: C.tealDark,
-                }}
-              >
-                <span style={{ flex: 1, minWidth: 220, lineHeight: 1.5 }}>
-                  <b>Showing refreshed prices.</b> These reflect current
-                  availability and aren't saved yet.
-                </span>
-                <button
-                  type="button"
-                  onClick={handleUpdateSaved}
-                  disabled={updateState === "saving"}
-                  style={btnStyle(C.teal)}
-                >
-                  {updateState === "saving"
-                    ? "Updating…"
-                    : updateState === "error"
-                      ? "Retry update"
-                      : "Update saved trip"}
-                </button>
-              </div>
-            ) : (
-              <div
-                style={{
-                  display: "flex",
-                  flexWrap: "wrap",
-                  alignItems: "center",
-                  gap: 12,
-                  padding: "12px 16px",
-                  borderRadius: 14,
-                  fontSize: 13,
-                  background: C.warnBg,
-                  color: C.warnInk,
-                }}
-              >
-                <span style={{ flex: 1, minWidth: 220, lineHeight: 1.5 }}>
-                  <b>
-                    Saved on{" "}
-                    {saved
-                      ? new Date(saved.savedAt).toLocaleDateString("en-GB", {
-                          day: "numeric",
-                          month: "short",
-                          year: "numeric",
-                        })
-                      : ""}
-                    .
-                  </b>{" "}
-                  Prices and availability may have changed since then.
-                </span>
-                <button
-                  type="button"
-                  onClick={handleRefresh}
-                  disabled={refreshState === "refreshing"}
-                  style={btnStyle(C.teal)}
-                >
-                  {refreshState === "refreshing"
-                    ? "Refreshing…"
-                    : refreshState === "error"
-                      ? "Retry refresh"
-                      : "Refresh prices"}
-                </button>
-              </div>
-            )}
-
-            {weatherMsg && (
-              <div style={{ fontSize: 12.5, color: C.muted, paddingLeft: 2 }}>
-                {weatherMsg}
-              </div>
-            )}
-
-            {/* Reservation checklist — only on a clean planned snapshot. */}
-            {!isReserved && !isRefreshedUnsaved && saved && (
-              <div
-                style={{
-                  display: "flex",
-                  flexWrap: "wrap",
-                  alignItems: "center",
-                  gap: 16,
-                  padding: "12px 16px",
-                  borderRadius: 14,
-                  border: `1px solid ${C.line}`,
-                  background: "#fff",
-                }}
-              >
-                <span style={{ fontSize: 13, color: C.muted }}>
-                  Booked it? Mark what you've reserved:
-                </span>
-                <ReserveCheck
-                  checked={saved.transportReserved}
-                  onChange={(v) =>
-                    patchReservation(
-                      { transport_reserved: v },
-                      { transportReserved: v },
-                    )
-                  }
-                >
-                  Transport reserved
-                </ReserveCheck>
-                <ReserveCheck
-                  checked={saved.stayReserved}
-                  onChange={(v) =>
-                    patchReservation({ stay_reserved: v }, { stayReserved: v })
-                  }
-                >
-                  Stay reserved
-                </ReserveCheck>
-                {saved.transportReserved && saved.stayReserved && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      patchReservation(
-                        { status: "reserved" },
-                        { status: "reserved" },
-                      )
-                    }
-                    style={btnStyle(C.teal)}
-                  >
-                    Lock as reserved
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-
         {/* Back bar + estimated chip */}
         <div className="flex items-center justify-between text-[13px]">
           <button
@@ -990,6 +841,204 @@ export default function ResultsPage({
           onSelect={setJourneySel}
           focus={stayFocus}
         />
+
+        {/* Saved-trip management — one tidy card (status, refresh/update, reservation). */}
+        {isSaved && saved && (
+          <section
+            style={{
+              background: "#fff",
+              border: `1px solid ${C.line}`,
+              borderRadius: 18,
+              padding: "18px 20px",
+              display: "flex",
+              flexDirection: "column",
+              gap: 14,
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                flexWrap: "wrap",
+              }}
+            >
+              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800 }}>
+                Your saved trip
+              </h3>
+              <span
+                style={{
+                  padding: "4px 11px",
+                  borderRadius: 99,
+                  fontSize: 11,
+                  fontWeight: 800,
+                  letterSpacing: ".04em",
+                  background: isReserved
+                    ? C.teal
+                    : isRefreshedUnsaved
+                      ? C.tealTint
+                      : C.warnBg,
+                  color: isReserved
+                    ? "#fff"
+                    : isRefreshedUnsaved
+                      ? C.tealDark
+                      : C.warnInk,
+                }}
+              >
+                {isReserved
+                  ? "🔒 Reserved"
+                  : isRefreshedUnsaved
+                    ? "Refreshed · unsaved"
+                    : `Saved ${new Date(saved.savedAt).toLocaleDateString(
+                        "en-GB",
+                        { day: "numeric", month: "short", year: "numeric" },
+                      )}`}
+              </span>
+            </div>
+
+            <p
+              style={{
+                margin: 0,
+                fontSize: 13.5,
+                color: C.muted,
+                lineHeight: 1.55,
+              }}
+            >
+              {isReserved
+                ? "Your bookings are locked in — prices and the destination won't change. The weather (and your day plan) can still be refreshed."
+                : isRefreshedUnsaved
+                  ? "These are current prices and aren't saved yet. Update the saved trip to keep them, or go back to your saved version."
+                  : "Prices and availability may have changed since you saved this. Refresh to see today's, then update if you like them."}
+            </p>
+
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              {isReserved ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleRefreshWeather}
+                    disabled={weatherState === "loading"}
+                    style={btnStyle(C.teal)}
+                  >
+                    {weatherState === "loading"
+                      ? "Checking…"
+                      : "Refresh weather"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      patchReservation(
+                        { status: "planned" },
+                        { status: "planned" },
+                      )
+                    }
+                    style={btnStyle("#fff", C.ink, `1px solid ${C.line}`)}
+                  >
+                    Unlock
+                  </button>
+                </>
+              ) : isRefreshedUnsaved ? (
+                <button
+                  type="button"
+                  onClick={handleUpdateSaved}
+                  disabled={updateState === "saving"}
+                  style={btnStyle(C.teal)}
+                >
+                  {updateState === "saving"
+                    ? "Updating…"
+                    : updateState === "error"
+                      ? "Retry update"
+                      : "Update saved trip"}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleRefresh}
+                  disabled={refreshState === "refreshing"}
+                  style={btnStyle(C.teal)}
+                >
+                  {refreshState === "refreshing"
+                    ? "Refreshing…"
+                    : refreshState === "error"
+                      ? "Retry refresh"
+                      : "Refresh prices"}
+                </button>
+              )}
+            </div>
+
+            {weatherMsg && (
+              <div style={{ fontSize: 12.5, color: C.muted }}>{weatherMsg}</div>
+            )}
+
+            {/* Reservation — only on a clean planned snapshot. */}
+            {!isReserved && !isRefreshedUnsaved && (
+              <>
+                <div
+                  style={{ height: 1, background: C.line, margin: "2px 0" }}
+                />
+                <div
+                  style={{ display: "flex", flexDirection: "column", gap: 10 }}
+                >
+                  <div>
+                    <div style={{ fontSize: 13.5, fontWeight: 700 }}>
+                      Booked it yet?
+                    </div>
+                    <div style={{ fontSize: 12.5, color: C.muted }}>
+                      Mark what you've reserved to lock the trip.
+                    </div>
+                  </div>
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 10,
+                      flexWrap: "wrap",
+                      alignItems: "center",
+                    }}
+                  >
+                    {isFlying && (
+                      <ReserveToggle
+                        checked={saved.transportReserved}
+                        onChange={(v) =>
+                          patchReservation(
+                            { transport_reserved: v },
+                            { transportReserved: v },
+                          )
+                        }
+                      >
+                        ✈ Flight reserved
+                      </ReserveToggle>
+                    )}
+                    <ReserveToggle
+                      checked={saved.stayReserved}
+                      onChange={(v) =>
+                        patchReservation(
+                          { stay_reserved: v },
+                          { stayReserved: v },
+                        )
+                      }
+                    >
+                      🏨 Stay reserved
+                    </ReserveToggle>
+                    {canLock && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          patchReservation(
+                            { status: "reserved" },
+                            { status: "reserved" },
+                          )
+                        }
+                        style={btnStyle(C.teal)}
+                      >
+                        🔒 Lock as reserved
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
+          </section>
+        )}
 
         {/* Footer actions */}
         <div className="flex flex-wrap items-center justify-between gap-3 px-1 pt-1">
