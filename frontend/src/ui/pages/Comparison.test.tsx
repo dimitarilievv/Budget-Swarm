@@ -136,24 +136,27 @@ describe("ComparisonPage (city cards)", () => {
     expect(sofia.getByText("€200+")).toBeInTheDocument(); // transport only, "+"
     expect(sofia.getByText(/stay price missing/i)).toBeInTheDocument();
     expect(sofia.getByText("Not found")).toBeInTheDocument(); // Stay row
-    expect(sofia.getByText("Find a stay")).toBeInTheDocument(); // button
+    expect(sofia.getByText("No stay found")).toBeInTheDocument(); // badge, not a button
   });
 
-  it("labels buttons by state", () => {
+  it("gives only the recommended card an action button; others show a status badge", () => {
     render(<ComparisonPage response={threeCities()} request={request()} />);
+    // The recommended (chosen) destination is the only one that can be opened.
     expect(
       within(screen.getByTestId("city-Budapest")).getByRole("button", {
         name: "View trip",
       }),
     ).toBeInTheDocument();
-    expect(
-      within(screen.getByTestId("city-Prague")).getByRole("button", {
-        name: "Plan this",
-      }),
-    ).toBeInTheDocument();
+    // The others carry a non-interactive feasibility badge, not a button.
+    const prague = within(screen.getByTestId("city-Prague"));
+    expect(prague.queryByRole("button")).not.toBeInTheDocument();
+    expect(prague.getByText("Fits your budget")).toBeInTheDocument();
+    const sofia = within(screen.getByTestId("city-Sofia"));
+    expect(sofia.queryByRole("button")).not.toBeInTheDocument();
+    expect(sofia.getByText("No stay found")).toBeInTheDocument();
   });
 
-  it("calls onAction with the city and label", () => {
+  it("calls onAction from the recommended card's View trip button", () => {
     const onAction = vi.fn();
     render(
       <ComparisonPage
@@ -163,13 +166,13 @@ describe("ComparisonPage (city cards)", () => {
       />,
     );
     fireEvent.click(
-      within(screen.getByTestId("city-Prague")).getByRole("button", {
-        name: "Plan this",
+      within(screen.getByTestId("city-Budapest")).getByRole("button", {
+        name: "View trip",
       }),
     );
     expect(onAction).toHaveBeenCalledTimes(1);
-    expect(onAction.mock.calls[0][0].city).toBe("Prague");
-    expect(onAction.mock.calls[0][1]).toBe("Plan this");
+    expect(onAction.mock.calls[0][0].city).toBe("Budapest");
+    expect(onAction.mock.calls[0][1]).toBe("View trip");
   });
 
   it("works without a request (no budget line, no under/over note)", () => {
