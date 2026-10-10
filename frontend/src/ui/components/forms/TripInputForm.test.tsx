@@ -63,15 +63,13 @@ describe("TripInputForm", () => {
   it("shows vehicle_consumption only for car", () => {
     render(<TripInputForm />);
     // Default is car -> field present.
-    expect(screen.getByLabelText(/vehicle consumption/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/consumption/i)).toBeInTheDocument();
     // Switch to train -> gone.
     fireEvent.click(screen.getByRole("button", { name: /train/i }));
-    expect(
-      screen.queryByLabelText(/vehicle consumption/i),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/consumption/i)).not.toBeInTheDocument();
     // Back to car -> returns.
     fireEvent.click(screen.getByRole("button", { name: /car/i }));
-    expect(screen.getByLabelText(/vehicle consumption/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/consumption/i)).toBeInTheDocument();
   });
 
   it("blocks an invalid submit client-side (does not call the API)", async () => {
@@ -93,7 +91,7 @@ describe("TripInputForm", () => {
     const submit = vi.fn();
     render(<TripInputForm submit={submit} />);
     setOrigin();
-    fireEvent.change(screen.getByLabelText(/vehicle consumption/i), {
+    fireEvent.change(screen.getByLabelText(/consumption/i), {
       target: { value: "" },
     });
     fireEvent.click(plan());
@@ -134,6 +132,7 @@ describe("TripInputForm", () => {
     expect(payload.budget).toBe(1000);
     expect(payload.transport_mode).toBe("car");
     expect(payload.vehicle_consumption).toBe(6.5);
+    expect(payload.fuel_type).toBe("petrol"); // defaults to petrol
     expect(payload.origin_label).toBe("Skopje");
     // Default interests -> equal weights; unselected themes are absent.
     expect(payload.preferences).toMatchObject({
@@ -151,6 +150,18 @@ describe("TripInputForm", () => {
     expect(onResult.mock.calls[0][0].chosen_plan.destination.city).toBe(
       "Budapest",
     );
+  });
+
+  it("submits the chosen fuel type for a car trip", async () => {
+    const submit = vi.fn<(p: TripRequestPayload) => Promise<TripResponse>>(
+      async () => fakeResponse("Budapest"),
+    );
+    render(<TripInputForm submit={submit} onResult={vi.fn()} />);
+    setOrigin("Skopje");
+    fireEvent.click(screen.getByRole("radio", { name: /diesel/i }));
+    fireEvent.click(plan());
+    await waitFor(() => expect(submit).toHaveBeenCalledTimes(1));
+    expect(submit.mock.calls[0][0].fuel_type).toBe("diesel");
   });
 
   it("shows the loading screen while the request is in flight", async () => {

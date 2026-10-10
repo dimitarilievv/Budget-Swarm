@@ -57,6 +57,7 @@ The single primary endpoint. Takes user constraints, runs the full agent → opt
 | `preferences` | object | yes | preference→weight map, e.g. `{"culture":0.9,"food":0.8}` |
 | `origin_label` | string | yes | origin city, e.g. `"Skopje"` |
 | `vehicle_consumption` | number | conditional | required when `transport_mode = "car"` (L/100 km) |
+| `fuel_type` | string | no | `petrol` (default) or `diesel`; used only for car-mode fuel costing |
 
 ```json
 {
@@ -64,6 +65,7 @@ The single primary endpoint. Takes user constraints, runs the full agent → opt
   "duration_days": 5,
   "travelers": 2,
   "transport_mode": "car",
+  "fuel_type": "petrol",
   "preferences": { "culture": 0.9, "food": 0.8, "sightseeing": 0.7 },
   "origin_label": "Skopje",
   "vehicle_consumption": 6.5

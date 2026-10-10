@@ -6,6 +6,7 @@
 import type { BrowserOrigin } from "@/api/geolocation";
 
 export type TransportMode = "airplane" | "car" | "bus" | "train";
+export type FuelType = "petrol" | "diesel";
 export type QualityFlag = "real" | "cached" | "estimated";
 export type IndoorOutdoor = "indoor" | "outdoor" | "mixed";
 
@@ -22,6 +23,8 @@ export interface TripRequestPayload {
   origin_lat?: number | null;
   origin_lon?: number | null;
   vehicle_consumption?: number | null;
+  /** Car fuel — petrol (default) or diesel; only meaningful for car mode. */
+  fuel_type?: FuelType;
 }
 
 /**

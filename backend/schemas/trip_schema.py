@@ -24,6 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # The wire-level enums, kept in lock-step with api.md and the DB CHECK constraints.
 TransportModeStr = Literal["airplane", "car", "bus", "train"]
+FuelTypeStr = Literal["petrol", "diesel"]
 QualityFlagStr = Literal["real", "cached", "estimated"]
 IndoorOutdoorStr = Literal["indoor", "outdoor", "mixed"]
 # A saved trip's lifecycle: planned (editable/refreshable) or reserved (booked → locked).
@@ -67,6 +68,10 @@ class TripRequest(BaseModel):
         default=None,
         gt=0,
         description="Fuel use in L/100 km. Required when transport_mode == 'car'.",
+    )
+    fuel_type: FuelTypeStr = Field(
+        default="petrol",
+        description="Car fuel — 'petrol' (Euro-95) or 'diesel'. Used only for car mode.",
     )
 
     @model_validator(mode="after")
