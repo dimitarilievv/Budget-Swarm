@@ -5,7 +5,9 @@
  * #1 marked "Recommended"), each with a score ring, a budget-aware cost box, and a factor
  * list. This is an evaluation surface, so infeasible candidates are shown (never hidden) and
  * clearly marked — a missing stay price yields "€{transport}+", a hatched bar segment, and a
- * "Find a stay" button rather than a fabricated total.
+ * "No stay found" badge rather than a fabricated total. Only the recommended card carries an
+ * action button ("View trip"); every other card shows a read-only feasibility badge, since the
+ * app only holds the one generated trip and cannot re-plan a different city from here.
  *
  * Purely presentational: it takes the response plus the originating request (for budget, dates
  * and origin — which the response omits) and renders straight from fixtures in tests.
@@ -81,7 +83,7 @@ interface ComparisonPageProps {
   /** The request that produced the plan (budget, origin) — optional in tests. */
   request?: TripRequestPayload | null;
   onBack?: () => void;
-  /** Act on a card: "View trip" (recommended), "Plan this" (fits), or "Find a stay". */
+  /** Open the recommended trip — fired only by the recommended card's "View trip" button. */
   onAction?: (city: CandidateDestination, label: string) => void;
 }
 
@@ -267,7 +269,15 @@ function CityCard({
           ? `${euro(budget - total)} under budget`
           : `${euro(total - budget)} over budget`;
 
-  const cta = recommended ? "View trip" : fits ? "Plan this" : "Find a stay";
+  // The app only ever holds the one generated (recommended) trip, so the other
+  // cards can't be "planned" from here — they carry an honest feasibility badge
+  // instead of a button that would silently do nothing but re-open this trip.
+  const status: { label: string; ok: boolean } =
+    total == null
+      ? { label: "No stay found", ok: false }
+      : fits
+        ? { label: "Fits your budget", ok: true }
+        : { label: "Over budget", ok: false };
 
   const rows: [string, string, boolean][] = [
     [
@@ -415,27 +425,45 @@ function CityCard({
         ))}
       </div>
 
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          onAction?.(city.destination, cta);
-        }}
-        className="mt-auto"
-        style={{
-          padding: 10,
-          borderRadius: 12,
-          fontSize: 13,
-          fontWeight: 700,
-          border: "none",
-          cursor: "pointer",
-          fontFamily: "inherit",
-          background: active ? C.teal : "#f1f5f4",
-          color: active ? "#fff" : C.ink,
-        }}
-      >
-        {cta}
-      </button>
+      {recommended ? (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onAction?.(city.destination, "View trip");
+          }}
+          className="mt-auto"
+          style={{
+            padding: 10,
+            borderRadius: 12,
+            fontSize: 13,
+            fontWeight: 700,
+            border: "none",
+            cursor: "pointer",
+            fontFamily: "inherit",
+            background: C.teal,
+            color: "#fff",
+          }}
+        >
+          View trip
+        </button>
+      ) : (
+        <div
+          className="mt-auto flex items-center justify-center gap-1.5"
+          aria-label={`Status: ${status.label}`}
+          style={{
+            padding: 10,
+            borderRadius: 12,
+            fontSize: 13,
+            fontWeight: 700,
+            background: C.soft,
+            color: status.ok ? C.okInk : C.warnInk,
+          }}
+        >
+          <span aria-hidden="true">{status.ok ? "✓" : "✕"}</span>
+          {status.label}
+        </div>
+      )}
     </div>
   );
 }
