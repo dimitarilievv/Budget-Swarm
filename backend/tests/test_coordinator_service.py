@@ -80,6 +80,14 @@ def test_to_engine_input_maps_all_fields():
     assert dto.origin_label == "Skopje"
     assert dto.origin_lat is None and dto.origin_lon is None  # absent by default
     assert dto.vehicle_consumption == 6.5
+    assert dto.fuel_type == "petrol"  # defaults to petrol
+
+
+def test_to_engine_input_maps_fuel_type():
+    dto = CoordinatorService.to_engine_input(
+        TripRequest(**{**VALID_REQUEST, "fuel_type": "diesel"})
+    )
+    assert dto.fuel_type == "diesel"
 
 
 def test_to_engine_input_maps_origin_coordinates():

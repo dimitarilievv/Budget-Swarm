@@ -50,6 +50,7 @@ class EngineInput:
     origin_lat: float | None = None
     origin_lon: float | None = None
     vehicle_consumption: float | None = None
+    fuel_type: str = "petrol"
 
 
 @runtime_checkable
@@ -105,6 +106,7 @@ class CoordinatorService:
             origin_lat=request.origin_lat,
             origin_lon=request.origin_lon,
             vehicle_consumption=request.vehicle_consumption,
+            fuel_type=request.fuel_type,
         )
 
     @staticmethod

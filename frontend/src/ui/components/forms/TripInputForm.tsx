@@ -20,6 +20,7 @@ import {
 import { ApiError } from "@/api/errors";
 import { generateTrip } from "@/api/endpoints";
 import type {
+  FuelType,
   TransportMode,
   TripRequestPayload,
   TripResponse,
@@ -130,6 +131,7 @@ export default function TripInputForm({
   const [travelers, setTravelers] = useState(2);
   const [transportMode, setTransportMode] = useState<TransportMode>("car");
   const [vehicleConsumption, setVehicleConsumption] = useState("6.5");
+  const [fuelType, setFuelType] = useState<FuelType>("petrol");
   const [interests, setInterests] = useState<Set<string>>(
     new Set(DEFAULT_INTERESTS),
   );
@@ -195,6 +197,7 @@ export default function TripInputForm({
       origin_lat: origin.originLat,
       origin_lon: origin.originLon,
       vehicle_consumption: isCar ? parseFloat(vehicleConsumption) : null,
+      ...(isCar ? { fuel_type: fuelType } : {}),
     };
   }
 
@@ -436,31 +439,63 @@ export default function TripInputForm({
           </div>
         </div>
 
-        {/* Conditional: vehicle consumption for car */}
+        {/* Conditional: vehicle consumption + fuel type for car (side by side) */}
         {isCar && (
-          <div>
-            <label
-              htmlFor={ids.fuel}
-              className="text-sm font-semibold text-slate-800"
-            >
-              Vehicle consumption{" "}
-              <span className="font-normal text-slate-400">(L/100 km)</span>
-            </label>
-            <input
-              id={ids.fuel}
-              type="number"
-              min="0.1"
-              step="0.1"
-              value={vehicleConsumption}
-              aria-invalid={Boolean(errors.vehicle_consumption)}
-              onChange={(e) => setVehicleConsumption(e.target.value)}
-              className={numberField}
-            />
-            {errors.vehicle_consumption && (
-              <p className="mt-1 text-xs text-amber-600">
-                {errors.vehicle_consumption}
-              </p>
-            )}
+          <div className="flex flex-wrap items-start gap-4">
+            <div className="min-w-[8rem] flex-1">
+              <label
+                htmlFor={ids.fuel}
+                className="block text-sm font-semibold text-slate-800"
+              >
+                Consumption{" "}
+                <span className="font-normal text-slate-400">(L/100 km)</span>
+              </label>
+              <input
+                id={ids.fuel}
+                type="number"
+                min="0.1"
+                step="0.1"
+                value={vehicleConsumption}
+                aria-invalid={Boolean(errors.vehicle_consumption)}
+                onChange={(e) => setVehicleConsumption(e.target.value)}
+                className={`${numberField} mt-1.5`}
+              />
+              {errors.vehicle_consumption && (
+                <p className="mt-1 text-xs text-amber-600">
+                  {errors.vehicle_consumption}
+                </p>
+              )}
+            </div>
+            <div className="min-w-[8rem] flex-1">
+              <span className="block text-sm font-semibold text-slate-800">
+                Fuel type
+              </span>
+              <div
+                role="radiogroup"
+                aria-label="Fuel type"
+                className="mt-1.5 flex gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1"
+              >
+                {(["petrol", "diesel"] as FuelType[]).map((f) => {
+                  const on = fuelType === f;
+                  return (
+                    <button
+                      key={f}
+                      type="button"
+                      role="radio"
+                      aria-checked={on}
+                      onClick={() => setFuelType(f)}
+                      className={`flex-1 rounded-lg px-3 py-2 text-sm font-semibold capitalize transition ${
+                        on
+                          ? "bg-white text-slate-900 shadow-sm ring-1 ring-slate-200"
+                          : "text-slate-500 hover:text-slate-800"
+                      }`}
+                    >
+                      {f}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           </div>
         )}
 

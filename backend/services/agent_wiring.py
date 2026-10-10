@@ -669,6 +669,7 @@ def build_agent_set(bundle: WiringBundle) -> AgentSet:
                     getattr(engine_input, "vehicle_consumption", None)
                     or _DEFAULT_VEHICLE_CONSUMPTION
                 ),
+                fuel_type=getattr(engine_input, "fuel_type", "petrol"),
                 destination_country_code=dest.country_code,
                 vehicles=max(1, ceil(travelers / _CAR_SEATS)),
                 round_trip=True,
