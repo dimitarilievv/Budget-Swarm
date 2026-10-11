@@ -97,12 +97,20 @@ python -m scripts.add_destination --dry-run "Barcelona"          # preview, no w
 After adding, re-run the enrichment pipeline (below) so the new rows get cost,
 POI, season and computed feature data.
 
-The same flow is exposed over HTTP for a future admin UI (see `docs/api.md`):
-`GET /api/admin/destinations/geocode?name=…` returns ranked candidates, and
-`POST /api/admin/destinations` (by name or explicit candidate) upserts the city
-into the `destinations` table, deduped on `(city, country)`. Both are in
-`api/admin_destinations.py`; feature enrichment stays a separate batch step
-(`enrichment_pending: true` on a freshly added city).
+For a one-shot add that also **verifies feasibility**, use the gated onboarding
+command. It geocodes, upserts, and checks the destination has the essential plan
+data — above all accommodation — refusing (and rolling the row back out of the DB
+and the CSV) a city with nowhere to stay, so the candidate pool never holds an
+unusable destination. Missing feature scores / POIs are enrichment-pending
+warnings pointing at the batch step to run, not failures.
+
+```bash
+python -m scripts.onboard_destination "Barcelona"            # add + feasibility gate
+python -m scripts.onboard_destination --dry-run "Barcelona"  # report readiness, no write
+python -m scripts.onboard_destination --allow-incomplete "Faro"  # waive the gate
+```
+
+See `scripts/onboard_destination.py`.
 
 ## Cost-of-living ingestion — WhereNext (BS-011)
 
