@@ -112,6 +112,18 @@ python -m scripts.onboard_destination --allow-incomplete "Faro"  # waive the gat
 
 See `scripts/onboard_destination.py`.
 
+To take a city **out of** (or back into) the candidate pool without deleting it
+— the soft on/off switch, keeping all its data for later — use:
+
+```bash
+python -m scripts.set_destination_active "Naples" --disable   # skip it everywhere
+python -m scripts.set_destination_active "Naples" --enable    # put it back
+```
+
+A disabled destination (`destinations.active = false`) is excluded from Scout's
+candidate load and `GET /api/destinations`, but its rows stay intact. See
+`scripts/set_destination_active.py`.
+
 ## Cost-of-living ingestion — WhereNext (BS-011)
 
 Cost-of-living is real data from **WhereNext** (getwherenext.com, CC BY 4.0),

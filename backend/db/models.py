@@ -58,6 +58,9 @@ class Destination(Base):
     country_code: Mapped[str | None] = mapped_column(String(2))
     latitude: Mapped[float] = mapped_column(Double, nullable=False)
     longitude: Mapped[float] = mapped_column(Double, nullable=False)
+    # Soft enable/disable: an inactive city is kept (with its data) but excluded from
+    # the candidate pool and the public listing. Defaults to active.
+    active: Mapped[bool] = mapped_column(nullable=False, server_default=text("true"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

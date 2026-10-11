@@ -85,3 +85,75 @@ def test_list_destinations_endpoint(migrated_engine):
         assert porto["latitude"] == pytest.approx(41.1579)
     finally:
         app.dependency_overrides.clear()
+
+
+@pytest.mark.integration
+def test_list_destinations_excludes_inactive(migrated_engine):
+    from db.session import get_db
+    from fastapi.testclient import TestClient
+    from main import app
+
+    with migrated_engine.begin() as conn:
+        conn.execute(text("""
+                INSERT INTO destinations (city, country, country_code, latitude, longitude, active)
+                VALUES ('Activeville', 'Testland', 'TL', 1.0, 2.0, true),
+                       ('Hiddentown', 'Testland', 'TL', 3.0, 4.0, false)
+                """))
+
+    def _override_get_db():
+        db = Session(bind=migrated_engine)
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = _override_get_db
+    try:
+        rows = TestClient(app).get("/api/destinations").json()
+        cities = {d["city"] for d in rows}
+        assert "Activeville" in cities
+        assert "Hiddentown" not in cities  # inactive is excluded
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.integration
+def test_set_destination_active_toggles_candidate_pool(migrated_engine):
+    from db.repositories import DestinationRepository
+    from scripts.set_destination_active import set_active
+
+    with migrated_engine.begin() as conn:
+        conn.execute(text("""
+                INSERT INTO destinations (city, country, country_code, latitude, longitude)
+                VALUES ('Togglegrad', 'Testland', 'TL', 5.0, 6.0)
+                """))
+
+    with Session(migrated_engine) as session:
+        repo = DestinationRepository(session)
+        assert any(d.city == "Togglegrad" for d in repo.list_active())
+
+        # Disable → dropped from the active pool, but the row still exists.
+        changed, not_found, ambiguous = set_active(session, ["Togglegrad"], active=False)
+        assert changed == ["Togglegrad, Testland"]
+        assert not_found == [] and ambiguous == []
+
+    with Session(migrated_engine) as session:
+        repo = DestinationRepository(session)
+        assert not any(d.city == "Togglegrad" for d in repo.list_active())
+        assert repo.get_by_city_country("Togglegrad", "Testland") is not None  # not deleted
+
+        # Re-enable → back in the pool.
+        set_active(session, ["Togglegrad"], active=True)
+
+    with Session(migrated_engine) as session:
+        assert any(d.city == "Togglegrad" for d in DestinationRepository(session).list_active())
+
+
+@pytest.mark.integration
+def test_set_destination_active_reports_unmatched(migrated_engine):
+    from scripts.set_destination_active import set_active
+
+    with Session(migrated_engine) as session:
+        changed, not_found, ambiguous = set_active(session, ["Nowhereville"], active=False)
+        assert changed == []
+        assert not_found == ["Nowhereville"]

@@ -19,7 +19,7 @@ def list_destinations(
     limit: int = Query(default=50, ge=1, le=200),
     db: Session = Depends(get_db),
 ) -> list[dict]:
-    """Return curated destinations (id, city, country, coordinates)."""
+    """Return active curated destinations (id, city, country, coordinates)."""
     repo = DestinationRepository(db)
     return [
         {
@@ -30,5 +30,5 @@ def list_destinations(
             "latitude": d.latitude,
             "longitude": d.longitude,
         }
-        for d in repo.list(limit=limit)
+        for d in repo.list_active(limit=limit)
     ]

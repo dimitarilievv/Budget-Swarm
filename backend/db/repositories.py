@@ -89,6 +89,17 @@ class DestinationRepository(Repository[Destination]):
         stmt = select(Destination).where(Destination.city == city, Destination.country == country)
         return self.session.scalars(stmt).first()
 
+    def list_active(self, *, limit: int | None = None) -> list[Destination]:
+        """Return only active destinations (the candidate pool / public listing).
+
+        Inactive cities are soft-disabled: still in the table (with their data) but
+        excluded here, so Scout never shortlists them and the API never lists them.
+        """
+        stmt = select(Destination).where(Destination.active.is_(True))
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        return list(self.session.scalars(stmt).all())
+
 
 class DestinationFeatureRepository(Repository[DestinationFeature]):
     model = DestinationFeature
