@@ -537,3 +537,105 @@ def test_refresh_weather_replans_activities_on_conflict(client):
             assert all(a["indoor_outdoor"] != "outdoor" for a in day1["activities"])
     finally:
         app.dependency_overrides.pop(get_weather_refresher, None)
+
+
+# --- account deletion (DELETE /api/auth/me) ----------------------------------
+
+
+@pytest.mark.integration
+def test_delete_me_requires_auth(client):
+    assert client.delete("/api/auth/me").status_code == 401
+
+
+@pytest.mark.integration
+def test_delete_me_removes_user_trips_tokens_and_row(client, db_engine):
+    from db.models import Trip, User
+    from sqlalchemy.orm import Session
+
+    user = _register(client)
+    trip_id = _create_trip(client, user["headers"])
+
+    resp = client.delete("/api/auth/me", headers=user["headers"])
+    assert resp.status_code == 204
+
+    # The access token no longer names a real user, and the refresh token is gone.
+    assert client.get("/api/auth/me", headers=user["headers"]).status_code == 401
+    refreshed = client.post(
+        "/api/auth/refresh", json={"refresh_token": user["tokens"]["refresh_token"]}
+    )
+    assert refreshed.status_code == 401
+
+    # User row, the user's trip, and the trip's activities are all gone from the DB.
+    with Session(db_engine) as session:
+        assert session.get(User, user["user_id"]) is None
+        assert session.get(Trip, trip_id) is None
+
+
+@pytest.mark.integration
+def test_delete_me_does_not_touch_another_users_data(client):
+    alice = _register(client)
+    bob = _register(client)
+    bob_trip = _create_trip(client, bob["headers"])
+
+    assert client.delete("/api/auth/me", headers=alice["headers"]).status_code == 204
+
+    # Bob is unaffected: still authenticated, still owns his trip.
+    assert client.get("/api/auth/me", headers=bob["headers"]).status_code == 200
+    listed = client.get("/api/trips", headers=bob["headers"]).json()
+    assert any(t["id"] == bob_trip for t in listed)
+
+
+# --- refresh-token purge (scripts.purge_refresh_tokens) ----------------------
+
+
+@pytest.mark.integration
+def test_purge_dead_removes_only_expired_and_revoked_tokens(client, db_engine):
+    from datetime import UTC, datetime, timedelta
+
+    from db.models import RefreshToken
+    from db.repositories import RefreshTokenRepository
+    from sqlalchemy import select
+    from sqlalchemy.orm import Session
+
+    user = _register(client)  # issues one active refresh token
+    now = datetime.now(UTC)
+    expired_hash = "expired-" + uuid.uuid4().hex
+    revoked_hash = "revoked-" + uuid.uuid4().hex
+
+    with Session(db_engine) as session:
+        session.add_all(
+            [
+                RefreshToken(
+                    user_id=user["user_id"],
+                    token_hash=expired_hash,
+                    expires_at=now - timedelta(days=1),  # dead: past expiry
+                ),
+                RefreshToken(
+                    user_id=user["user_id"],
+                    token_hash=revoked_hash,
+                    expires_at=now + timedelta(days=30),
+                    revoked_at=now - timedelta(hours=1),  # dead: revoked
+                ),
+            ]
+        )
+        session.commit()
+
+        # purge is global; other tests may have left dead tokens too, so assert on
+        # our own rows specifically rather than an exact global count.
+        removed = RefreshTokenRepository(session).purge_dead(now=now)
+        session.commit()
+        assert removed >= 2
+
+        # Our two dead tokens are gone; the active one from registration survives.
+        gone = session.scalars(
+            select(RefreshToken).where(RefreshToken.token_hash.in_([expired_hash, revoked_hash]))
+        ).all()
+        assert gone == []
+        remaining = session.scalars(
+            select(RefreshToken).where(RefreshToken.user_id == user["user_id"])
+        ).all()
+        assert len(remaining) == 1
+        assert remaining[0].revoked_at is None and remaining[0].expires_at > now
+
+        # Idempotent: a second purge finds nothing dead left.
+        assert RefreshTokenRepository(session).purge_dead(now=now) == 0

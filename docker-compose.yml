@@ -73,6 +73,11 @@ services:
       ofelia.enabled: "true"
       ofelia.job-exec.fuel-refresh.schedule: "0 0 6 * * 5"
       ofelia.job-exec.fuel-refresh.command: "python -m scripts.ingest_fuel_prices"
+      # Daily auth housekeeping: delete expired/revoked refresh tokens so the
+      # table doesn't grow without bound. 6-field cron: every day 03:30 UTC.
+      # Idempotent — a run with nothing to purge is a no-op.
+      ofelia.job-exec.refresh-token-purge.schedule: "0 30 3 * * *"
+      ofelia.job-exec.refresh-token-purge.command: "python -m scripts.purge_refresh_tokens"
 
   scheduler:
     # Lightweight cron for Docker: reads the ofelia.* labels off other services

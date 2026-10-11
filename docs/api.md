@@ -36,6 +36,9 @@ Body `{ "refresh_token": "..." }` → `204`. Revokes the refresh token; idempote
 ### `GET /api/auth/me`
 Returns the authenticated user (`401` without a valid token).
 
+### `DELETE /api/auth/me`
+Permanently deletes the authenticated user and all their data — saved trips (and their activities) and refresh tokens (logging every session out) — then `204`. Irreversible; requires a valid access token (`401` without). Any still-valid access token is useless afterwards.
+
 > `/login` and `/register` are rate-limited more strictly than other endpoints (default 5/min per IP, `AUTH_RATE_LIMIT_*`).
 
 ---

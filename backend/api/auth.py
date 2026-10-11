@@ -25,7 +25,7 @@ from functools import lru_cache
 
 from config import Settings, get_settings
 from db.models import RefreshToken, User
-from db.repositories import RefreshTokenRepository, UserRepository
+from db.repositories import RefreshTokenRepository, TripRepository, UserRepository
 from db.session import get_db
 from errors import ConflictError, UnauthorizedError
 from fastapi import APIRouter, Depends, Response, status
@@ -186,3 +186,23 @@ def logout(
 def me(user: User = Depends(get_current_user)) -> UserOut:
     """Return the currently authenticated user."""
     return UserOut.model_validate(user)
+
+
+@router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
+def delete_me(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Permanently delete the authenticated user and all their data.
+
+    Removes the user's saved trips (and their activities, via the DB cascade),
+    then the user row — which cascades the user's refresh tokens, logging every
+    session out. Irreversible. Any still-valid access token becomes useless on
+    its next use, since the user it names no longer exists.
+    """
+    user_id = user.id
+    deleted_trips = TripRepository(db).delete_for_user(user_id)
+    UserRepository(db).delete(user)
+    db.commit()
+    logger.info("auth: deleted account id=%s (%d trip(s) removed)", user_id, deleted_trips)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
