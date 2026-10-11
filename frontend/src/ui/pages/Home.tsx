@@ -22,6 +22,19 @@ const NAV: [string, string][] = [
   ["faq", "FAQ"],
 ];
 
+/** Up to two initials from a name, else the email's first letter. */
+function navInitials(name: string | null | undefined, email: string): string {
+  const source = (name ?? "").trim();
+  if (source) {
+    return source
+      .split(/\s+/)
+      .slice(0, 2)
+      .map((p) => p[0]!.toUpperCase())
+      .join("");
+  }
+  return (email[0] ?? "?").toUpperCase();
+}
+
 /** Track which section is in view so the header nav can mark the current one. */
 function useActiveSection(ids: string[]): string {
   const [active, setActive] = useState(ids[0]);
@@ -372,12 +385,48 @@ function Header() {
             >
               My trips
             </button>
-            <span
-              style={{ fontSize: 13, color: C.muted, whiteSpace: "nowrap" }}
-              className="hidden sm:inline"
+            <button
+              type="button"
+              onClick={() => navigate("/profile")}
+              title="Your account"
+              aria-label="Your account"
+              style={{
+                all: "unset",
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                cursor: "pointer",
+                padding: "4px 12px 4px 4px",
+                borderRadius: 99,
+                border: "1px solid #d7e2df",
+                background: "#fff",
+                whiteSpace: "nowrap",
+              }}
             >
-              {auth?.user?.name || auth?.user?.email}
-            </span>
+              <span
+                aria-hidden="true"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: 26,
+                  height: 26,
+                  borderRadius: 99,
+                  background: C.teal,
+                  color: "#fff",
+                  fontSize: 11,
+                  fontWeight: 700,
+                }}
+              >
+                {navInitials(auth?.user?.name, auth?.user?.email ?? "")}
+              </span>
+              <span
+                style={{ fontSize: 13, fontWeight: 600, color: C.ink }}
+                className="hidden sm:inline"
+              >
+                {auth?.user?.name || auth?.user?.email}
+              </span>
+            </button>
             <button
               type="button"
               onClick={() => auth?.logout()}
