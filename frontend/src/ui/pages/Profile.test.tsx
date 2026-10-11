@@ -1,14 +1,20 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import ProfilePage from "./Profile";
 
 const changePassword = vi.fn(async () => {});
 const deleteAccount = vi.fn(async () => {});
+const updateProfile = vi.fn(async () => {});
+const logout = vi.fn();
 const navigate = vi.fn();
 
 vi.mock("@/router", () => ({
   navigate: (to: string) => navigate(to),
+}));
+
+vi.mock("@/api/endpoints", () => ({
+  listTrips: vi.fn(async () => []),
 }));
 
 vi.mock("@/contexts/AuthContext", () => ({
@@ -21,8 +27,10 @@ vi.mock("@/contexts/AuthContext", () => ({
       created_at: "2026-01-15T00:00:00Z",
       updated_at: "2026-01-15T00:00:00Z",
     },
+    logout,
     changePassword,
     deleteAccount,
+    updateProfile,
   }),
 }));
 
@@ -30,45 +38,53 @@ function typeInto(label: RegExp, value: string) {
   fireEvent.change(screen.getByLabelText(label), { target: { value } });
 }
 
+function openSecurity() {
+  fireEvent.click(screen.getByRole("button", { name: /security/i }));
+}
+
+function openDanger() {
+  fireEvent.click(screen.getByRole("button", { name: /remove your data/i }));
+}
+
 beforeEach(() => {
   changePassword.mockClear();
   deleteAccount.mockClear();
+  updateProfile.mockClear();
   navigate.mockClear();
 });
 
 describe("ProfilePage", () => {
-  it("shows the account info", () => {
+  it("shows the account details on the default tab", () => {
     render(<ProfilePage />);
-    expect(screen.getByText("ana@example.com")).toBeInTheDocument();
-    expect(screen.getByText("Ana")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Ana")).toBeInTheDocument(); // name input
+    expect(screen.getByDisplayValue("ana@example.com")).toBeInTheDocument(); // email (read-only)
   });
 
-  it("blocks a mismatched confirmation and does not call the API", async () => {
+  it("saves a changed display name", async () => {
     render(<ProfilePage />);
+    typeInto(/full name/i, "Ana Smith");
+    fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
+    await waitFor(() =>
+      expect(updateProfile).toHaveBeenCalledWith("Ana Smith"),
+    );
+  });
+
+  it("keeps the password button disabled until valid and matching", () => {
+    render(<ProfilePage />);
+    openSecurity();
     typeInto(/current password/i, "password123");
     typeInto(/^new password/i, "newpassword456");
     typeInto(/confirm new password/i, "different999");
-    fireEvent.click(screen.getByRole("button", { name: /update password/i }));
 
-    expect(await screen.findByText(/do not match/i)).toBeInTheDocument();
-    expect(changePassword).not.toHaveBeenCalled();
-  });
-
-  it("blocks a too-short new password", async () => {
-    render(<ProfilePage />);
-    typeInto(/current password/i, "password123");
-    typeInto(/^new password/i, "short");
-    typeInto(/confirm new password/i, "short");
-    fireEvent.click(screen.getByRole("button", { name: /update password/i }));
-
-    expect(
-      await screen.findByText(/new password must be at least 8 characters/i),
-    ).toBeInTheDocument();
+    const btn = screen.getByRole("button", { name: /update password/i });
+    expect(btn).toBeDisabled();
+    expect(screen.getByText(/doesn.t match yet/i)).toBeInTheDocument();
     expect(changePassword).not.toHaveBeenCalled();
   });
 
   it("submits a valid password change and reports success", async () => {
     render(<ProfilePage />);
+    openSecurity();
     typeInto(/current password/i, "password123");
     typeInto(/^new password/i, "newpassword456");
     typeInto(/confirm new password/i, "newpassword456");
@@ -89,6 +105,7 @@ describe("ProfilePage", () => {
       new ApiError("UNAUTHORIZED", "Current password is incorrect"),
     );
     render(<ProfilePage />);
+    openSecurity();
     typeInto(/current password/i, "wrongpassword");
     typeInto(/^new password/i, "newpassword456");
     typeInto(/confirm new password/i, "newpassword456");
@@ -99,16 +116,18 @@ describe("ProfilePage", () => {
     ).toBeInTheDocument();
   });
 
-  it("deletes the account only after the email is confirmed, then returns home", async () => {
+  it("deletes the account only after typing DELETE, then returns home", async () => {
     render(<ProfilePage />);
-    fireEvent.click(screen.getByRole("button", { name: /^delete account$/i }));
+    openDanger();
 
     const confirmBtn = screen.getByRole("button", {
-      name: /delete permanently/i,
+      name: /^delete account$/i,
     });
-    expect(confirmBtn).toBeDisabled(); // armed only once the email matches
+    expect(confirmBtn).toBeDisabled();
 
-    typeInto(/type your email/i, "ana@example.com");
+    fireEvent.change(screen.getByPlaceholderText("DELETE"), {
+      target: { value: "DELETE" },
+    });
     expect(confirmBtn).toBeEnabled();
 
     fireEvent.click(confirmBtn);

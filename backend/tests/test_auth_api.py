@@ -539,6 +539,31 @@ def test_refresh_weather_replans_activities_on_conflict(client):
         app.dependency_overrides.pop(get_weather_refresher, None)
 
 
+# --- update profile (PATCH /api/auth/me) -------------------------------------
+
+
+@pytest.mark.integration
+def test_update_me_requires_auth(client):
+    assert client.patch("/api/auth/me", json={"name": "New Name"}).status_code == 401
+
+
+@pytest.mark.integration
+def test_update_me_changes_the_display_name(client):
+    user = _register(client)
+    resp = client.patch("/api/auth/me", json={"name": "  Ada Lovelace  "}, headers=user["headers"])
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["name"] == "Ada Lovelace"  # trimmed
+    # Persisted: /me reflects it.
+    assert client.get("/api/auth/me", headers=user["headers"]).json()["name"] == "Ada Lovelace"
+
+
+@pytest.mark.integration
+def test_update_me_rejects_overlong_name(client):
+    user = _register(client)
+    resp = client.patch("/api/auth/me", json={"name": "x" * 121}, headers=user["headers"])
+    assert resp.status_code == 422
+
+
 # --- change password (POST /api/auth/change-password) ------------------------
 
 

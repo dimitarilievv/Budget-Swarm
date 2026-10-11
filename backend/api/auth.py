@@ -36,6 +36,7 @@ from schemas.auth_schema import (
     RefreshRequest,
     RegisterRequest,
     TokenPair,
+    UpdateProfileRequest,
     UserOut,
 )
 from services.auth import (
@@ -186,6 +187,20 @@ def logout(
 @router.get("/me", response_model=UserOut)
 def me(user: User = Depends(get_current_user)) -> UserOut:
     """Return the currently authenticated user."""
+    return UserOut.model_validate(user)
+
+
+@router.patch("/me", response_model=UserOut)
+def update_me(
+    body: UpdateProfileRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> UserOut:
+    """Update the authenticated user's editable profile fields (currently the display name)."""
+    user.name = body.name
+    db.commit()
+    db.refresh(user)
+    logger.info("auth: profile updated for user id=%s", user.id)
     return UserOut.model_validate(user)
 
 
