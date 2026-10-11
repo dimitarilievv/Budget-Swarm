@@ -1,13 +1,13 @@
 /**
  * ProfilePage — the signed-in user's account screen (`/profile`).
  *
- * Three sections: account info (email, name, member-since — read-only), a change-password
- * form (wired to `POST /api/auth/change-password`, which rotates this client's tokens and
- * logs every other session out), and a "danger zone" that permanently deletes the account
+ * A teal hero with the user's avatar + account info, a change-password card (wired to
+ * `POST /api/auth/change-password`, which rotates this client's tokens and logs every
+ * other session out), and a "danger zone" that permanently deletes the account
  * (`DELETE /api/auth/me`) behind a type-your-email confirmation. On delete the local
  * session ends and we return home.
  *
- * Self-contained like {@link MyTrips}: it renders its own header with a back-to-planner
+ * Self-contained like {@link MyTrips}: it renders its own top bar with a back-to-planner
  * link rather than the app shell's navbar.
  */
 import { useState } from "react";
@@ -15,7 +15,11 @@ import { useState } from "react";
 import { ApiError } from "@/api/errors";
 import { useAuth } from "@/contexts/AuthContext";
 import { navigate } from "@/router";
-import { IconUser } from "@/ui/components/common/Icons";
+import {
+  IconCalendar,
+  IconCheck,
+  IconUser,
+} from "@/ui/components/common/Icons";
 
 const MIN_PASSWORD = 8;
 
@@ -32,13 +36,24 @@ function formatDate(iso: string | undefined): string {
       });
 }
 
+/** Up to two initials from a name, else the email's first letter. */
+function initialsFor(name: string | null, email: string): string {
+  const source = (name ?? "").trim();
+  if (source) {
+    const parts = source.split(/\s+/).slice(0, 2);
+    return parts.map((p) => p[0]!.toUpperCase()).join("");
+  }
+  return (email[0] ?? "?").toUpperCase();
+}
+
 export default function ProfilePage() {
-  const { user, changePassword, deleteAccount } = useAuth();
+  const { user, logout, changePassword, deleteAccount } = useAuth();
 
   // --- change-password form state ---
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [confirm, setConfirm] = useState("");
+  const [showPw, setShowPw] = useState(false);
   const [pwError, setPwError] = useState<string | null>(null);
   const [pwOk, setPwOk] = useState(false);
   const [pwBusy, setPwBusy] = useState(false);
@@ -106,8 +121,9 @@ export default function ProfilePage() {
 
   return (
     <div className="min-h-screen bg-[#f3f7f6] text-slate-900">
-      <header className="border-b border-teal-950/[0.07] bg-[#f5fbfa]/75 backdrop-blur-xl">
-        <div className="mx-auto flex h-16 max-w-3xl items-center justify-between px-6">
+      {/* Top bar */}
+      <header className="sticky top-0 z-20 border-b border-teal-950/[0.07] bg-[#f5fbfa]/80 backdrop-blur-xl">
+        <div className="mx-auto flex h-16 max-w-2xl items-center justify-between px-6">
           <button
             type="button"
             onClick={() => navigate("/")}
@@ -123,68 +139,71 @@ export default function ProfilePage() {
               Budget<span className="text-teal-600">Swarm</span>
             </span>
           </button>
-          <button
-            type="button"
-            onClick={() => navigate("/")}
-            className="text-sm font-medium text-slate-600 transition hover:text-slate-900"
-          >
-            ← Back to planner
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => navigate("/")}
+              className="rounded-full px-3 py-1.5 text-sm font-medium text-slate-600 transition hover:bg-white/70 hover:text-slate-900"
+            >
+              ← Planner
+            </button>
+            <button
+              type="button"
+              onClick={() => logout()}
+              className="rounded-full border border-slate-200 bg-white px-4 py-1.5 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-900"
+            >
+              Log out
+            </button>
+          </div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-3xl px-6 py-10">
-        <h1 className="flex items-center gap-2.5 text-2xl font-bold tracking-tight">
-          <IconUser className="h-6 w-6 text-teal-600" />
-          Your account
-        </h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Manage your sign-in details and account.
-        </p>
-
-        {/* Account info */}
-        <section className="mt-8 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
-            Account
-          </h2>
-          <dl className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div>
-              <dt className="text-xs font-medium text-slate-500">Email</dt>
-              <dd className="mt-1 text-sm font-medium text-slate-900">
-                {user.email}
-              </dd>
+      <main className="mx-auto max-w-2xl px-6 py-8 sm:py-10">
+        {/* Hero / identity */}
+        <section className="overflow-hidden rounded-3xl bg-gradient-to-br from-teal-600 to-teal-800 p-7 text-white shadow-lg shadow-teal-900/10">
+          <div className="flex items-center gap-5">
+            <div
+              aria-hidden="true"
+              className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-white/15 text-2xl font-bold ring-1 ring-white/25"
+            >
+              {initialsFor(user.name, user.email)}
             </div>
-            <div>
-              <dt className="text-xs font-medium text-slate-500">Name</dt>
-              <dd className="mt-1 text-sm font-medium text-slate-900">
-                {user.name || "—"}
-              </dd>
+            <div className="min-w-0">
+              <h1 className="truncate text-2xl font-bold tracking-tight">
+                {user.name || "Your account"}
+              </h1>
+              <p className="truncate text-sm text-teal-50/90">{user.email}</p>
             </div>
-            <div>
-              <dt className="text-xs font-medium text-slate-500">
-                Member since
-              </dt>
-              <dd className="mt-1 text-sm font-medium text-slate-900">
-                {formatDate(user.created_at)}
-              </dd>
-            </div>
-          </dl>
+          </div>
+          <div className="mt-5 flex flex-wrap gap-2">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 text-xs font-medium ring-1 ring-white/20">
+              <IconCalendar className="h-3.5 w-3.5" />
+              Member since {formatDate(user.created_at)}
+            </span>
+          </div>
         </section>
 
         {/* Change password */}
-        <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
-            Change password
-          </h2>
-          <p className="mt-1 text-xs text-slate-500">
-            Changing your password signs out every other device.
-          </p>
-          <form onSubmit={onChangePassword} className="mt-4 space-y-4">
+        <section className="mt-6 rounded-3xl border border-slate-200/80 bg-white p-6 shadow-sm sm:p-7">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="flex items-center gap-2 text-base font-semibold text-slate-900">
+                <IconUser className="h-4 w-4 text-teal-600" />
+                Change password
+              </h2>
+              <p className="mt-0.5 text-sm text-slate-500">
+                Updating signs out every other device.
+              </p>
+            </div>
+          </div>
+
+          <form onSubmit={onChangePassword} className="mt-5 space-y-4">
             <Field
               id="current-password"
               label="Current password"
               value={current}
               onChange={setCurrent}
+              reveal={showPw}
               autoComplete="current-password"
             />
             <Field
@@ -192,6 +211,7 @@ export default function ProfilePage() {
               label="New password"
               value={next}
               onChange={setNext}
+              reveal={showPw}
               autoComplete="new-password"
               hint={`At least ${MIN_PASSWORD} characters.`}
             />
@@ -200,16 +220,34 @@ export default function ProfilePage() {
               label="Confirm new password"
               value={confirm}
               onChange={setConfirm}
+              reveal={showPw}
               autoComplete="new-password"
             />
 
+            <label className="flex w-fit cursor-pointer items-center gap-2 text-sm text-slate-600">
+              <input
+                type="checkbox"
+                checked={showPw}
+                onChange={(e) => setShowPw(e.target.checked)}
+                className="h-4 w-4 rounded border-slate-300 text-teal-600 focus:ring-teal-500"
+              />
+              Show passwords
+            </label>
+
             {pwError && (
-              <p role="alert" className="text-sm font-medium text-rose-600">
+              <p
+                role="alert"
+                className="rounded-lg bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700"
+              >
                 {pwError}
               </p>
             )}
             {pwOk && (
-              <p role="status" className="text-sm font-medium text-teal-700">
+              <p
+                role="status"
+                className="flex items-center gap-1.5 rounded-lg bg-teal-50 px-3 py-2 text-sm font-medium text-teal-700"
+              >
+                <IconCheck className="h-4 w-4" />
                 Password updated.
               </p>
             )}
@@ -217,7 +255,7 @@ export default function ProfilePage() {
             <button
               type="submit"
               disabled={pwBusy || !current || !next || !confirm}
-              className="rounded-full bg-teal-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50"
+              className="rounded-full bg-teal-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {pwBusy ? "Updating…" : "Update password"}
             </button>
@@ -225,11 +263,11 @@ export default function ProfilePage() {
         </section>
 
         {/* Danger zone */}
-        <section className="mt-6 rounded-2xl border border-rose-200 bg-rose-50/50 p-6">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-rose-600">
+        <section className="mt-6 rounded-3xl border border-rose-200 bg-rose-50/40 p-6 sm:p-7">
+          <h2 className="text-base font-semibold text-rose-700">
             Delete account
           </h2>
-          <p className="mt-1 text-sm text-slate-600">
+          <p className="mt-0.5 text-sm text-slate-600">
             Permanently delete your account and all saved trips. This cannot be
             undone.
           </p>
@@ -238,18 +276,21 @@ export default function ProfilePage() {
             <button
               type="button"
               onClick={() => setConfirmingDelete(true)}
-              className="mt-4 rounded-full border border-rose-300 bg-white px-5 py-2 text-sm font-semibold text-rose-600 transition hover:bg-rose-100"
+              className="mt-4 rounded-full border border-rose-300 bg-white px-5 py-2.5 text-sm font-semibold text-rose-600 shadow-sm transition hover:bg-rose-600 hover:text-white"
             >
               Delete account
             </button>
           ) : (
-            <div className="mt-4 space-y-3">
+            <div className="mt-4 space-y-3 rounded-2xl border border-rose-200 bg-white p-4">
               <label
                 htmlFor="delete-confirm"
                 className="block text-sm font-medium text-slate-700"
               >
                 Type your email{" "}
-                <span className="font-semibold">{user.email}</span> to confirm
+                <span className="font-semibold text-slate-900">
+                  {user.email}
+                </span>{" "}
+                to confirm
               </label>
               <input
                 id="delete-confirm"
@@ -257,19 +298,20 @@ export default function ProfilePage() {
                 value={deleteEmail}
                 onChange={(e) => setDeleteEmail(e.target.value)}
                 autoComplete="off"
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-rose-400 focus:ring-2 focus:ring-rose-200"
+                placeholder={user.email}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none transition focus:border-rose-400 focus:ring-2 focus:ring-rose-200"
               />
               {deleteError && (
                 <p role="alert" className="text-sm font-medium text-rose-600">
                   {deleteError}
                 </p>
               )}
-              <div className="flex gap-3">
+              <div className="flex flex-wrap gap-3 pt-1">
                 <button
                   type="button"
                   disabled={!deleteArmed || deleteBusy}
                   onClick={onDelete}
-                  className="rounded-full bg-rose-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="rounded-full bg-rose-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {deleteBusy ? "Deleting…" : "Delete permanently"}
                 </button>
@@ -281,7 +323,7 @@ export default function ProfilePage() {
                     setDeleteEmail("");
                     setDeleteError(null);
                   }}
-                  className="rounded-full border border-slate-200 bg-white px-5 py-2 text-sm font-medium text-slate-700 transition hover:text-slate-900"
+                  className="rounded-full border border-slate-200 bg-white px-5 py-2.5 text-sm font-medium text-slate-700 transition hover:text-slate-900"
                 >
                   Cancel
                 </button>
@@ -294,12 +336,13 @@ export default function ProfilePage() {
   );
 }
 
-/** A labelled password input used by the change-password form. */
+/** A labelled password input (with an optional reveal) used by the change-password form. */
 function Field({
   id,
   label,
   value,
   onChange,
+  reveal,
   autoComplete,
   hint,
 }: {
@@ -307,6 +350,7 @@ function Field({
   label: string;
   value: string;
   onChange: (v: string) => void;
+  reveal: boolean;
   autoComplete: string;
   hint?: string;
 }) {
@@ -317,11 +361,11 @@ function Field({
       </label>
       <input
         id={id}
-        type="password"
+        type={reveal ? "text" : "password"}
         value={value}
         autoComplete={autoComplete}
         onChange={(e) => onChange(e.target.value)}
-        className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-teal-400 focus:ring-2 focus:ring-teal-200"
+        className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none transition focus:border-teal-400 focus:ring-2 focus:ring-teal-200"
       />
       {hint && <p className="mt-1 text-xs text-slate-400">{hint}</p>}
     </div>
