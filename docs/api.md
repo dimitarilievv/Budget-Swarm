@@ -36,6 +36,9 @@ Body `{ "refresh_token": "..." }` → `204`. Revokes the refresh token; idempote
 ### `GET /api/auth/me`
 Returns the authenticated user (`401` without a valid token).
 
+### `POST /api/auth/change-password`
+Body `{ "current_password": "...", "new_password": "..." }` (requires a valid access token). Verifies the current password, stores the new one (min 8 chars), revokes **all** the user's refresh tokens (logging every other session out), and returns a fresh `{ user, tokens }` pair so this client stays signed in. `401` if the current password is wrong or no token; `422` if the new password is invalid or not different.
+
 ### `DELETE /api/auth/me`
 Permanently deletes the authenticated user and all their data — saved trips (and their activities) and refresh tokens (logging every session out) — then `204`. Irreversible; requires a valid access token (`401` without). Any still-valid access token is useless afterwards.
 

@@ -27,10 +27,11 @@ from config import Settings, get_settings
 from db.models import RefreshToken, User
 from db.repositories import RefreshTokenRepository, TripRepository, UserRepository
 from db.session import get_db
-from errors import ConflictError, UnauthorizedError
+from errors import ConflictError, UnauthorizedError, ValidationError
 from fastapi import APIRouter, Depends, Response, status
 from schemas.auth_schema import (
     AuthResponse,
+    ChangePasswordRequest,
     LoginRequest,
     RefreshRequest,
     RegisterRequest,
@@ -186,6 +187,35 @@ def logout(
 def me(user: User = Depends(get_current_user)) -> UserOut:
     """Return the currently authenticated user."""
     return UserOut.model_validate(user)
+
+
+@router.post("/change-password", response_model=AuthResponse)
+def change_password(
+    body: ChangePasswordRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> AuthResponse:
+    """Change the authenticated user's password.
+
+    Verifies the current password, stores the new one as a fresh bcrypt hash, and
+    revokes **all** of the user's refresh tokens — logging every other session out —
+    before issuing a new pair for this client, so the caller stays signed in. The
+    current password must be correct and the new one must differ from it.
+    """
+    if not verify_password(body.current_password, user.password_hash):
+        raise UnauthorizedError("Current password is incorrect")
+    if verify_password(body.new_password, user.password_hash):
+        raise ValidationError("New password must differ from the current one", field="new_password")
+
+    now = datetime.now(UTC)
+    user.password_hash = hash_password(body.new_password)
+    RefreshTokenRepository(db).revoke_all_for_user(user.id, now=now)
+    tokens = _issue_token_pair(user, db, settings)
+    db.commit()
+    db.refresh(user)
+    logger.info("auth: password changed for user id=%s (all sessions revoked)", user.id)
+    return AuthResponse(user=UserOut.model_validate(user), tokens=tokens)
 
 
 @router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)

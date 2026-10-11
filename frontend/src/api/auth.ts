@@ -103,6 +103,38 @@ export async function getMe(
   }
 }
 
+/**
+ * `POST /api/auth/change-password` — set a new password.
+ *
+ * On success every session is revoked server-side and a fresh pair is returned for this
+ * client; the caller should persist those new tokens so it stays signed in.
+ */
+export async function changePassword(
+  payload: { current_password: string; new_password: string },
+  client: AxiosInstance = apiClient,
+): Promise<AuthResult> {
+  try {
+    const { data } = await client.post<AuthResult>(
+      "/api/auth/change-password",
+      payload,
+    );
+    return data;
+  } catch (err) {
+    throw toApiError(err);
+  }
+}
+
+/** `DELETE /api/auth/me` — permanently delete the account and all its data. */
+export async function deleteAccount(
+  client: AxiosInstance = apiClient,
+): Promise<void> {
+  try {
+    await client.delete("/api/auth/me");
+  } catch (err) {
+    throw toApiError(err);
+  }
+}
+
 // --- token storage -----------------------------------------------------------
 
 const ACCESS_KEY = "bs.auth.access";

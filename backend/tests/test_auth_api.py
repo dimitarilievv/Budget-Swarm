@@ -539,6 +539,98 @@ def test_refresh_weather_replans_activities_on_conflict(client):
         app.dependency_overrides.pop(get_weather_refresher, None)
 
 
+# --- change password (POST /api/auth/change-password) ------------------------
+
+
+@pytest.mark.integration
+def test_change_password_requires_auth(client):
+    resp = client.post(
+        "/api/auth/change-password",
+        json={"current_password": "password123", "new_password": "newpassword123"},
+    )
+    assert resp.status_code == 401
+
+
+@pytest.mark.integration
+def test_change_password_success_rotates_tokens_and_updates_credentials(client):
+    user = _register(client, password="password123")
+
+    resp = client.post(
+        "/api/auth/change-password",
+        json={"current_password": "password123", "new_password": "newpassword456"},
+        headers=user["headers"],
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    new_tokens = body["tokens"]
+    assert new_tokens["access_token"] and new_tokens["refresh_token"]
+    assert body["user"]["email"] == user["email"]
+
+    # Every old session is revoked: the pre-change refresh token no longer works.
+    old_refresh = client.post(
+        "/api/auth/refresh", json={"refresh_token": user["tokens"]["refresh_token"]}
+    )
+    assert old_refresh.status_code == 401
+    # The freshly issued pair does work.
+    new_headers = {"Authorization": f"Bearer {new_tokens['access_token']}"}
+    assert client.get("/api/auth/me", headers=new_headers).status_code == 200
+
+    # The new password logs in; the old one no longer does.
+    assert (
+        client.post(
+            "/api/auth/login", json={"email": user["email"], "password": "newpassword456"}
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            "/api/auth/login", json={"email": user["email"], "password": "password123"}
+        ).status_code
+        == 401
+    )
+
+
+@pytest.mark.integration
+def test_change_password_wrong_current_is_401(client):
+    user = _register(client, password="password123")
+    resp = client.post(
+        "/api/auth/change-password",
+        json={"current_password": "wrongpassword", "new_password": "newpassword456"},
+        headers=user["headers"],
+    )
+    assert resp.status_code == 401
+    # The password is unchanged — the original still logs in.
+    assert (
+        client.post(
+            "/api/auth/login", json={"email": user["email"], "password": "password123"}
+        ).status_code
+        == 200
+    )
+
+
+@pytest.mark.integration
+def test_change_password_same_as_current_is_422(client):
+    user = _register(client, password="password123")
+    resp = client.post(
+        "/api/auth/change-password",
+        json={"current_password": "password123", "new_password": "password123"},
+        headers=user["headers"],
+    )
+    assert resp.status_code == 422
+    assert resp.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+@pytest.mark.integration
+def test_change_password_too_short_new_is_422(client):
+    user = _register(client, password="password123")
+    resp = client.post(
+        "/api/auth/change-password",
+        json={"current_password": "password123", "new_password": "short"},
+        headers=user["headers"],
+    )
+    assert resp.status_code == 422
+
+
 # --- account deletion (DELETE /api/auth/me) ----------------------------------
 
 
