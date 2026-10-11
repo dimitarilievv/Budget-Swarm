@@ -22,6 +22,7 @@ import AuthPage, { type AuthMode } from "@/ui/pages/AuthPage";
 import ComparisonPage from "@/ui/pages/Comparison";
 import Home from "@/ui/pages/Home";
 import MyTripsPage from "@/ui/pages/MyTrips";
+import ProfilePage from "@/ui/pages/Profile";
 import ResultsPage from "@/ui/pages/Results";
 
 type ResultView = "results" | "compare";
@@ -153,6 +154,18 @@ function MyTripsRoute() {
   return <MyTripsPage />;
 }
 
+/** The signed-in-only account page; signed-out visitors are sent to login. */
+function ProfileRoute() {
+  const { status } = useAuth();
+
+  useEffect(() => {
+    if (status === "unauthenticated") navigate("/login?next=/profile");
+  }, [status]);
+
+  if (status !== "authenticated") return null; // brief: while loading or before redirect
+  return <ProfilePage />;
+}
+
 /** Route the real URLs to their screens; everything else is the single-view shell. */
 function Router() {
   const path = useRoutePath();
@@ -161,6 +174,9 @@ function Router() {
   }
   if (path === "/my-trips") {
     return <MyTripsRoute />;
+  }
+  if (path === "/profile") {
+    return <ProfileRoute />;
   }
   return <Shell />;
 }

@@ -103,10 +103,15 @@ export default function Navbar({
 
         {authed ? (
           <div className="flex items-center gap-3">
-            <span className="hidden items-center gap-2 text-sm font-medium text-slate-700 sm:flex">
+            <button
+              type="button"
+              onClick={() => navigate("/profile")}
+              className="hidden items-center gap-2 rounded-full px-2 py-1 text-sm font-medium text-slate-700 transition hover:text-teal-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40 sm:flex"
+              title="Your account"
+            >
               <IconUser className="h-4 w-4 text-teal-600" />
               {auth?.user?.name || auth?.user?.email}
-            </span>
+            </button>
             <button
               type="button"
               onClick={() => auth?.logout()}

@@ -89,6 +89,19 @@ class RefreshRequest(BaseModel):
     refresh_token: str = Field(min_length=1)
 
 
+class ChangePasswordRequest(BaseModel):
+    """Body for ``POST /api/auth/change-password``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    current_password: str = Field(min_length=1, description="The account's current password.")
+    new_password: str = Field(
+        min_length=_PASSWORD_MIN,
+        max_length=_PASSWORD_MAX,
+        description="New plain password, at least 8 characters; stored only as a bcrypt hash.",
+    )
+
+
 # --- responses ---------------------------------------------------------------
 
 

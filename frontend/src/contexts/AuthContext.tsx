@@ -26,7 +26,9 @@ import type { AxiosError, AxiosRequestConfig } from "axios";
 
 import apiClient from "@/api/axios";
 import {
+  changePassword as changePasswordRequest,
   clearTokens,
+  deleteAccount as deleteAccountRequest,
   getMe,
   loadTokens,
   login as loginRequest,
@@ -50,6 +52,13 @@ interface AuthContextValue {
     name?: string | null,
   ) => Promise<void>;
   logout: () => Promise<void>;
+  /** Change the password; on success rotates this client's stored tokens in place. */
+  changePassword: (
+    currentPassword: string,
+    newPassword: string,
+  ) => Promise<void>;
+  /** Permanently delete the account, then end the local session. */
+  deleteAccount: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -194,9 +203,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     endSession();
   }, [endSession]);
 
+  const changePassword = useCallback(
+    async (currentPassword: string, newPassword: string) => {
+      const result = await changePasswordRequest({
+        current_password: currentPassword,
+        new_password: newPassword,
+      });
+      // The server revoked every session and issued a fresh pair; swap the stored
+      // tokens in place (keeping the current remember-me store) so we stay signed in.
+      updateTokens(result.tokens);
+      setUser(result.user);
+    },
+    [],
+  );
+
+  const deleteAccount = useCallback(async () => {
+    await deleteAccountRequest();
+    endSession();
+  }, [endSession]);
+
   const value = useMemo<AuthContextValue>(
-    () => ({ user, status, login, register, logout }),
-    [user, status, login, register, logout],
+    () => ({
+      user,
+      status,
+      login,
+      register,
+      logout,
+      changePassword,
+      deleteAccount,
+    }),
+    [user, status, login, register, logout, changePassword, deleteAccount],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

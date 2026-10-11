@@ -36,6 +36,12 @@ Body `{ "refresh_token": "..." }` → `204`. Revokes the refresh token; idempote
 ### `GET /api/auth/me`
 Returns the authenticated user (`401` without a valid token).
 
+### `POST /api/auth/change-password`
+Body `{ "current_password": "...", "new_password": "..." }` (requires a valid access token). Verifies the current password, stores the new one (min 8 chars), revokes **all** the user's refresh tokens (logging every other session out), and returns a fresh `{ user, tokens }` pair so this client stays signed in. `401` if the current password is wrong or no token; `422` if the new password is invalid or not different.
+
+### `DELETE /api/auth/me`
+Permanently deletes the authenticated user and all their data — saved trips (and their activities) and refresh tokens (logging every session out) — then `204`. Irreversible; requires a valid access token (`401` without). Any still-valid access token is useless afterwards.
+
 > `/login` and `/register` are rate-limited more strictly than other endpoints (default 5/min per IP, `AUTH_RATE_LIMIT_*`).
 
 ---
@@ -213,65 +219,6 @@ Liveness/readiness check for Docker and monitoring.
 ```json
 { "status": "ok", "db": "up" }
 ```
-
----
-
-## Admin — candidate destinations (BS-029)
-
-Grow the curated candidate list by city name. Backing sources: Open-Meteo
-geocoding (no key). Feature enrichment (cost / POI / season / scores) is a
-separate batch step, so a freshly added city returns `enrichment_pending: true`.
-
-### `GET /api/admin/destinations/geocode`
-
-Ranked geocoding matches for a city name, for a picker to choose from.
-
-| Query | Type | Required | Notes |
-|-------|------|----------|-------|
-| `name` | string | yes | city name to look up |
-| `count` | integer | no | max results, 1–10 (default 5) |
-
-```json
-[
-  {
-    "city": "Barcelona", "country": "Spain", "country_code": "ES",
-    "latitude": 41.3888, "longitude": 2.159,
-    "population": 1686208, "admin1": "Catalonia",
-    "label": "Barcelona, Spain (Catalonia)"
-  }
-]
-```
-
-`502` if the geocoding provider is unavailable.
-
-### `POST /api/admin/destinations`
-
-Add a destination, either by `name` (geocoded server-side) or from an explicit
-candidate. Deduped on `(city, country)`.
-
-```json
-// by name
-{ "name": "Barcelona" }
-// or an explicit candidate (e.g. one picked from /geocode)
-{ "city": "Barcelona", "country": "Spain", "country_code": "ES",
-  "latitude": 41.3888, "longitude": 2.159 }
-```
-
-Response — `201` when newly created, `200` when it already existed:
-
-```json
-{
-  "created": true,
-  "destination": {
-    "id": 31, "city": "Barcelona", "country": "Spain",
-    "country_code": "ES", "latitude": 41.3888, "longitude": 2.159
-  },
-  "enrichment_pending": true
-}
-```
-
-`404` if no city matches the name; `422` if neither `name` nor a full explicit
-candidate is supplied.
 
 ---
 

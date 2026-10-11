@@ -16,7 +16,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Generic, TypeVar
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from db.models import (
@@ -88,6 +88,17 @@ class DestinationRepository(Repository[Destination]):
     def get_by_city_country(self, city: str, country: str) -> Destination | None:
         stmt = select(Destination).where(Destination.city == city, Destination.country == country)
         return self.session.scalars(stmt).first()
+
+    def list_active(self, *, limit: int | None = None) -> list[Destination]:
+        """Return only active destinations (the candidate pool / public listing).
+
+        Inactive cities are soft-disabled: still in the table (with their data) but
+        excluded here, so Scout never shortlists them and the API never lists them.
+        """
+        stmt = select(Destination).where(Destination.active.is_(True))
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        return list(self.session.scalars(stmt).all())
 
 
 class DestinationFeatureRepository(Repository[DestinationFeature]):
@@ -196,6 +207,25 @@ class RefreshTokenRepository(Repository[RefreshToken]):
         self.session.flush()
         return len(tokens)
 
+    def purge_dead(self, *, now: datetime) -> int:
+        """Delete tokens that can never authenticate again — expired or revoked.
+
+        A row is unusable the moment it is past ``expires_at`` or has a
+        ``revoked_at`` (``get_active_by_hash`` requires neither), so purging them
+        keeps the table from growing without bound. Returns how many were removed.
+        """
+        stmt = (
+            delete(RefreshToken).where(
+                or_(RefreshToken.expires_at <= now, RefreshToken.revoked_at.is_not(None))
+            )
+            # Maintenance sweep: don't try to sync the ORM identity map (the default
+            # "auto"/"evaluate" strategy can't evaluate this WHERE in Python).
+            .execution_options(synchronize_session=False)
+        )
+        result = self.session.execute(stmt)
+        self.session.flush()
+        return result.rowcount or 0
+
 
 class TripRepository(Repository[Trip]):
     model = Trip
@@ -213,6 +243,21 @@ class TripRepository(Repository[Trip]):
         """
         stmt = select(Trip).where(Trip.id == trip_id, Trip.user_id == user_id)
         return self.session.scalars(stmt).first()
+
+    def delete_for_user(self, user_id: int) -> int:
+        """Delete every trip owned by ``user_id``; return how many were removed.
+
+        A bulk ``DELETE`` so the database's ``ON DELETE CASCADE`` on
+        ``trip_activities.trip_id`` removes each trip's activities too. Used by
+        account deletion, where the user's saved trips must go with them (the
+        ``trips.user_id`` FK is ``SET NULL``, which would otherwise orphan them).
+        """
+        stmt = (
+            delete(Trip).where(Trip.user_id == user_id).execution_options(synchronize_session=False)
+        )
+        result = self.session.execute(stmt)
+        self.session.flush()
+        return result.rowcount or 0
 
 
 class TripActivityRepository(Repository[TripActivity]):

@@ -193,9 +193,9 @@ def _is_origin(
 
 
 def load_domain_destinations(session_factory: sessionmaker) -> list[Destination]:
-    """Load every seeded destination (with features) as domain candidates for Scout."""
+    """Load every active seeded destination (with features) as domain candidates for Scout."""
     with session_factory() as session:
-        rows = DestinationRepository(session).list()
+        rows = DestinationRepository(session).list_active()
         candidates = [d for d in (_row_to_destination(r) for r in rows) if d is not None]
     logger.info("wiring: loaded %d destination candidate(s) from the database", len(candidates))
     return candidates
