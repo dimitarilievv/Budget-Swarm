@@ -103,6 +103,19 @@ export async function getMe(
   }
 }
 
+/** `PATCH /api/auth/me` — update editable profile fields (currently the display name). */
+export async function updateProfile(
+  payload: { name: string | null },
+  client: AxiosInstance = apiClient,
+): Promise<AuthUser> {
+  try {
+    const { data } = await client.patch<AuthUser>("/api/auth/me", payload);
+    return data;
+  } catch (err) {
+    throw toApiError(err);
+  }
+}
+
 /**
  * `POST /api/auth/change-password` — set a new password.
  *

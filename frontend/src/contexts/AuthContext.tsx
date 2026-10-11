@@ -36,6 +36,7 @@ import {
   refresh as refreshRequest,
   register as registerRequest,
   saveTokens,
+  updateProfile as updateProfileRequest,
   updateTokens,
   type AuthUser,
 } from "@/api/auth";
@@ -59,6 +60,8 @@ interface AuthContextValue {
   ) => Promise<void>;
   /** Permanently delete the account, then end the local session. */
   deleteAccount: () => Promise<void>;
+  /** Update editable profile fields (currently the display name). */
+  updateProfile: (name: string | null) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -222,6 +225,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     endSession();
   }, [endSession]);
 
+  const updateProfile = useCallback(async (name: string | null) => {
+    const updated = await updateProfileRequest({ name });
+    setUser(updated);
+  }, []);
+
   const value = useMemo<AuthContextValue>(
     () => ({
       user,
@@ -231,8 +239,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       logout,
       changePassword,
       deleteAccount,
+      updateProfile,
     }),
-    [user, status, login, register, logout, changePassword, deleteAccount],
+    [
+      user,
+      status,
+      login,
+      register,
+      logout,
+      changePassword,
+      deleteAccount,
+      updateProfile,
+    ],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

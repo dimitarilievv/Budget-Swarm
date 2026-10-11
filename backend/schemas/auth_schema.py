@@ -102,6 +102,22 @@ class ChangePasswordRequest(BaseModel):
     )
 
 
+class UpdateProfileRequest(BaseModel):
+    """Body for ``PATCH /api/auth/me`` — editable account fields."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, max_length=120, description="Display name (or null).")
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        trimmed = value.strip()
+        return trimmed or None
+
+
 # --- responses ---------------------------------------------------------------
 
 

@@ -36,6 +36,9 @@ Body `{ "refresh_token": "..." }` → `204`. Revokes the refresh token; idempote
 ### `GET /api/auth/me`
 Returns the authenticated user (`401` without a valid token).
 
+### `PATCH /api/auth/me`
+Body `{ "name": "..." | null }` (requires a valid access token). Updates the editable profile fields — currently the display name — and returns the updated user. `401` without a token; `422` if the name exceeds 120 chars.
+
 ### `POST /api/auth/change-password`
 Body `{ "current_password": "...", "new_password": "..." }` (requires a valid access token). Verifies the current password, stores the new one (min 8 chars), revokes **all** the user's refresh tokens (logging every other session out), and returns a fresh `{ user, tokens }` pair so this client stays signed in. `401` if the current password is wrong or no token; `422` if the new password is invalid or not different.
 
