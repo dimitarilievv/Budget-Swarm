@@ -42,6 +42,10 @@ class AddReport:
     added: list[str] = field(default_factory=list)  # "City, Country"
     skipped_existing: list[str] = field(default_factory=list)
     not_found: list[str] = field(default_factory=list)
+    # Every name that geocoded to a real city (whether newly added or already
+    # present), in request order. Lets a caller act on the resolved destinations
+    # without geocoding a second time (e.g. the gated onboarding command).
+    resolved: list[geocode.GeocodeResult] = field(default_factory=list)
 
 
 def _read_rows(path: Path) -> list[dict[str, str]]:
@@ -77,6 +81,7 @@ def add_cities(
             report.not_found.append(name)
             continue
 
+        report.resolved.append(match)
         key = (match.city, match.country)
         if key in existing or key in {(r["city"], r["country"]) for r in new_rows}:
             logger.info("already in list, skipping: %s", match.label)
