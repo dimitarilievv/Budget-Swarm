@@ -214,6 +214,14 @@ function PinPattern({ id, opacity = 0.08 }: { id: string; opacity?: number }) {
 
 /* ---------- Header ---------- */
 
+/** Up to two initials from a "name or email" label, else its first letter. */
+function headerInitials(label: string): string {
+  const s = label.trim();
+  if (s.includes("@")) return (s[0] ?? "?").toUpperCase();
+  const parts = s.split(/\s+/).slice(0, 2);
+  return parts.map((p) => p[0]!.toUpperCase()).join("") || "?";
+}
+
 function Header({
   userLabel,
   onLogout,
@@ -286,12 +294,48 @@ function Header({
           </span>
         </nav>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span
-            style={{ fontSize: 13, color: MUTED, whiteSpace: "nowrap" }}
-            className="hidden sm:inline"
+          <button
+            type="button"
+            onClick={() => navigate("/profile")}
+            title="Your account"
+            aria-label="Your account"
+            style={{
+              all: "unset",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              cursor: "pointer",
+              padding: "4px 12px 4px 4px",
+              borderRadius: 99,
+              border: "1px solid #d7e2df",
+              background: "#fff",
+              whiteSpace: "nowrap",
+            }}
           >
-            {userLabel}
-          </span>
+            <span
+              aria-hidden="true"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 26,
+                height: 26,
+                borderRadius: 99,
+                background: TEAL,
+                color: "#fff",
+                fontSize: 11,
+                fontWeight: 700,
+              }}
+            >
+              {headerInitials(userLabel)}
+            </span>
+            <span
+              style={{ fontSize: 13, fontWeight: 600, color: INK }}
+              className="hidden sm:inline"
+            >
+              {userLabel}
+            </span>
+          </button>
           <button
             type="button"
             onClick={onLogout}
