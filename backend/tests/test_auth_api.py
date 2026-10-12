@@ -656,6 +656,28 @@ def test_change_password_too_short_new_is_422(client):
     assert resp.status_code == 422
 
 
+@pytest.mark.integration
+def test_change_password_is_rate_limited(client):
+    """Repeated current-password guesses hit the stricter auth limiter (429)."""
+    from api.rate_limit import SlidingWindowRateLimiter, get_auth_rate_limiter
+    from main import app
+
+    user = _register(client, password="password123")  # registered under the unlimited test limiter
+    # One shared limiter instance across requests, so hits actually accumulate.
+    limiter = SlidingWindowRateLimiter(2, 60)
+    app.dependency_overrides[get_auth_rate_limiter] = lambda: limiter
+    try:
+        body = {"current_password": "wrongguess", "new_password": "newpassword456"}
+        codes = [
+            client.post("/api/auth/change-password", json=body, headers=user["headers"]).status_code
+            for _ in range(3)
+        ]
+        assert codes[0] == 401 and codes[1] == 401  # wrong password, but counted
+        assert codes[2] == 429  # over the limit
+    finally:
+        app.dependency_overrides.pop(get_auth_rate_limiter, None)
+
+
 # --- account deletion (DELETE /api/auth/me) ----------------------------------
 
 

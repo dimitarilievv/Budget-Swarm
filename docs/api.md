@@ -45,7 +45,7 @@ Body `{ "current_password": "...", "new_password": "..." }` (requires a valid ac
 ### `DELETE /api/auth/me`
 Permanently deletes the authenticated user and all their data — saved trips (and their activities) and refresh tokens (logging every session out) — then `204`. Irreversible; requires a valid access token (`401` without). Any still-valid access token is useless afterwards.
 
-> `/login` and `/register` are rate-limited more strictly than other endpoints (default 5/min per IP, `AUTH_RATE_LIMIT_*`).
+> `/login`, `/register` and `/change-password` are rate-limited more strictly than other endpoints (default 5/min per IP, `AUTH_RATE_LIMIT_*`).
 
 ---
 

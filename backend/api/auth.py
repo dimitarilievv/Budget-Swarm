@@ -204,7 +204,11 @@ def update_me(
     return UserOut.model_validate(user)
 
 
-@router.post("/change-password", response_model=AuthResponse)
+@router.post(
+    "/change-password",
+    response_model=AuthResponse,
+    dependencies=[Depends(enforce_auth_rate_limit)],  # throttle current-password guessing
+)
 def change_password(
     body: ChangePasswordRequest,
     user: User = Depends(get_current_user),
