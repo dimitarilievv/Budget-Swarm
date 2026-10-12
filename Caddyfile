@@ -1,0 +1,26 @@
+# Local-dev reverse proxy for BudgetSwarm.
+#
+# Terminates TLS at https://localhost using Caddy's internal CA (self-signed), so the
+# whole app is one HTTPS origin. Routes the API to the backend and everything else to the
+# Vite dev server (the HMR websocket is proxied transparently).
+#
+# The cert is issued by Caddy's local CA. Either accept the browser warning once, or trust
+# the CA for a green lock (see docs/https-local-dev.md).
+{
+	# Issue certs from the internal CA for every site (no public ACME in local dev).
+	local_certs
+}
+
+localhost {
+	encode gzip
+
+	# API → backend. Keep the /api prefix: backend routes are mounted under /api.
+	handle /api/* {
+		reverse_proxy backend:8000
+	}
+
+	# App shell + Vite dev server (HMR websocket included).
+	handle {
+		reverse_proxy frontend:5173
+	}
+}

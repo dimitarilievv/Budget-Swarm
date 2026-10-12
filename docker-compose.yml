@@ -33,6 +33,9 @@ services:
       REFRESH_TOKEN_EXPIRE_DAYS: ${REFRESH_TOKEN_EXPIRE_DAYS:-7}
       AUTH_RATE_LIMIT_REQUESTS: ${AUTH_RATE_LIMIT_REQUESTS:-5}
       AUTH_RATE_LIMIT_WINDOW_SECONDS: ${AUTH_RATE_LIMIT_WINDOW_SECONDS:-60}
+      # Allowed browser origins. Includes the HTTPS proxy origin (https://localhost) so the
+      # app works both through Caddy and when hitting the Vite dev server directly.
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173,https://localhost,https://127.0.0.1}
       # /app is the working dir; ai_engine is mounted under it so `import ai_engine`
       # resolves in the backend container (BS-081).
       PYTHONPATH: /app
@@ -98,6 +101,12 @@ services:
     build: ./frontend
     container_name: budgetswarm-frontend
     restart: unless-stopped
+    environment:
+      # Call the API through the HTTPS proxy — same origin as the app served at
+      # https://localhost (set to http://localhost:8000 to bypass the proxy).
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-https://localhost}
+      # Vite's HMR websocket reaches the dev server through Caddy on 443.
+      VITE_HMR_CLIENT_PORT: "443"
     ports:
       - "5173:5173"
     volumes:
@@ -108,8 +117,29 @@ services:
     networks:
       - budgetswarm
 
+  proxy:
+    # Reverse proxy terminating TLS at https://localhost (Caddy's internal CA).
+    # Routes /api/* -> backend and everything else -> the Vite frontend.
+    image: caddy:2
+    container_name: budgetswarm-proxy
+    restart: unless-stopped
+    depends_on:
+      - backend
+      - frontend
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - budgetswarm
+
 volumes:
   pgdata:
+  caddy_data:
+  caddy_config:
 
 networks:
   budgetswarm:
