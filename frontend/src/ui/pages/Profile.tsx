@@ -18,6 +18,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ApiError } from "@/api/errors";
 import { listTrips, type SavedTrip } from "@/api/endpoints";
 import { useAuth } from "@/contexts/AuthContext";
+import { initials } from "@/lib/initials";
 import { navigate } from "@/router";
 
 const TEAL = "#0f9488";
@@ -116,19 +117,6 @@ function formatDate(iso: string | undefined): string {
         month: "short",
         day: "numeric",
       });
-}
-
-/** Up to two initials from a name, else the email's first letter. */
-function initialsFor(name: string | null, email: string): string {
-  const source = (name ?? "").trim();
-  if (source) {
-    return source
-      .split(/\s+/)
-      .slice(0, 2)
-      .map((p) => p[0]!.toUpperCase())
-      .join("");
-  }
-  return (email[0] ?? "?").toUpperCase();
 }
 
 type Tab = "account" | "security" | "danger";
@@ -340,7 +328,7 @@ export default function ProfilePage() {
                 boxShadow: "0 18px 36px -18px rgba(0,30,27,.6)",
               }}
             >
-              {initialsFor(user.name, user.email)}
+              {initials(user.name, user.email)}
             </div>
             <div
               style={{

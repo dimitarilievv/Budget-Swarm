@@ -14,19 +14,7 @@ import {
   IconSearch,
   IconUser,
 } from "@/ui/components/common/Icons";
-
-/** Up to two initials from a name, else the email's first letter. */
-function navInitials(name: string | null, email: string): string {
-  const source = (name ?? "").trim();
-  if (source) {
-    return source
-      .split(/\s+/)
-      .slice(0, 2)
-      .map((p) => p[0]!.toUpperCase())
-      .join("");
-  }
-  return (email[0] ?? "?").toUpperCase();
-}
+import AccountChip from "@/ui/components/layout/AccountChip";
 
 interface NavbarProps {
   /** Return to the planner / home view. */
@@ -116,23 +104,7 @@ export default function Navbar({
 
         {authed ? (
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => navigate("/profile")}
-              title="Your account"
-              aria-label="Your account"
-              className="flex items-center gap-2 rounded-full border border-slate-200 bg-white py-1 pl-1 pr-1 text-sm font-medium text-slate-700 shadow-sm transition hover:border-teal-300 hover:text-teal-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40 sm:pr-3"
-            >
-              <span
-                aria-hidden="true"
-                className="flex h-7 w-7 items-center justify-center rounded-full bg-teal-600 text-xs font-bold text-white"
-              >
-                {navInitials(auth?.user?.name ?? null, auth?.user?.email ?? "")}
-              </span>
-              <span className="hidden max-w-[12rem] truncate sm:inline">
-                {auth?.user?.name || auth?.user?.email}
-              </span>
-            </button>
+            <AccountChip name={auth?.user?.name} email={auth?.user?.email} />
             <button
               type="button"
               onClick={() => auth?.logout()}
