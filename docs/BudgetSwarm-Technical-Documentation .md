@@ -1114,6 +1114,8 @@ Compare across candidates:
 
 A good thesis evaluation also includes a **weight sensitivity analysis** (vary `w1..w6`, show how the choice shifts) and a **fallback drill** (disable a provider, show graceful degradation with quality flags).
 
+> **Executed results.** These evaluations are implemented in `backend/evaluation/` and consolidated, with verified numbers, methodology and limitations, in [`backend/evaluation/FINAL_EVALUATION_REPORT.md`](../backend/evaluation/FINAL_EVALUATION_REPORT.md) (index: [`backend/evaluation/README.md`](../backend/evaluation/README.md)). Reproduce with `python -m scripts.run_eval` from `backend/`.
+
 ---
 
 # 26. Testing strategy
