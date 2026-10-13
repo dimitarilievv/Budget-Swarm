@@ -26,6 +26,12 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from evaluation.api_failure_eval import (  # noqa: E402
+    api_failure_metrics,
+    api_failure_to_json,
+    format_api_failure,
+    run_api_failure_eval,
+)
 from evaluation.runner import (  # noqa: E402  (after the sys.path shim, by design)
     aggregate,
     format_markdown,
@@ -71,6 +77,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--no-weather-eval", action="store_true", help="skip the weather-replanning measurement"
     )
+    parser.add_argument(
+        "--no-api-failure-eval",
+        action="store_true",
+        help="skip the API failure & recovery evaluation",
+    )
     args = parser.parse_args(argv)
 
     _configure_logging()
@@ -86,10 +97,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     sweep = None if args.no_weight_sweep else run_weight_sweep()
     weather = None if args.no_weather_eval else run_weather_replan()
+    api_outcomes = None if args.no_api_failure_eval else run_api_failure_eval()
+    api_metrics = None if api_outcomes is None else api_failure_metrics(api_outcomes)
 
     markdown = format_markdown(results, agg, cache)
     if weather is not None:
         markdown += "\n\n" + format_weather_replan(weather)
+    if api_outcomes is not None:
+        markdown += "\n\n" + format_api_failure(api_outcomes, api_metrics)
     if sweep is not None:
         markdown += "\n\n" + format_weight_sweep(sweep)
     if args.out:
@@ -121,6 +136,9 @@ def main(argv: list[str] | None = None) -> int:
                     "cold_misses": cache.cold_misses,
                     "warm_misses": cache.warm_misses,
                 }
+            ),
+            "api_failure": (
+                None if api_outcomes is None else api_failure_to_json(api_outcomes, api_metrics)
             ),
             "scenarios": results_to_json(results),
         }

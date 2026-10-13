@@ -68,7 +68,7 @@ The offline harness has no real provider I/O, so a **modeled 15 ms/call** latenc
 | Cold (no cache) | 68 | 68 | 0 |
 | Warm (cached) | 68 | 0 | 68 |
 
-Cold **295 ms** vs warm **111 ms** (**2.65×** faster on a warm cache). _(Wall-clock is machine-dependent; the cache miss/hit counts are exact.)_
+Cold **351 ms** vs warm **166 ms** (**2.12×** faster on a warm cache). _(Wall-clock is machine-dependent; the cache miss/hit counts are exact.)_
 
 
 ## Weather replanning (technical-doc §25, BS-074)
@@ -83,6 +83,35 @@ Injected weather conflicts (days flagged unfit for outdoor activities), and whet
 | 4 days · rain on day 1 | 1 | 0 | 2 | 4 | yes |
 
 **Replanning success rate: 100%** (4/4 scenarios). Outdoor activities are forbidden on conflict days by construction, so a correctly modelled scheduler reaches 100% — measuring it validates BS-074.
+
+## API failure & recovery (technical-doc §25, ADR-005)
+
+External-data agents (transport / accommodation / activities / weather) are failed, timed out, or made to return incomplete/malformed data; the pipeline isolates each failure and degrades the piece to *missing*. A controlled `NO_PLAN_AVAILABLE` (no feasible plan) is a correct outcome, not a crash.
+
+| Metric | Rate | Of |
+|---|---|---|
+| Pipeline survival | 100% | 11 scenarios |
+| Recovery (graceful degradation) | 100% | 7 eligible |
+| Degraded-result detection | 100% | 5 applicable |
+| Data integrity (no fabrication) | 100% | 8 plans |
+| Recommendation success | 100% | 8 plan-possible |
+| Failure transparency | 100% | 3 no-plan-expected |
+
+| Scenario | Outcome | Degraded sources | Checks |
+|---|---|---|---|
+| All providers healthy | plan (Belgrade) | transport:estimated | recovered=ok, integrity=ok |
+| Weather API times out (all) | plan (Belgrade) | transport:estimated, weather:missing | recovered=ok, degraded-flagged=ok, integrity=ok |
+| Weather API returns nothing (all) | plan (Belgrade) | transport:estimated, weather:missing | recovered=ok, degraded-flagged=ok, integrity=ok |
+| Activities API returns no POIs (all) | plan (Belgrade) | activities:missing, transport:estimated | recovered=ok, degraded-flagged=ok, integrity=ok |
+| Activities API returns malformed data (all) | plan (Belgrade) | activities:missing, transport:estimated | recovered=ok, degraded-flagged=ok, integrity=ok |
+| Accommodation API malformed for the top pick (partial) | plan (Thessaloniki) | transport:estimated | recovered=ok, integrity=ok |
+| Transport API times out for the top pick (partial) | plan (Thessaloniki) | transport:estimated | recovered=ok, integrity=ok |
+| Weather + activities both fail (all) | plan (Belgrade) | activities:missing, transport:estimated, weather:missing | recovered=ok, degraded-flagged=ok, integrity=ok |
+| Accommodation API returns nothing anywhere | no-plan (controlled) | — | honest-failure=ok |
+| Transport API unreachable everywhere | no-plan (controlled) | — | honest-failure=ok |
+| Transport + accommodation both fail everywhere | no-plan (controlled) | — | honest-failure=ok |
+
+Recovery here means **graceful degradation** (keep the valid pieces, exclude an unreachable/unlistable city, flag the rest) — the pipeline does not retry a failed agent at this layer (retry is provider-internal).
 
 ## Weight sensitivity (technical-doc §14)
 
