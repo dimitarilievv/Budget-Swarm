@@ -68,7 +68,7 @@ The offline harness has no real provider I/O, so a **modeled 15 ms/call** latenc
 | Cold (no cache) | 68 | 68 | 0 |
 | Warm (cached) | 68 | 0 | 68 |
 
-Cold **300 ms** vs warm **100 ms** (**3.01×** faster on a warm cache). _(Wall-clock is machine-dependent; the cache miss/hit counts are exact.)_
+Cold **286 ms** vs warm **94 ms** (**3.05×** faster on a warm cache). _(Wall-clock is machine-dependent; the cache miss/hit counts are exact.)_
 
 
 ## Weather replanning (technical-doc §25, BS-074)
@@ -156,6 +156,29 @@ Whole-pipeline checks on each generated plan: cost reconciliation, itinerary val
 | Optional provider (weather) fails, graceful degradation | plan (Belgrade) | yes | none |
 | No feasible plan (budget below any trip) | no-plan | — | none |
 | Longer trip, more travelers | plan (Belgrade) | yes | none |
+
+## Performance & load (technical-doc §25)
+
+_Environment: Python 3.14.3 · Windows AMD64 · 8 logical CPUs · in-process ASGI (TestClient), no socket, no real DB. Latency is machine-dependent; re-run to refresh._
+
+**Real wall-clock** measurements (monotonic timer), offline and deterministic — not the modeled cache-effect numbers elsewhere. Mode A times the planning pipeline directly; Mode B drives the real `POST /api/generate-trip` route via an in-process ASGI client (fixture engine injected, rate limit lifted), which **excludes real network latency and a real database**. Latency in ms; throughput in req/s. Failed or timed-out requests are excluded from the latency distribution and counted separately.
+
+### Mode A — pipeline benchmark
+
+- 40 reps: mean **28 ms**, p50 25, p95 39, p99 66, min 21, max 81
+- Valid-plan rate: **100%** (0 violation(s))
+- Cold vs warm cache (actual): cold mean 31 ms, warm mean 29 ms (warm hits 680, misses 0). Offline fixtures have no real provider I/O, so actual cold/warm latency is similar — the *modeled* cache benefit lives in the separate cache-effect eval.
+
+### Mode B — in-process HTTP load test
+
+| Concurrency | Requests | Success | Errors | Timeouts | Throughput (rps) | mean ms | p50 | p95 | p99 | Valid plans | Contamination |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | 20 | 100% | 0% | 0 | 20.4 | 49 | 48 | 61 | 63* | 100% | 0 |
+| 2 | 20 | 100% | 0% | 0 | 32.2 | 61 | 60 | 76 | 84* | 100% | 0 |
+| 5 | 20 | 100% | 0% | 0 | 31.6 | 152 | 137 | 232 | 262* | 100% | 0 |
+| 10 | 20 | 100% | 0% | 0 | 44.2 | 211 | 214 | 248 | 262* | 100% | 0 |
+
+_* low-sample percentile (fewer than the reliability threshold) — indicative only._ Contamination = responses violating their own request's duration/budget bounds (cross-request leakage); 0 is correct.
 
 ## Weight sensitivity (technical-doc §14)
 

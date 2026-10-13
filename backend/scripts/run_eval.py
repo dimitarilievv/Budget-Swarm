@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -38,6 +39,13 @@ from evaluation.e2e_eval import (  # noqa: E402
     format_e2e,
     run_all_e2e,
     run_cache_consistency,
+)
+from evaluation.performance_eval import (  # noqa: E402
+    PerfConfig,
+    benchmark_http,
+    benchmark_pipeline,
+    format_performance,
+    performance_to_json,
 )
 from evaluation.retry_eval import (  # noqa: E402
     format_retry,
@@ -98,6 +106,21 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--no-e2e-eval", action="store_true", help="skip the end-to-end integration evaluation"
     )
+    parser.add_argument(
+        "--no-performance-eval", action="store_true", help="skip the performance & load benchmark"
+    )
+    parser.add_argument(
+        "--performance-requests", type=int, default=24, help="HTTP requests per concurrency profile"
+    )
+    parser.add_argument(
+        "--performance-concurrency",
+        type=str,
+        default="1,2,5,10",
+        help="comma-separated concurrency levels for the load test",
+    )
+    parser.add_argument(
+        "--performance-timeout", type=float, default=10.0, help="per-request timeout (seconds)"
+    )
     args = parser.parse_args(argv)
 
     _configure_logging()
@@ -123,6 +146,26 @@ def main(argv: list[str] | None = None) -> int:
         e2e_outcomes = run_all_e2e()
         e2e_cache = run_cache_consistency()
         e2e_m = e2e_metrics(e2e_outcomes, e2e_cache)
+    perf_pipeline = perf_profiles = None
+    if not args.no_performance_eval:
+        perf_cfg = PerfConfig(
+            requests_per_profile=args.performance_requests,
+            concurrency_levels=tuple(
+                int(c) for c in args.performance_concurrency.split(",") if c.strip()
+            ),
+            timeout_s=args.performance_timeout,
+        )
+        perf_pipeline = benchmark_pipeline(perf_cfg)  # Mode A needs no app/DB
+        # Mode B drives the in-process ASGI app, which requires settings to import (the app
+        # is never served and the benchmark never touches the DB). Provide eval-only defaults
+        # so `run_eval` is self-contained; a real value already in the env is never overridden.
+        os.environ.setdefault("JWT_SECRET", "eval-only-not-a-secret")
+        os.environ.setdefault("DATABASE_URL", "postgresql+psycopg://eval:eval@localhost:5432/eval")
+        try:
+            perf_profiles = benchmark_http(perf_cfg)
+        except Exception as exc:  # noqa: BLE001 - report the limitation, keep the other evals
+            logger.warning("performance Mode B (HTTP) skipped: %s", exc)
+            perf_profiles = []
 
     markdown = format_markdown(results, agg, cache)
     if weather is not None:
@@ -133,6 +176,8 @@ def main(argv: list[str] | None = None) -> int:
         markdown += "\n\n" + format_retry(retry_outcomes, retry_m)
     if e2e_outcomes is not None:
         markdown += "\n\n" + format_e2e(e2e_outcomes, e2e_cache, e2e_m)
+    if perf_pipeline is not None:
+        markdown += "\n\n" + format_performance(perf_pipeline, perf_profiles)
     if sweep is not None:
         markdown += "\n\n" + format_weight_sweep(sweep)
     if args.out:
@@ -170,6 +215,9 @@ def main(argv: list[str] | None = None) -> int:
             ),
             "retry": (None if retry_outcomes is None else retry_to_json(retry_outcomes, retry_m)),
             "e2e": (None if e2e_outcomes is None else e2e_to_json(e2e_outcomes, e2e_cache, e2e_m)),
+            "performance": (
+                None if perf_pipeline is None else performance_to_json(perf_pipeline, perf_profiles)
+            ),
             "scenarios": results_to_json(results),
         }
         args.json.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
