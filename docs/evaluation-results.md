@@ -68,5 +68,27 @@ The offline harness has no real provider I/O, so a **modeled 15 ms/call** latenc
 | Cold (no cache) | 68 | 68 | 0 |
 | Warm (cached) | 68 | 0 | 68 |
 
-Cold **300 ms** vs warm **88 ms** (**3.41×** faster on a warm cache). _(Wall-clock is machine-dependent; the cache miss/hit counts are exact.)_
+Cold **294 ms** vs warm **102 ms** (**2.89×** faster on a warm cache). _(Wall-clock is machine-dependent; the cache miss/hit counts are exact.)_
 
+
+## Weight sensitivity (technical-doc §14)
+
+The same scenarios, re-scored under different `FactorWeights`. Each cell is the destination the optimizer selected — so a column that differs from `baseline` shows the weighting changing the decision.
+
+| Scenario | baseline | preference-first | budget-first | experience-first |
+|---|---|---|---|---|
+| €800 · 5 days · car · culture + food | Belgrade | Budapest | Belgrade | Belgrade |
+| €1000 · 5 days · 2 travelers · car · culture + food + sightseeing | Belgrade | Budapest | Belgrade | Belgrade |
+| €300 · 4 days · car · culture + food (tight budget) | Belgrade | Belgrade | Belgrade | Belgrade |
+| €900 · 4 days · airplane · nightlife + food | Belgrade | Belgrade | Belgrade | Belgrade |
+
+Weight vectors (cost / preference / experience / weather / travel / accommodation):
+
+- **baseline** — 0.3 / 0.25 / 0.15 / 0.1 / 0.1 / 0.1
+- **preference-first** — 0.1 / 0.55 / 0.1 / 0.05 / 0.05 / 0.15
+- **budget-first** — 0.55 / 0.1 / 0.05 / 0.05 / 0.1 / 0.15
+- **experience-first** — 0.15 / 0.15 / 0.45 / 0.1 / 0.05 / 0.1
+
+### Interpretation
+
+At the default weights, cost (0.30) is the single largest factor, so the optimizer favours the cheapest, closest candidate that still fits the preferences — which is why the baseline column is stable across scenarios. Re-weighting changes that: **preference-first** moves the selected destination in 2 of the scenarios — the expected direction (emphasising that factor promotes the candidate that is strongest on it). **budget-first** does not change the winner here (the baseline choice is also strong on this factor, or the cost advantage still dominates). **experience-first** does not change the winner here (the baseline choice is also strong on this factor, or the cost advantage still dominates). This is the point of the exercise: the decision is a transparent weighted trade-off, not a fixed ranking — the chosen destination shifts predictably as the weights move.

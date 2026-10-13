@@ -33,6 +33,10 @@ from evaluation.runner import (  # noqa: E402  (after the sys.path shim, by desi
     results_to_json,
     run_all,
 )
+from evaluation.weights import (  # noqa: E402
+    format_weight_sweep,
+    run_weight_sweep,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +61,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--no-cache-benchmark", action="store_true", help="skip the cache-effect benchmark"
     )
+    parser.add_argument(
+        "--no-weight-sweep", action="store_true", help="skip the weight-sensitivity sweep"
+    )
     args = parser.parse_args(argv)
 
     _configure_logging()
@@ -70,8 +77,11 @@ def main(argv: list[str] | None = None) -> int:
     cache = (
         None if args.no_cache_benchmark else measure_cache_effect(latency_ms=args.cache_latency_ms)
     )
+    sweep = None if args.no_weight_sweep else run_weight_sweep()
 
     markdown = format_markdown(results, agg, cache)
+    if sweep is not None:
+        markdown += "\n\n" + format_weight_sweep(sweep)
     if args.out:
         args.out.write_text(markdown + "\n", encoding="utf-8")
         logger.info("wrote results table to %s", args.out)
