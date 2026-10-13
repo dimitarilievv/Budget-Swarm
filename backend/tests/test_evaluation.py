@@ -10,7 +10,10 @@ from __future__ import annotations
 
 import pytest
 from evaluation.runner import (
+    ScenarioMetrics,
+    aggregate,
     format_markdown,
+    measure_cache_effect,
     results_to_json,
     run_all,
     run_scenario,
@@ -87,3 +90,70 @@ def test_markdown_and_json_render():
     rows = results_to_json(results)
     assert len(rows) == len(results)
     assert all("elapsed_ms" in row and "ranked" in row for row in rows)
+
+
+# --- aggregate metric calculation (unit-tested on known inputs) --------------
+
+
+def _metrics(key, *, plan, budget_ok=True, valid=True, pref=None, latency=None) -> ScenarioMetrics:
+    return ScenarioMetrics(
+        key=key,
+        title=key,
+        budget=1000.0,
+        plan_success=plan,
+        total_cost=500.0 if plan else None,
+        budget_ok=(budget_ok if plan else None),
+        itinerary_valid=(valid if plan else None),
+        preference_satisfaction=pref,
+        elapsed_ms=latency,
+    )
+
+
+def test_aggregate_computes_rates_on_known_inputs():
+    results = [
+        _metrics("a", plan=True, budget_ok=True, valid=True, pref=0.6, latency=100.0),
+        _metrics("b", plan=True, budget_ok=True, valid=False, pref=0.4, latency=200.0),
+        _metrics("c", plan=False),  # no plan — excluded from the plan-only rates
+    ]
+    agg = aggregate(results)
+    assert agg.scenarios == 3
+    assert agg.plans_produced == 2
+    assert agg.plan_success_rate == pytest.approx(66.7, abs=0.1)
+    assert agg.budget_satisfaction_rate == 100.0  # 2/2 produced plans within budget
+    assert agg.itinerary_validity_rate == 50.0  # 1/2 valid
+    assert agg.mean_preference_satisfaction == pytest.approx(0.5)
+    assert agg.mean_latency_ms == pytest.approx(150.0)
+    assert agg.median_latency_ms == pytest.approx(150.0)
+
+
+def test_aggregate_reports_full_budget_satisfaction_on_the_real_run():
+    agg = aggregate(run_all())
+    assert agg.plan_success_rate == 100.0
+    assert agg.budget_satisfaction_rate == 100.0  # expected 100% by construction (§25)
+    assert agg.itinerary_validity_rate == 100.0
+
+
+def test_aggregate_empty_is_safe():
+    agg = aggregate([])
+    assert agg.scenarios == 0
+    assert agg.plan_success_rate == 0.0
+    assert agg.mean_latency_ms is None
+
+
+# --- response time with / without cache --------------------------------------
+
+
+def test_cache_effect_counts_are_deterministic():
+    # latency 0 keeps the test fast; the miss/hit counts are the exact, deterministic check.
+    bench = measure_cache_effect(latency_ms=0.0)
+    assert bench.cold_misses > 0  # a cold cache misses on every unique agent call
+    assert bench.cold_hits == 0  # ...and hits nothing on the first pass
+    assert bench.warm_misses == 0  # a warm cache serves everything from cache
+    assert bench.warm_hits == bench.cold_misses  # same calls, now all hits
+    assert bench.speedup is not None
+
+
+def test_cache_effect_is_faster_warm_with_modeled_latency():
+    # With a real per-call latency, the warm pass (all cache hits) must beat the cold pass.
+    bench = measure_cache_effect(latency_ms=5.0)
+    assert bench.warm_ms < bench.cold_ms

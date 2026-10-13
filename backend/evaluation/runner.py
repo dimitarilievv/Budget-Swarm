@@ -16,7 +16,7 @@ from typing import Any
 
 from ai_engine.core.engine import TripPlanEngine
 from ai_engine.core.planner import NoPlanAvailableError
-from evaluation.fixtures import build_engine
+from evaluation.fixtures import CountingCache, build_cached_engine, build_engine
 from evaluation.scenarios import SCENARIOS, Scenario
 
 logger = logging.getLogger(__name__)
@@ -203,6 +203,131 @@ def run_all(scenarios: tuple[Scenario, ...] = SCENARIOS) -> list[ScenarioMetrics
 
 
 # --------------------------------------------------------------------------- #
+# Aggregate metrics (technical-doc §25) — rolled up across all scenarios
+# --------------------------------------------------------------------------- #
+
+
+def _percentile(values: list[float], pct: float) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return round(ordered[0], 1)
+    rank = pct / 100 * (len(ordered) - 1)
+    lo = int(rank)
+    hi = min(lo + 1, len(ordered) - 1)
+    return round(ordered[lo] + (ordered[hi] - ordered[lo]) * (rank - lo), 1)
+
+
+def _rate(numerator: int, denominator: int) -> float:
+    return round(100.0 * numerator / denominator, 1) if denominator else 0.0
+
+
+@dataclass(frozen=True)
+class AggregateMetrics:
+    """The §25 metrics rolled up across the scenario set."""
+
+    scenarios: int
+    plans_produced: int
+    plan_success_rate: float  # % of scenarios that yielded a plan
+    budget_satisfaction_rate: float  # % of plans within budget (expected 100%)
+    itinerary_validity_rate: float  # % of plans with a valid itinerary
+    mean_preference_satisfaction: float | None
+    mean_latency_ms: float | None
+    median_latency_ms: float | None
+    p95_latency_ms: float | None
+
+
+def aggregate(results: list[ScenarioMetrics]) -> AggregateMetrics:
+    """Roll per-scenario metrics up into the §25 rates (pure; unit-tested on known inputs)."""
+    total = len(results)
+    produced = [r for r in results if r.plan_success]
+    within_budget = sum(1 for r in produced if r.budget_ok)
+    valid = sum(1 for r in produced if r.itinerary_valid)
+    prefs = [r.preference_satisfaction for r in produced if r.preference_satisfaction is not None]
+    latencies = [r.elapsed_ms for r in produced if r.elapsed_ms is not None]
+    return AggregateMetrics(
+        scenarios=total,
+        plans_produced=len(produced),
+        plan_success_rate=_rate(len(produced), total),
+        budget_satisfaction_rate=_rate(within_budget, len(produced)),
+        itinerary_validity_rate=_rate(valid, len(produced)),
+        mean_preference_satisfaction=(round(sum(prefs) / len(prefs), 4) if prefs else None),
+        mean_latency_ms=(round(sum(latencies) / len(latencies), 1) if latencies else None),
+        median_latency_ms=_percentile(latencies, 50),
+        p95_latency_ms=_percentile(latencies, 95),
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Response time with / without cache (technical-doc §23)
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class CacheBenchmark:
+    """Cold vs warm run of the scenario set, with a modeled per-call provider latency."""
+
+    latency_ms: float  # modeled per-call provider latency (the cost of a cache miss)
+    cold_ms: float  # first pass: empty cache — every agent call is a miss
+    warm_ms: float  # second pass: populated cache — every agent call is a hit
+    cold_misses: int
+    cold_hits: int
+    warm_misses: int
+    warm_hits: int
+
+    @property
+    def speedup(self) -> float | None:
+        return round(self.cold_ms / self.warm_ms, 2) if self.warm_ms > 0 else None
+
+
+def measure_cache_effect(
+    scenarios: tuple[Scenario, ...] = SCENARIOS, *, latency_ms: float = 15.0
+) -> CacheBenchmark:
+    """Run the scenario set cold (empty cache) then warm (populated) and compare wall-clock.
+
+    The harness has no real provider I/O, so a modeled ``latency_ms`` is charged on every
+    cache *miss*; the cold pass pays it across the parallel fan-out, the warm pass serves
+    everything from cache. Decision results are identical — only timing differs (§23).
+    """
+    cache = CountingCache()
+    engine = build_cached_engine(cache, latency_s=latency_ms / 1000.0)
+
+    def _run_once() -> float:
+        started = time.perf_counter()
+        for s in scenarios:
+            try:
+                engine.generate_trip(s.engine_input)
+            except NoPlanAvailableError:
+                pass
+        return (time.perf_counter() - started) * 1000
+
+    cold_ms = _run_once()
+    cold_hits, cold_misses = cache.hits, cache.misses
+    warm_ms = _run_once()
+    warm_hits = cache.hits - cold_hits
+    warm_misses = cache.misses - cold_misses
+
+    logger.info(
+        "cache benchmark: cold=%.0fms (%d miss) warm=%.0fms (%d miss) @ %.0fms/call",
+        cold_ms,
+        cold_misses,
+        warm_ms,
+        warm_misses,
+        latency_ms,
+    )
+    return CacheBenchmark(
+        latency_ms=latency_ms,
+        cold_ms=round(cold_ms, 1),
+        warm_ms=round(warm_ms, 1),
+        cold_misses=cold_misses,
+        cold_hits=cold_hits,
+        warm_misses=warm_misses,
+        warm_hits=warm_hits,
+    )
+
+
+# --------------------------------------------------------------------------- #
 # Output formatting
 # --------------------------------------------------------------------------- #
 
@@ -215,11 +340,16 @@ def _pct(value: float | None) -> str:
     return "—" if value is None else f"{value * 100:.0f}%"
 
 
-def format_markdown(results: list[ScenarioMetrics]) -> str:
-    """A results table for the thesis: a summary row per scenario + per-candidate compares.
+def format_markdown(
+    results: list[ScenarioMetrics],
+    agg: AggregateMetrics | None = None,
+    cache: CacheBenchmark | None = None,
+) -> str:
+    """A results table for the thesis: aggregate metrics + a summary row per scenario +
+    per-candidate compares, and (when given) the cache-effect benchmark.
 
-    Latency is intentionally omitted from the written table so the document is stable across
-    runs (it is machine-dependent); the JSON output and the CLI log carry it.
+    Wall-clock latency is omitted from the written tables so the document is stable across
+    runs (it is machine-dependent); the JSON output and the CLI log carry the numbers.
     """
     lines: list[str] = []
     lines.append("# Evaluation results")
@@ -230,6 +360,21 @@ def format_markdown(results: list[ScenarioMetrics]) -> str:
         "decision metrics below are reproducible (technical-doc §25)."
     )
     lines.append("")
+
+    if agg is not None:
+        lines.append("## Aggregate metrics")
+        lines.append("")
+        lines.append("| Metric | Value |")
+        lines.append("|---|---|")
+        lines.append(f"| Scenarios run | {agg.scenarios} |")
+        lines.append(f"| Plan success rate | {agg.plan_success_rate:.0f}% |")
+        lines.append(
+            f"| Budget satisfaction rate | {agg.budget_satisfaction_rate:.0f}% "
+            "_(100% by construction)_ |"
+        )
+        lines.append(f"| Itinerary validity rate | {agg.itinerary_validity_rate:.0f}% |")
+        lines.append(f"| Mean preference satisfaction | {_pct(agg.mean_preference_satisfaction)} |")
+        lines.append("")
 
     lines.append("## Summary")
     lines.append("")
@@ -276,6 +421,36 @@ def format_markdown(results: list[ScenarioMetrics]) -> str:
                 f"{_eur(c.total_cost)} | {_fmt(c.preference_score)} | {_fmt(c.weather_score)} | "
                 f"{_fmt(c.overall_score)} | {feas} |"
             )
+
+    if cache is not None:
+        lines.append("")
+        lines.append("## Response time — cache effect (technical-doc §23)")
+        lines.append("")
+        lines.append(
+            f"The offline harness has no real provider I/O, so a **modeled "
+            f"{cache.latency_ms:.0f} ms/call** latency is charged on each cache miss. "
+            "The whole scenario set is run cold (empty cache), then warm (populated). "
+            "Decision results are identical; only timing differs."
+        )
+        lines.append("")
+        lines.append("| Pass | Agent calls | Cache misses | Cache hits |")
+        lines.append("|---|---|---|---|")
+        lines.append(
+            f"| Cold (no cache) | {cache.cold_misses + cache.cold_hits} | "
+            f"{cache.cold_misses} | {cache.cold_hits} |"
+        )
+        lines.append(
+            f"| Warm (cached) | {cache.warm_misses + cache.warm_hits} | "
+            f"{cache.warm_misses} | {cache.warm_hits} |"
+        )
+        lines.append("")
+        speedup = f"{cache.speedup:g}×" if cache.speedup is not None else "—"
+        lines.append(
+            f"Cold **{cache.cold_ms:.0f} ms** vs warm **{cache.warm_ms:.0f} ms** "
+            f"(**{speedup}** faster on a warm cache). "
+            "_(Wall-clock is machine-dependent; the cache miss/hit counts are exact.)_"
+        )
+
     lines.append("")
     return "\n".join(lines)
 

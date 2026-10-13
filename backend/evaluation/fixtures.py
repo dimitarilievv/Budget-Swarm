@@ -15,6 +15,8 @@ deterministic fallback (``ExplanationService(primary=None)``), never the LLM.
 
 from __future__ import annotations
 
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, timedelta
 
@@ -302,3 +304,84 @@ def build_agents(world: tuple[CandidateFixture, ...] = WORLD) -> AgentSet:
 def build_engine(world: tuple[CandidateFixture, ...] = WORLD) -> TripPlanEngine:
     """An :class:`Engine` wired to the fixture world + the templated (no-LLM) explainer."""
     return TripPlanEngine(build_agents(world), explanation_service=ExplanationService(primary=None))
+
+
+# --------------------------------------------------------------------------- #
+# Caching layer for the response-time (cache effect) benchmark
+# --------------------------------------------------------------------------- #
+#
+# The harness is offline, so the real §23 provider cache / network latency is not
+# exercised. To measure response time *with and without* a cache reproducibly, we wrap
+# the fixture agents in a counting cache and charge a **modeled** per-call provider
+# latency on a cache miss (a cache hit pays nothing). A cold pass (empty cache) pays the
+# latency on every unique (agent, candidate, request) call; a warm pass (populated cache)
+# serves them all from cache. The modeled latency makes the comparison meaningful while
+# the decision results stay identical and deterministic.
+
+
+class CountingCache:
+    """A tiny in-memory memo cache that tracks hits and misses (per-call provenance)."""
+
+    def __init__(self) -> None:
+        self.hits = 0
+        self.misses = 0
+        self._store: dict[tuple, object] = {}
+
+    def get_or_compute(self, key: tuple, compute: Callable[[], object]) -> object:
+        if key in self._store:
+            self.hits += 1
+            return self._store[key]
+        self.misses += 1
+        value = compute()
+        self._store[key] = value
+        return value
+
+
+def _req_key(ei: EngineInput) -> tuple:
+    # The request fields a real provider cache would key on (not the whole object).
+    return (ei.transport_mode, ei.travelers, ei.duration_days, ei.origin_label)
+
+
+def build_cached_agents(
+    cache: CountingCache,
+    *,
+    latency_s: float = 0.0,
+    world: tuple[CandidateFixture, ...] = WORLD,
+) -> AgentSet:
+    """Wrap the fixture agents in ``cache``; a miss optionally sleeps ``latency_s`` (modeled I/O)."""
+    base = build_agents(world)
+
+    def _sleep_then(compute: Callable[[], object]) -> Callable[[], object]:
+        def run() -> object:
+            if latency_s > 0:
+                time.sleep(latency_s)
+            return compute()
+
+        return run
+
+    def scout(ei: EngineInput) -> list[Destination]:
+        key = ("scout", _req_key(ei))
+        return cache.get_or_compute(key, _sleep_then(lambda: base.scout(ei)))  # type: ignore[return-value]
+
+    def _wrap(name: str, fn: Callable[[EngineInput, Destination], object]):
+        def inner(ei: EngineInput, dest: Destination) -> object:
+            key = (name, dest.city, dest.country, _req_key(ei))
+            return cache.get_or_compute(key, _sleep_then(lambda: fn(ei, dest)))
+
+        return inner
+
+    return AgentSet(
+        scout=scout,
+        transport=_wrap("transport", base.transport),  # type: ignore[arg-type]
+        stay=_wrap("stay", base.stay),  # type: ignore[arg-type]
+        experience=_wrap("experience", base.experience),  # type: ignore[arg-type]
+        weather=_wrap("weather", base.weather),  # type: ignore[arg-type]
+    )
+
+
+def build_cached_engine(cache: CountingCache, *, latency_s: float = 0.0) -> TripPlanEngine:
+    """An engine whose agents go through ``cache`` (with a modeled miss latency)."""
+    return TripPlanEngine(
+        build_cached_agents(cache, latency_s=latency_s),
+        explanation_service=ExplanationService(primary=None),
+    )

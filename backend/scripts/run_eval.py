@@ -27,7 +27,9 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from evaluation.runner import (  # noqa: E402  (after the sys.path shim, by design)
+    aggregate,
     format_markdown,
+    measure_cache_effect,
     results_to_json,
     run_all,
 )
@@ -46,6 +48,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--out", type=Path, default=None, help="write the Markdown table here")
     parser.add_argument("--json", type=Path, default=None, help="also write machine-readable JSON")
+    parser.add_argument(
+        "--cache-latency-ms",
+        type=float,
+        default=15.0,
+        help="modeled per-call provider latency for the cache benchmark (default 15)",
+    )
+    parser.add_argument(
+        "--no-cache-benchmark", action="store_true", help="skip the cache-effect benchmark"
+    )
     args = parser.parse_args(argv)
 
     _configure_logging()
@@ -55,8 +66,12 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
 
     results = run_all()
+    agg = aggregate(results)
+    cache = (
+        None if args.no_cache_benchmark else measure_cache_effect(latency_ms=args.cache_latency_ms)
+    )
 
-    markdown = format_markdown(results)
+    markdown = format_markdown(results, agg, cache)
     if args.out:
         args.out.write_text(markdown + "\n", encoding="utf-8")
         logger.info("wrote results table to %s", args.out)
@@ -64,9 +79,32 @@ def main(argv: list[str] | None = None) -> int:
         print(markdown)
 
     if args.json:
-        args.json.write_text(
-            json.dumps(results_to_json(results), indent=2) + "\n", encoding="utf-8"
-        )
+        payload = {
+            "aggregate": {
+                "scenarios": agg.scenarios,
+                "plan_success_rate": agg.plan_success_rate,
+                "budget_satisfaction_rate": agg.budget_satisfaction_rate,
+                "itinerary_validity_rate": agg.itinerary_validity_rate,
+                "mean_preference_satisfaction": agg.mean_preference_satisfaction,
+                "mean_latency_ms": agg.mean_latency_ms,
+                "median_latency_ms": agg.median_latency_ms,
+                "p95_latency_ms": agg.p95_latency_ms,
+            },
+            "cache_benchmark": (
+                None
+                if cache is None
+                else {
+                    "latency_ms": cache.latency_ms,
+                    "cold_ms": cache.cold_ms,
+                    "warm_ms": cache.warm_ms,
+                    "speedup": cache.speedup,
+                    "cold_misses": cache.cold_misses,
+                    "warm_misses": cache.warm_misses,
+                }
+            ),
+            "scenarios": results_to_json(results),
+        }
+        args.json.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
         logger.info("wrote JSON results to %s", args.json)
 
     produced = sum(1 for r in results if r.plan_success)
@@ -80,6 +118,14 @@ def main(argv: list[str] | None = None) -> int:
             f"€{r.total_cost:.0f}" if r.total_cost is not None else "-",
             r.elapsed_ms,
         )
+    logger.info(
+        "aggregate: plan success %.0f%%, budget satisfaction %.0f%%, itinerary validity %.0f%%, "
+        "mean preference %s",
+        agg.plan_success_rate,
+        agg.budget_satisfaction_rate,
+        agg.itinerary_validity_rate,
+        f"{agg.mean_preference_satisfaction:.2f}" if agg.mean_preference_satisfaction else "-",
+    )
     logger.info("evaluation complete: %d/%d scenarios produced a plan", produced, len(results))
     # The harness self-checks: at least 3 scenarios must run and every budget-feasible plan
     # must respect its budget (the core §25 constraint). A violation is a real failure.
