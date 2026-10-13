@@ -33,6 +33,10 @@ from evaluation.runner import (  # noqa: E402  (after the sys.path shim, by desi
     results_to_json,
     run_all,
 )
+from evaluation.weather_eval import (  # noqa: E402
+    format_weather_replan,
+    run_weather_replan,
+)
 from evaluation.weights import (  # noqa: E402
     format_weight_sweep,
     run_weight_sweep,
@@ -64,6 +68,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--no-weight-sweep", action="store_true", help="skip the weight-sensitivity sweep"
     )
+    parser.add_argument(
+        "--no-weather-eval", action="store_true", help="skip the weather-replanning measurement"
+    )
     args = parser.parse_args(argv)
 
     _configure_logging()
@@ -78,8 +85,11 @@ def main(argv: list[str] | None = None) -> int:
         None if args.no_cache_benchmark else measure_cache_effect(latency_ms=args.cache_latency_ms)
     )
     sweep = None if args.no_weight_sweep else run_weight_sweep()
+    weather = None if args.no_weather_eval else run_weather_replan()
 
     markdown = format_markdown(results, agg, cache)
+    if weather is not None:
+        markdown += "\n\n" + format_weather_replan(weather)
     if sweep is not None:
         markdown += "\n\n" + format_weight_sweep(sweep)
     if args.out:

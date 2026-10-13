@@ -68,8 +68,21 @@ The offline harness has no real provider I/O, so a **modeled 15 ms/call** latenc
 | Cold (no cache) | 68 | 68 | 0 |
 | Warm (cached) | 68 | 0 | 68 |
 
-Cold **294 ms** vs warm **102 ms** (**2.89×** faster on a warm cache). _(Wall-clock is machine-dependent; the cache miss/hit counts are exact.)_
+Cold **295 ms** vs warm **111 ms** (**2.65×** faster on a warm cache). _(Wall-clock is machine-dependent; the cache miss/hit counts are exact.)_
 
+
+## Weather replanning (technical-doc §25, BS-074)
+
+Injected weather conflicts (days flagged unfit for outdoor activities), and whether the scheduler kept outdoor stops off those days. _Outdoor on conflict days_ must be 0 for the conflict to be correctly handled.
+
+| Scenario | Conflict days | Outdoor on conflict days | Rescheduled | Outdoor scheduled | Handled |
+|---|---|---|---|---|---|
+| 5 days · all clear (control) | — | 0 | 0 | 4 | yes |
+| 5 days · rain on day 2 | 2 | 0 | 1 | 4 | yes |
+| 5 days · rain on days 2 & 4 | 2, 4 | 0 | 1 | 4 | yes |
+| 4 days · rain on day 1 | 1 | 0 | 2 | 4 | yes |
+
+**Replanning success rate: 100%** (4/4 scenarios). Outdoor activities are forbidden on conflict days by construction, so a correctly modelled scheduler reaches 100% — measuring it validates BS-074.
 
 ## Weight sensitivity (technical-doc §14)
 
