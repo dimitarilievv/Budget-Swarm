@@ -16,6 +16,12 @@ export default defineConfig({
   server: {
     host: "0.0.0.0",
     port: 5173,
+    // When served behind the HTTPS proxy (Caddy on 443), the HMR websocket must
+    // connect to the proxy port, not Vite's internal 5173. Set via compose; unset
+    // for plain `npm run dev` on http://localhost:5173.
+    hmr: process.env.VITE_HMR_CLIENT_PORT
+      ? { clientPort: Number(process.env.VITE_HMR_CLIENT_PORT) }
+      : undefined,
   },
   test: {
     globals: true,
