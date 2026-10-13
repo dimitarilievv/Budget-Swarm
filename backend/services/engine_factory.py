@@ -27,6 +27,7 @@ from api.routes import get_trip_engine, get_trip_persister, get_trip_store
 from db.repositories import DestinationRepository
 from db.session import get_engine, ping
 from errors import NoPlanAvailableError as ApiNoPlanAvailableError
+from errors import ServiceUnavailableError as ApiServiceUnavailableError
 from errors import ValidationError as ApiValidationError
 from fastapi import FastAPI
 from sqlalchemy.orm import sessionmaker
@@ -51,6 +52,7 @@ class TranslatingTripEngine:
         self._engine = engine
 
     def generate_trip(self, request: object) -> object:
+        from ai_engine.core.pipeline import CandidateLoadError as EngineCandidateLoadError
         from ai_engine.core.planner import (
             NoPlanAvailableError as EngineNoPlanAvailableError,
         )
@@ -67,6 +69,13 @@ class TranslatingTripEngine:
             raise ApiValidationError(str(exc), field="origin_label") from exc
         except EngineNoPlanAvailableError as exc:
             raise ApiNoPlanAvailableError(str(exc)) from exc
+        except EngineCandidateLoadError as exc:
+            # Infrastructure failure loading candidates (not "no feasible plan"): return a
+            # controlled 503 with a generic message; the cause was logged in the pipeline.
+            logger.error("engine: candidate load failed → 503 SERVICE_UNAVAILABLE", exc_info=exc)
+            raise ApiServiceUnavailableError(
+                "A service we rely on is temporarily unavailable. Please try again shortly."
+            ) from exc
 
 
 def build_session_factory() -> SessionFactory:

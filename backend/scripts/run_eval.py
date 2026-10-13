@@ -32,6 +32,12 @@ from evaluation.api_failure_eval import (  # noqa: E402
     format_api_failure,
     run_api_failure_eval,
 )
+from evaluation.retry_eval import (  # noqa: E402
+    format_retry,
+    retry_metrics,
+    retry_to_json,
+    run_retry_eval,
+)
 from evaluation.runner import (  # noqa: E402  (after the sys.path shim, by design)
     aggregate,
     format_markdown,
@@ -99,12 +105,16 @@ def main(argv: list[str] | None = None) -> int:
     weather = None if args.no_weather_eval else run_weather_replan()
     api_outcomes = None if args.no_api_failure_eval else run_api_failure_eval()
     api_metrics = None if api_outcomes is None else api_failure_metrics(api_outcomes)
+    retry_outcomes = None if args.no_api_failure_eval else run_retry_eval()
+    retry_m = None if retry_outcomes is None else retry_metrics(retry_outcomes)
 
     markdown = format_markdown(results, agg, cache)
     if weather is not None:
         markdown += "\n\n" + format_weather_replan(weather)
     if api_outcomes is not None:
         markdown += "\n\n" + format_api_failure(api_outcomes, api_metrics)
+    if retry_outcomes is not None:
+        markdown += "\n\n" + format_retry(retry_outcomes, retry_m)
     if sweep is not None:
         markdown += "\n\n" + format_weight_sweep(sweep)
     if args.out:
@@ -140,6 +150,7 @@ def main(argv: list[str] | None = None) -> int:
             "api_failure": (
                 None if api_outcomes is None else api_failure_to_json(api_outcomes, api_metrics)
             ),
+            "retry": (None if retry_outcomes is None else retry_to_json(retry_outcomes, retry_m)),
             "scenarios": results_to_json(results),
         }
         args.json.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")

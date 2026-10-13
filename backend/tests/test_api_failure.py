@@ -123,10 +123,12 @@ def _engine_input() -> EngineInput:
     )
 
 
-def test_discovered_gap_candidate_load_is_not_isolated():
-    # KNOWN GAP: the pipeline isolates the four external agents but NOT scout (candidate
-    # load). A failure there propagates as an unhandled exception rather than a controlled
-    # no-plan. This test documents the gap; if it is ever fixed, update it.
+def test_candidate_load_failure_is_isolated_as_candidate_load_error():
+    # FIXED (was a gap): a candidate-load (scout) failure is now isolated into a controlled
+    # CandidateLoadError — distinct from NoPlanAvailableError ("no candidates" / missing data)
+    # and from an arbitrary unhandled exception — so the boundary maps it to a controlled 503.
+    from ai_engine.core.pipeline import CandidateLoadError
+
     base = build_agents()
 
     def failing_scout(_: EngineInput):
@@ -140,14 +142,10 @@ def test_discovered_gap_candidate_load_is_not_isolated():
         weather=base.weather,
     )
     engine = TripPlanEngine(agents, explanation_service=ExplanationService(primary=None))
-    with pytest.raises(RuntimeError):
+    with pytest.raises(CandidateLoadError):
         engine.generate_trip(_engine_input())
-    # And it is specifically NOT the controlled no-plan path.
-    with pytest.raises(RuntimeError):
-        try:
-            engine.generate_trip(_engine_input())
-        except NoPlanAvailableError:  # pragma: no cover - would mean the gap was fixed
-            pytest.fail("candidate-load failure was handled as a controlled no-plan")
+    # It is NOT misclassified as the "no feasible plan / missing data" path.
+    assert not issubclass(CandidateLoadError, NoPlanAvailableError)
 
 
 def test_build_failure_engine_returns_an_engine():

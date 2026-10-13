@@ -38,6 +38,7 @@ NOT_FOUND = "NOT_FOUND"
 CONFLICT = "CONFLICT"
 RATE_LIMITED = "RATE_LIMITED"
 NO_PLAN_AVAILABLE = "NO_PLAN_AVAILABLE"
+SERVICE_UNAVAILABLE = "SERVICE_UNAVAILABLE"
 INTERNAL_ERROR = "INTERNAL_ERROR"
 
 # Map for HTTP errors raised outside our typed AppError (e.g. an unmatched route,
@@ -114,6 +115,19 @@ class NoPlanAvailableError(AppError):
     """No feasible plan could be produced even after fallbacks (→ 503)."""
 
     code = NO_PLAN_AVAILABLE
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+
+
+class ServiceUnavailableError(AppError):
+    """A backing service we depend on is temporarily unavailable (→ 503).
+
+    Distinct from :class:`NoPlanAvailableError` ("no feasible trip for your constraints"):
+    this signals an *infrastructure* problem (e.g. the destination datastore is unreachable),
+    which is transient and worth retrying. The client-facing message is generic — the real
+    cause is logged server-side, never returned.
+    """
+
+    code = SERVICE_UNAVAILABLE
     status_code = status.HTTP_503_SERVICE_UNAVAILABLE
 
 

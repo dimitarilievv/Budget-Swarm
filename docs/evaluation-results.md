@@ -68,7 +68,7 @@ The offline harness has no real provider I/O, so a **modeled 15 ms/call** latenc
 | Cold (no cache) | 68 | 68 | 0 |
 | Warm (cached) | 68 | 0 | 68 |
 
-Cold **351 ms** vs warm **166 ms** (**2.12×** faster on a warm cache). _(Wall-clock is machine-dependent; the cache miss/hit counts are exact.)_
+Cold **318 ms** vs warm **86 ms** (**3.69×** faster on a warm cache). _(Wall-clock is machine-dependent; the cache miss/hit counts are exact.)_
 
 
 ## Weather replanning (technical-doc §25, BS-074)
@@ -112,6 +112,25 @@ External-data agents (transport / accommodation / activities / weather) are fail
 | Transport + accommodation both fail everywhere | no-plan (controlled) | — | honest-failure=ok |
 
 Recovery here means **graceful degradation** (keep the valid pieces, exclude an unreachable/unlistable city, flag the rest) — the pipeline does not retry a failed agent at this layer (retry is provider-internal).
+
+## Retry recovery (technical-doc §25, ADR-005)
+
+A bounded, opt-in fan-out retry (max **2 attempts**) fires only for an explicit `TransientAgentError` — a narrow safety net, not a duplicate of the provider-level retry. Permanent errors are never retried; candidate-load failures are isolated as a controlled failure.
+
+| Metric | Value |
+|---|---|
+| Retry recovery rate | 100% (2/2 eligible transient) |
+| Mean attempts per operation | 1.75 |
+| Permanent errors not retried | yes |
+
+| Scenario | Outcome | Attempts (chosen) | Piece recovered |
+|---|---|---|---|
+| Weather: one transient failure then success | plan | 2 | yes |
+| Weather: transient failure on every attempt | plan | 2 | no |
+| Weather: a permanent error (must NOT be retried) | plan | 1 | no |
+| Activities: one transient failure then success | plan | 2 | yes |
+
+Interpretation: a single transient blip recovers within the budget; a failure on every attempt degrades gracefully (exactly as before); a permanent error is not retried (one attempt). Provider-level retries remain the primary recovery mechanism; this layer only catches an explicitly-transient signal the provider retry did not resolve.
 
 ## Weight sensitivity (technical-doc §14)
 

@@ -118,6 +118,33 @@ FlightAvailabilityFn = Callable[["EngineInput", Destination, int, str], "dict[st
 # small (k ≈ 4-6), so this bounds ~4k potential calls to a rate-limit-friendly number.
 DEFAULT_AGENT_CONCURRENCY = 8
 
+# Bounded retry for the fan-out layer. This is a *narrow* safety net, NOT a duplicate of the
+# provider-level retry (``RetryPolicy`` in ``utils.api_clients``, which already retries network
+# blips inside each agent). It fires **only** for an explicit :class:`TransientAgentError` an
+# agent chooses to raise; every other exception is treated as permanent and degrades on the
+# first failure, exactly as before. ``DEFAULT_AGENT_RETRY_ATTEMPTS`` is the *total* attempts.
+DEFAULT_AGENT_RETRY_ATTEMPTS = 2
+_AGENT_RETRY_BACKOFF_S = 0.05  # small fixed backoff between attempts (scaled by attempt index)
+
+
+class TransientAgentError(Exception):
+    """A *transient* agent failure that is safe to retry at the fan-out layer.
+
+    An agent raises this only when it knows the failure is transient and NOT already retried
+    by its provider (e.g. a brief internal blip). Any other exception is treated as permanent
+    and degrades immediately — the fan-out never retries an arbitrary exception (ADR-005).
+    """
+
+
+class CandidateLoadError(Exception):
+    """Infrastructure failure while loading candidate destinations (ScoutAgent).
+
+    Deliberately distinct from "no candidates found" (missing data → an empty list, which the
+    planner reports as ``NoPlanAvailableError``): this is an *infrastructure* failure (e.g. the
+    datastore is unreachable). The caller maps it to a controlled response instead of letting it
+    surface as an unhandled 500; the underlying cause is chained for diagnostics.
+    """
+
 
 @dataclass(frozen=True)
 class AgentSet:
@@ -158,6 +185,7 @@ async def gather_agent_outputs(
     *,
     nights: int,
     concurrency: int = DEFAULT_AGENT_CONCURRENCY,
+    retry_attempts: int = DEFAULT_AGENT_RETRY_ATTEMPTS,
 ) -> list[AgentOutputs]:
     """Run Scout, then fan out the four agents per candidate — returning one bundle each.
 
@@ -174,7 +202,15 @@ async def gather_agent_outputs(
     # into core; importing it here (not at module load) keeps that dependency acyclic.
     from ai_engine.agents.coordinator_agent import AgentOutputs
 
-    candidates = list(await asyncio.to_thread(agents.scout, engine_input))
+    # Candidate loading is the one step that is NOT per-piece isolated: if it fails, there is
+    # nothing to fan out. Catch an *infrastructure* failure here (distinct from "no candidates",
+    # which is a legitimate empty list) so it becomes a controlled result rather than an
+    # unhandled exception / HTTP 500. The real cause is logged (diagnostics) and chained.
+    try:
+        candidates = list(await asyncio.to_thread(agents.scout, engine_input))
+    except Exception as exc:  # noqa: BLE001 - isolate candidate-load failures from the caller
+        logger.error("pipeline: candidate load (scout) failed: %s", exc, exc_info=True)
+        raise CandidateLoadError("could not load candidate destinations") from exc
     logger.info("pipeline: scout produced %d candidate(s)", len(candidates))
     if not candidates:
         return []
@@ -186,14 +222,32 @@ async def gather_agent_outputs(
         # task group never cancels a sibling on one agent's error.
         async with asyncio.TaskGroup() as tg:
             transport = tg.create_task(
-                _call(sem, agents.transport, engine_input, candidate, None, "transport")
+                _call(
+                    sem,
+                    agents.transport,
+                    engine_input,
+                    candidate,
+                    None,
+                    "transport",
+                    retry_attempts,
+                )
             )
-            stay = tg.create_task(_call(sem, agents.stay, engine_input, candidate, (), "stay"))
+            stay = tg.create_task(
+                _call(sem, agents.stay, engine_input, candidate, (), "stay", retry_attempts)
+            )
             experience = tg.create_task(
-                _call(sem, agents.experience, engine_input, candidate, (), "experience")
+                _call(
+                    sem,
+                    agents.experience,
+                    engine_input,
+                    candidate,
+                    (),
+                    "experience",
+                    retry_attempts,
+                )
             )
             weather = tg.create_task(
-                _call(sem, agents.weather, engine_input, candidate, None, "weather")
+                _call(sem, agents.weather, engine_input, candidate, None, "weather", retry_attempts)
             )
         return AgentOutputs(
             destination=candidate,
@@ -224,21 +278,49 @@ async def _call(
     candidate: Destination,
     default: object,
     label: str,
+    attempts: int = DEFAULT_AGENT_RETRY_ATTEMPTS,
 ) -> object:
     """Run one specialist agent under the concurrency limit; degrade to ``default`` on error.
 
     Never raises: any exception is logged and swallowed so a single agent failure cannot
     abort the candidate's other agents or the whole fan-out (the error-isolation rule).
+
+    A :class:`TransientAgentError` is retried up to ``attempts`` total times (a small backoff
+    between tries); a non-transient exception is **not** retried and degrades on the first
+    failure, unchanged. Either way the final outcome on failure is the same graceful degrade.
     """
+    total = max(1, attempts)
     async with sem:
-        try:
-            return await asyncio.to_thread(fn, engine_input, candidate)
-        except Exception as exc:  # noqa: BLE001 - any agent failure degrades gracefully
-            logger.warning(
-                "pipeline: %s agent failed for %s/%s (%s); degrading that piece",
-                label,
-                candidate.city,
-                candidate.country,
-                exc,
-            )
-            return default
+        for attempt in range(1, total + 1):
+            try:
+                return await asyncio.to_thread(fn, engine_input, candidate)
+            except TransientAgentError as exc:
+                if attempt < total:
+                    logger.info(
+                        "pipeline: %s transient failure for %s (attempt %d/%d); retrying",
+                        label,
+                        candidate.city,
+                        attempt,
+                        total,
+                    )
+                    await asyncio.sleep(_AGENT_RETRY_BACKOFF_S * attempt)
+                    continue
+                logger.warning(
+                    "pipeline: %s agent failed after %d attempt(s) for %s/%s (%s); degrading",
+                    label,
+                    total,
+                    candidate.city,
+                    candidate.country,
+                    exc,
+                )
+                return default
+            except Exception as exc:  # noqa: BLE001 - permanent failure degrades immediately
+                logger.warning(
+                    "pipeline: %s agent failed for %s/%s (%s); degrading that piece",
+                    label,
+                    candidate.city,
+                    candidate.country,
+                    exc,
+                )
+                return default
+    return default  # pragma: no cover - loop always returns

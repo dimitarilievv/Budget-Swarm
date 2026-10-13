@@ -247,6 +247,7 @@ All errors use a consistent envelope.
 | 409 | `CONFLICT` | resource already exists (e.g. duplicate email on register) |
 | 429 | `RATE_LIMITED` | client exceeded the backend's rate limit |
 | 503 | `NO_PLAN_AVAILABLE` | no feasible plan could be produced even after fallbacks (rare) |
+| 503 | `SERVICE_UNAVAILABLE` | a backing service (e.g. the destination datastore) is temporarily unavailable — transient, worth retrying |
 | 500 | `INTERNAL_ERROR` | unexpected server error |
 
 > Validation happens **twice**: in the browser for UX, and again server-side (authoritative). The server never trusts client-side validation.
