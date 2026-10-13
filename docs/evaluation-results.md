@@ -68,7 +68,7 @@ The offline harness has no real provider I/O, so a **modeled 15 ms/call** latenc
 | Cold (no cache) | 68 | 68 | 0 |
 | Warm (cached) | 68 | 0 | 68 |
 
-Cold **318 ms** vs warm **86 ms** (**3.69×** faster on a warm cache). _(Wall-clock is machine-dependent; the cache miss/hit counts are exact.)_
+Cold **300 ms** vs warm **100 ms** (**3.01×** faster on a warm cache). _(Wall-clock is machine-dependent; the cache miss/hit counts are exact.)_
 
 
 ## Weather replanning (technical-doc §25, BS-074)
@@ -131,6 +131,31 @@ A bounded, opt-in fan-out retry (max **2 attempts**) fires only for an explicit 
 | Activities: one transient failure then success | plan | 2 | yes |
 
 Interpretation: a single transient blip recovers within the budget; a failure on every attempt degrades gracefully (exactly as before); a permanent error is not retried (one attempt). Provider-level retries remain the primary recovery mechanism; this layer only catches an explicitly-transient signal the provider retry did not resolve.
+
+## End-to-end integration (technical-doc §25)
+
+Whole-pipeline checks on each generated plan: cost reconciliation, itinerary validity, candidate consistency, degraded-data honesty, and cold-vs-warm cache decision equality. A controlled no-plan is a correct outcome, not a failure.
+
+| Metric | Rate | Of |
+|---|---|---|
+| End-to-end completion | 100% | 6 plan-expected |
+| Expected-outcome accuracy | 100% | 7 scenarios |
+| Cost consistency | 100% | 6 plans |
+| Budget compliance | 100% | 6 budget-feasible |
+| Itinerary validity | 100% | 6 plans |
+| Candidate consistency | 100% | 7 scenarios |
+| Degraded-data integrity | 100% | 1 degraded |
+| Cache decision consistency | 100% | 4 comparable |
+
+| Scenario | Outcome | Budget ok | Violations |
+|---|---|---|---|
+| Normal request, sufficient budget | plan (Belgrade) | yes | none |
+| Tight budget, only a subset feasible | plan (Belgrade) | yes | none |
+| Preference emphasis (nightlife + food, by air) | plan (Belgrade) | yes | none |
+| Weather conflict requiring itinerary adjustment | plan (Testville) | yes | none |
+| Optional provider (weather) fails, graceful degradation | plan (Belgrade) | yes | none |
+| No feasible plan (budget below any trip) | no-plan | — | none |
+| Longer trip, more travelers | plan (Belgrade) | yes | none |
 
 ## Weight sensitivity (technical-doc §14)
 

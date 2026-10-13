@@ -32,6 +32,13 @@ from evaluation.api_failure_eval import (  # noqa: E402
     format_api_failure,
     run_api_failure_eval,
 )
+from evaluation.e2e_eval import (  # noqa: E402
+    e2e_metrics,
+    e2e_to_json,
+    format_e2e,
+    run_all_e2e,
+    run_cache_consistency,
+)
 from evaluation.retry_eval import (  # noqa: E402
     format_retry,
     retry_metrics,
@@ -88,6 +95,9 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="skip the API failure & recovery evaluation",
     )
+    parser.add_argument(
+        "--no-e2e-eval", action="store_true", help="skip the end-to-end integration evaluation"
+    )
     args = parser.parse_args(argv)
 
     _configure_logging()
@@ -107,6 +117,12 @@ def main(argv: list[str] | None = None) -> int:
     api_metrics = None if api_outcomes is None else api_failure_metrics(api_outcomes)
     retry_outcomes = None if args.no_api_failure_eval else run_retry_eval()
     retry_m = None if retry_outcomes is None else retry_metrics(retry_outcomes)
+    if args.no_e2e_eval:
+        e2e_outcomes = e2e_cache = e2e_m = None
+    else:
+        e2e_outcomes = run_all_e2e()
+        e2e_cache = run_cache_consistency()
+        e2e_m = e2e_metrics(e2e_outcomes, e2e_cache)
 
     markdown = format_markdown(results, agg, cache)
     if weather is not None:
@@ -115,6 +131,8 @@ def main(argv: list[str] | None = None) -> int:
         markdown += "\n\n" + format_api_failure(api_outcomes, api_metrics)
     if retry_outcomes is not None:
         markdown += "\n\n" + format_retry(retry_outcomes, retry_m)
+    if e2e_outcomes is not None:
+        markdown += "\n\n" + format_e2e(e2e_outcomes, e2e_cache, e2e_m)
     if sweep is not None:
         markdown += "\n\n" + format_weight_sweep(sweep)
     if args.out:
@@ -151,6 +169,7 @@ def main(argv: list[str] | None = None) -> int:
                 None if api_outcomes is None else api_failure_to_json(api_outcomes, api_metrics)
             ),
             "retry": (None if retry_outcomes is None else retry_to_json(retry_outcomes, retry_m)),
+            "e2e": (None if e2e_outcomes is None else e2e_to_json(e2e_outcomes, e2e_cache, e2e_m)),
             "scenarios": results_to_json(results),
         }
         args.json.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
