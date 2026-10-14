@@ -20,7 +20,11 @@ services:
       - budgetswarm
 
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      # Dev uses the hot-reload stage; the production stage is built for deploys
+      # (docker build --target production ./backend).
+      target: development
     container_name: budgetswarm-backend
     restart: unless-stopped
     environment:
@@ -56,14 +60,21 @@ services:
       # pipeline is importable and can read the ingested datasets (BS-081).
       - ./ai_engine:/app/ai_engine
       - ./data:/app/data
+      # Also mount data at /data so the ingestion/seed scripts resolve it when run
+      # in-container (BS-104): they anchor data at <repo-root>/data, which is /data
+      # here because backend is mounted at /app (its parent is /).
+      - ./data:/data
     depends_on:
       db:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/')\""]
+      # Hit the real health route (/api/health). It returns 200 once the API is
+      # up, so this is a liveness check independent of DB state.
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')\""]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 20s
     networks:
       - budgetswarm
     # Weekly fuel-price refresh (BS-032), driven by the ofelia scheduler below.
@@ -98,7 +109,11 @@ services:
       - budgetswarm
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      # Dev uses the Vite hot-reload stage; the production stage builds the static
+      # bundle served by nginx (docker build --target production ./frontend).
+      target: development
     container_name: budgetswarm-frontend
     restart: unless-stopped
     environment:
@@ -114,6 +129,16 @@ services:
       - /app/node_modules
     depends_on:
       - backend
+    healthcheck:
+      # Vite dev server serves the app shell at / once it is ready. busybox wget
+      # ships in the node:alpine image. Use 127.0.0.1 (not localhost): the image's
+      # /etc/hosts resolves localhost to ::1 first, but Vite listens on IPv4, and
+      # busybox wget does not fall back across addresses.
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:5173/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
     networks:
       - budgetswarm
 

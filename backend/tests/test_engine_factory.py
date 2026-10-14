@@ -78,6 +78,26 @@ def test_translating_engine_converts_engine_no_plan_to_api_error():
         TranslatingTripEngine(_RaisingEngine()).generate_trip(object())
 
 
+def test_translating_engine_maps_candidate_load_failure_to_503_service_unavailable():
+    from errors import SERVICE_UNAVAILABLE
+    from errors import ServiceUnavailableError as ApiServiceUnavailableError
+
+    from ai_engine.core.pipeline import CandidateLoadError
+
+    class _CandidateLoadFails:
+        def generate_trip(self, request):
+            raise CandidateLoadError("could not load candidate destinations")
+
+    # An infrastructure failure loading candidates becomes a controlled 503 SERVICE_UNAVAILABLE
+    # (not an uncaught 500, and not misclassified as NO_PLAN_AVAILABLE), with a generic message.
+    with pytest.raises(ApiServiceUnavailableError) as excinfo:
+        TranslatingTripEngine(_CandidateLoadFails()).generate_trip(object())
+    assert excinfo.value.code == SERVICE_UNAVAILABLE
+    assert excinfo.value.status_code == 503
+    assert "temporarily unavailable" in excinfo.value.message
+    assert "could not load" not in excinfo.value.message  # internal detail not leaked
+
+
 def test_translating_engine_maps_origin_unresolved_to_validation_error():
     from errors import ValidationError as ApiValidationError
 

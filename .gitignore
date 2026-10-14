@@ -46,6 +46,8 @@ data/*
 !data/ecb_eur_rates.json
 # OurAirports IATA snapshot — nearest-airport resolution for air-mode pricing.
 !data/airports.json
+# Calibrated WhereNext->nightly-price model for uncovered-city accommodation estimates (ADR-016).
+!data/accommodation_estimate_model.json
 
 # ---- IDE / OS ----
 .idea/

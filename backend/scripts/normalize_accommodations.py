@@ -153,6 +153,7 @@ def _upsert_stats(
         "price_q3": stats.price_q3,
         "price_max": stats.price_max,
         "snapshot_label": snapshot_label,
+        "source": "inside-airbnb",  # real snapshot stats (provenance; sample_size > 0)
     }
     stmt = pg_insert(AccommodationPriceStats).values(values)
     stmt = stmt.on_conflict_do_update(

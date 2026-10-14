@@ -6,6 +6,7 @@ Offline: ``urlopen`` is monkeypatched, and payload parsing is tested directly.
 import json
 
 import pytest
+
 from scripts import geocode
 
 

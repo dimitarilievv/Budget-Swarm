@@ -21,7 +21,6 @@ from alembic.config import Config
 from config import get_settings
 from db.models import AccommodationPriceStats, Destination
 from db.repositories import AccommodationPriceStatsRepository, DestinationRepository
-from scripts import add_destination, onboard_destination
 from scripts.geocode import GeocodeResult
 from scripts.onboard_destination import (
     DestinationReadiness,
@@ -30,6 +29,8 @@ from scripts.onboard_destination import (
 )
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
+
+from scripts import add_destination, onboard_destination
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 

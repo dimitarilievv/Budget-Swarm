@@ -24,6 +24,7 @@ import logging
 import re
 import urllib.request
 from datetime import date
+from urllib.parse import quote
 
 from scripts.accommodation_sources import CsvSnapshotSource, DatasetRef
 
@@ -36,8 +37,15 @@ _LISTINGS_RE = re.compile(
     r"(\d{4}-\d{2}-\d{2})/data/listings\.csv\.gz"
 )
 
-# Target cities Inside Airbnb covers (subset of data/curated_destinations.csv,
-# verified against the get-the-data index on 2026-08-29).
+# Target cities Inside Airbnb covers (subset of data/curated_destinations.csv).
+# Re-verified against the live get-the-data index on 2026-10-14: of the 30 curated
+# destinations, Inside Airbnb publishes exactly these 11. The other 19 (Sofia,
+# Plovdiv, Belgrade, Novi Sad, Bucharest, Cluj-Napoca, Brno, Krakow, Warsaw,
+# Bratislava, Ljubljana, Zagreb, Split, Sarajevo, Skopje, Tirana, Podgorica,
+# Vilnius, Tallinn) are not published by Inside Airbnb at all, so they have no
+# listings/stats and are excluded by the optimizer (missing_accommodation) rather
+# than given invented prices. Add a city here only after confirming a real snapshot
+# exists in the index (see tests/test_inside_airbnb.py).
 TARGET_CITIES: tuple[str, ...] = (
     "athens",
     "budapest",
@@ -89,7 +97,12 @@ CITY_CURRENCY: dict[str, str] = {
 
 
 def _rebuild_url(country: str, region: str, city: str, iso: str) -> str:
-    return f"https://data.insideairbnb.com/{country}/{region}/{city}/{iso}/data/listings.csv.gz"
+    # Percent-encode each path segment: some regions are non-ASCII (e.g. Budapest's
+    # "közép-magyarország"), which urllib cannot send raw ('ascii' codec error). quote
+    # leaves ASCII/unreserved chars (incl. '-') untouched, so covered ASCII cities are
+    # unchanged; only non-ASCII bytes become %XX (UTF-8), which the server accepts.
+    seg = (quote(country, safe=""), quote(region, safe=""), quote(city, safe=""), iso)
+    return "https://data.insideairbnb.com/{}/{}/{}/{}/data/listings.csv.gz".format(*seg)
 
 
 class InsideAirbnbSource(CsvSnapshotSource):

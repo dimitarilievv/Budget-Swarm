@@ -23,6 +23,16 @@ constraint is **infeasible and excluded**, *not* merely down-scored. An over-bud
 destination is removed from consideration entirely — it can never be selected, no
 matter how attractive — rather than being allowed to win on a high score.
 
+**Source-priority policy** (``prefer_real_accommodation``, default on): among the
+candidates that already satisfy every hard constraint, those backed by **real Inside
+Airbnb snapshot data** are preferred over ones relying on an **estimated** lodging
+price. When at least one real-data candidate is viable, selection is restricted to
+that tier and the existing objective ranks within it; estimated-accommodation
+candidates become selectable only when no real-data candidate is viable. This is a
+selection preference layered *on top of* the hard constraints — it never relaxes
+budget/duration/mode — so a cheaper estimate can never beat a viable real-data
+destination. (Snapshot "real" data is point-in-time, not live or date-specific.)
+
 Two things are deliberately **out of scope** here and land in later tickets:
 
 * the **objective** (technical-doc §15.2, BS-073) — maximizing the weighted
@@ -50,7 +60,7 @@ from typing import TYPE_CHECKING
 from ortools.sat.python import cp_model
 
 from ai_engine.core.scorer import trip_cost
-from ai_engine.domain import TransportMode
+from ai_engine.domain import QualityFlag, TransportMode
 
 if TYPE_CHECKING:  # pragma: no cover - typing only, avoids a core -> agents runtime dep
     from ai_engine.agents.coordinator_agent import CandidateAggregate
@@ -115,6 +125,13 @@ class OptimizationInput:
     coordinator stamped onto each aggregate, so the duration constraint is exact.
     ``objective_scores`` is the optional BS-073 seam: one score per candidate (same
     order); when present the solver maximizes the selected candidate's score.
+
+    ``prefer_real_accommodation`` turns on the source-priority policy (default on):
+    when any feasible candidate is backed by real Inside Airbnb snapshot data, the
+    selection is restricted to that tier, so an estimated-accommodation candidate can
+    never win merely on a lower (estimated) price. It is a *selection* preference only
+    — it never relaxes a hard constraint. Set it ``False`` to rank all feasible
+    candidates together regardless of accommodation source.
     """
 
     candidates: Sequence[CandidateAggregate]
@@ -122,6 +139,7 @@ class OptimizationInput:
     transport_mode: TransportMode
     nights: int
     objective_scores: Sequence[float] | None = None
+    prefer_real_accommodation: bool = True
 
     def __post_init__(self) -> None:
         if self.budget < 0:
@@ -227,17 +245,38 @@ class Optimizer:
                 decisions=decisions,
             )
 
+        # Source-priority policy: prefer real Inside Airbnb accommodation data over
+        # estimated fallbacks. Among the feasible candidates (all already satisfy every
+        # hard constraint, incl. budget/duration), restrict selection to the real-data
+        # tier whenever it is non-empty; estimated-accommodation candidates become
+        # selectable only when no real-backed candidate is viable. This chooses *between*
+        # already-feasible candidates — it never relaxes a hard constraint — so a lower
+        # estimated price can never beat a viable real-data destination.
+        tier = feasible
+        if problem.prefer_real_accommodation:
+            primary = [d for d in feasible if _accommodation_is_real(d.aggregate)]
+            if primary:
+                tier = primary
+            if len(primary) != len(feasible):
+                logger.info(
+                    "optimizer: source-priority — %d real-data of %d feasible; "
+                    "selecting from the %s tier",
+                    len(primary),
+                    len(feasible),
+                    "real" if primary else "estimated-fallback",
+                )
+
         model = cp_model.CpModel()
-        select = {d.index: model.NewBoolVar(f"select_{d.index}") for d in feasible}
+        select = {d.index: model.NewBoolVar(f"select_{d.index}") for d in tier}
 
         # Exactly one destination is selected (technical-doc §15.4).
         model.AddExactlyOne(select.values())
 
         # Budget spans all costs: the selected candidate's total cost ≤ budget. Only
-        # feasible candidates carry a boolean; each already passed the per-candidate
+        # selectable candidates carry a boolean; each already passed the per-candidate
         # over-budget check, so this makes the budget provable in the model itself.
         budget_cents = _to_cents(problem.budget)
-        model.Add(sum(_to_cents(d.total_cost) * select[d.index] for d in feasible) <= budget_cents)
+        model.Add(sum(_to_cents(d.total_cost) * select[d.index] for d in tier) <= budget_cents)
 
         # Optional objective (BS-075): maximize the selected candidate's score, breaking
         # ties toward the cheaper trip. The score is scaled up by _COST_TIEBREAK_SCALE so
@@ -251,7 +290,7 @@ class Optimizer:
                         - _to_cents(d.total_cost)
                     )
                     * select[d.index]
-                    for d in feasible
+                    for d in tier
                 )
             )
 
@@ -350,3 +389,17 @@ def _to_cents(amount: float) -> int:
 def _to_score_units(score: float) -> int:
     """Scale a [0, 1] objective score to integer micro-units for CP-SAT's objective."""
     return int(round(score * _SCORE_SCALE))
+
+
+def _accommodation_is_real(aggregate: CandidateAggregate) -> bool:
+    """True when the candidate's lodging is backed by real Inside Airbnb snapshot data.
+
+    Real iff there is at least one option and every option is flagged
+    :attr:`~ai_engine.domain.QualityFlag.REAL` (mirrors the coordinator's worst-flag
+    rule, so a single estimated option makes the candidate a fallback). Estimated or
+    cached lodging (e.g. a price-stats / cost-of-living estimate) is treated as a
+    fallback, never as primary. Snapshot-based "real" data is point-in-time, not a
+    live or date-specific price — this only distinguishes a source, not freshness.
+    """
+    options = aggregate.accommodations
+    return bool(options) and all(a.quality_flag == QualityFlag.REAL for a in options)

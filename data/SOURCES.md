@@ -216,11 +216,44 @@ CSV row as JSONB + `source`, `snapshot_label`, `city`, `snapshot_date`,
 free, no key/account, **CC BY 4.0** with CC0 on the data). The importer resolves
 the latest snapshot for each target city from the public index and downloads it.
 
-Of the 30 curated destinations, **11 are covered by Inside Airbnb** (verified
-2026-08-29): Athens, Budapest, Istanbul, Lisbon, Naples, Porto, Prague, Riga,
-Thessaloniki, Valencia, Vienna. The Balkan/CEE cities (Sofia, Belgrade, Skopje,
-…) are **not** published by Inside Airbnb and are handled downstream as
-`estimated` (BS-007 decision; BS-034/035), not here.
+Of the 30 curated destinations, **11 are covered by Inside Airbnb** (re-verified
+against the live index 2026-10-14): Athens, Budapest, Istanbul, Lisbon, Naples,
+Porto, Prague, Riga, Thessaloniki, Valencia, Vienna.
+
+The remaining **19 are not published by Inside Airbnb at all** (checked against the
+full get-the-data index — none appear under any slug): Sofia, Plovdiv, Belgrade,
+Novi Sad, Bucharest, Cluj-Napoca, Brno, Krakow, Warsaw, Bratislava, Ljubljana,
+Zagreb, Split, Sarajevo, Skopje, Tirana, Podgorica, Vilnius, Tallinn. They have **no
+listings**. Instead of excluding them, they receive **modeled `estimated` price
+statistics** from the WhereNext cost-of-living model (see below), so they stay
+eligible for planning while the ADR-015 source-priority policy still prefers the 11
+real-data cities. To add a city as *real* (not estimated), confirm Inside Airbnb
+publishes it in the index, then add it to `TARGET_CITIES` + `CITY_CURRENCY` (guarded
+by `backend/tests/test_inside_airbnb.py`).
+
+## WhereNext cost-of-living accommodation estimate (uncovered cities)
+
+The 19 uncovered cities get a **modeled** nightly price from WhereNext's country
+`cost_index`, calibrated on the real Inside Airbnb medians of the covered cities
+(ADR-016). `scripts/calibrate_accommodation_model.py` fits and commits the model
+(`data/accommodation_estimate_model.json`); `scripts/estimate_accommodation_prices.py`
+applies it offline at seed time, writing `accommodation_price_stats` rows flagged
+`source = 'wherenext-cost-model'`, `sample_size = 0`.
+
+- **Calibration (2026-10-14, 10 covered cities):** `median_eur ≈ 1.323·cost_index +
+  38.76`; in-sample R² ≈ 0.43, **leave-one-out MAPE ≈ 19.4%**, MAE ≈ €19. A coarse
+  ±~20% proxy, acceptable only because it is explicitly flagged `estimated`.
+- **Guardrails:** no fake listings/names/photos/URLs (statistics only); real stats
+  (`sample_size > 0`) are never overwritten; a city with no WhereNext anchor or an
+  anchor outside the fitted range gets **no** estimate; the model is rejected if its
+  LOO MAPE exceeds 30%.
+- **Limitation:** country-level, not city-level; a proxy, not a market price. Budapest
+  (covered) currently fails to ingest on a non-ASCII region slug, so until that
+  ingestion bug is fixed it has neither real nor estimated data.
+
+**Note:** Inside Airbnb snapshots are periodic point-in-time exports, **not live or
+bookable prices**; a stored price reflects the snapshot date, with no availability
+or date-specific pricing. The WhereNext estimate is likewise indicative, not live.
 
 ## What is stored
 

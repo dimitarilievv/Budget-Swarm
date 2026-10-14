@@ -44,6 +44,43 @@ view, edit and delete only their own trips.
 with its owner and scopes all access by it, so no new unowned rows are created, while any
 pre-existing anonymous rows remain valid and simply unreachable through the API.
 
+## One-command migrate + seed (BS-104)
+
+For a fresh database, `scripts.seed_all` applies migrations then runs the offline,
+idempotent seed steps (destinations → features → accommodation-estimates → fuel) in
+order. It is what the repo-root `./scripts/dev-up.sh` / `make up` bring-up runs inside
+the backend container. The individual steps below remain available for targeted re-runs.
+
+```bash
+# Run from backend/ with DATABASE_URL set (or: docker compose exec backend ...)
+python -m scripts.seed_all                     # migrate + offline core seed
+python -m scripts.seed_all --with-accommodations  # also import Inside Airbnb (network, slow)
+python -m scripts.seed_all --dry-run           # print the plan, run nothing
+```
+
+## Accommodation price estimates — WhereNext model (ADR-016)
+
+Inside Airbnb covers 11 of the 30 destinations with **real** stats; the other 19 get
+**modeled `estimated`** price statistics so they stay plannable (the source-priority
+policy, ADR-015, still prefers real-data cities). A reproducible linear model maps the
+WhereNext country `cost_index` to a nightly EUR band, calibrated on the covered cities'
+real medians. Calibration is network-heavy and occasional; the seed-time apply is offline.
+
+```bash
+# (occasional) fit + commit the model from real Airbnb data — needs network:
+python -m scripts.calibrate_accommodation_model            # -> data/accommodation_estimate_model.json
+python -m scripts.calibrate_accommodation_model --dry-run  # fit + report metrics, no write
+
+# (every seed, offline) apply the committed model to uncovered cities:
+python -m scripts.estimate_accommodation_prices            # writes source='wherenext-cost-model', sample_size=0
+python -m scripts.estimate_accommodation_prices --dry-run  # report only
+```
+
+Guarantees: statistics only (no fake listings/names/URLs); real stats are never
+overwritten; a city with no cost anchor or an out-of-range anchor gets no estimate; the
+model is refused if its leave-one-out MAPE exceeds 30% (current ≈ 19.4%). Snapshot/model
+prices are indicative, **not** live or date-specific. Full notes: `data/SOURCES.md`.
+
 ## Database & migrations (BS-018)
 
 - Connectivity: `db/session.py` builds the SQLAlchemy engine/`SessionLocal`

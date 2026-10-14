@@ -5,8 +5,9 @@ Offline: ``geocode.best_match`` is monkeypatched so no network is used.
 
 import csv
 
-from scripts import add_destination
 from scripts.geocode import GeocodeResult
+
+from scripts import add_destination
 
 
 def _match(city, country, code, lat, lon):
