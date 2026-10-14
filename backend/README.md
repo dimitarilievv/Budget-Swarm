@@ -81,6 +81,35 @@ overwritten; a city with no cost anchor or an out-of-range anchor gets no estima
 model is refused if its leave-one-out MAPE exceeds 30% (current ≈ 19.4%). Snapshot/model
 prices are indicative, **not** live or date-specific. Full notes: `data/SOURCES.md`.
 
+## Automatic Inside Airbnb refresh (BS-refresh)
+
+`scripts.refresh_accommodations` keeps the 11 covered cities' **real** snapshots current.
+It fetches the Inside Airbnb index once, compares each city's latest snapshot id to the one
+already imported (`accommodation_price_stats.snapshot_label` where `source='inside-airbnb'`),
+and **downloads + re-imports only the cities that changed** through the existing
+ingest→normalize pipeline. Each city is imported in its **own transaction** and committed only
+after validation (schema, a minimum listing count, and sane Q1≤median≤Q3 price stats); on any
+failure the transaction rolls back, so previous valid data is never deleted. The 19
+`wherenext-cost-model` estimate rows are never touched.
+
+**Scheduling.** An ofelia job (`docker-compose.yml`, service `backend`) runs it on a cron set by
+`ACCOMMODATION_REFRESH_SCHEDULE` (6-field cron, default Mondays 04:00 UTC). ofelia is a single
+scheduler container, so there is no per-API-worker duplication. "Weekly" means *check* weekly;
+Inside Airbnb itself publishes ~quarterly, so most runs find nothing new and do no downloads.
+
+**Manual / on-demand** (from `backend/`, or `docker compose exec backend ...`):
+```bash
+python -m scripts.refresh_accommodations --check         # report new/unchanged, no download
+python -m scripts.refresh_accommodations                 # download + import only changed cities
+python -m scripts.refresh_accommodations --cities athens,prague
+python -m scripts.refresh_accommodations --force         # re-import even if unchanged
+```
+Env: `ACCOMMODATION_REFRESH_SCHEDULE`, `ACCOMMODATION_REFRESH_MIN_LISTINGS` (default 50),
+`ACCOMMODATION_REFRESH_TIMEOUT` (120s), `ACCOMMODATION_REFRESH_RETRIES` (2). Logs one line per
+city (`imported` / `unchanged` / `new-available` / `skipped` / `failed`) plus a run summary.
+Idempotent and concurrency-safe (a per-city Postgres advisory lock prevents two runs importing
+the same city at once). Snapshot/model data is not live or date-specific.
+
 ## Database & migrations (BS-018)
 
 - Connectivity: `db/session.py` builds the SQLAlchemy engine/`SessionLocal`

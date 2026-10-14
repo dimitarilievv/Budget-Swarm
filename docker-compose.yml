@@ -92,6 +92,14 @@ services:
       # Idempotent — a run with nothing to purge is a no-op.
       ofelia.job-exec.refresh-token-purge.schedule: "0 30 3 * * *"
       ofelia.job-exec.refresh-token-purge.command: "python -m scripts.purge_refresh_tokens"
+      # Weekly Inside Airbnb snapshot refresh (BS-refresh): checks the index for newer
+      # snapshots of the 11 covered cities and re-imports only those that changed —
+      # atomic per city, never deletes valid data on failure, never touches the
+      # wherenext-cost-model estimates. 6-field cron (sec min hour dom mon dow);
+      # default Mondays 04:00 UTC. Override with ACCOMMODATION_REFRESH_SCHEDULE in .env.
+      # Run on demand: docker compose exec backend python -m scripts.refresh_accommodations
+      ofelia.job-exec.accommodation-refresh.schedule: "${ACCOMMODATION_REFRESH_SCHEDULE:-0 0 4 * * 1}"
+      ofelia.job-exec.accommodation-refresh.command: "python -m scripts.refresh_accommodations"
 
   scheduler:
     # Lightweight cron for Docker: reads the ofelia.* labels off other services
