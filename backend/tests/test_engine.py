@@ -110,6 +110,7 @@ def _agents(**overrides) -> AgentSet:
         weather_window=overrides.get("weather_window"),
         flight_details=overrides.get("flight_details"),
         air_window=overrides.get("air_window"),
+        stay_window=overrides.get("stay_window"),
     )
 
 

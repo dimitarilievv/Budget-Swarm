@@ -23,13 +23,15 @@ import argparse
 import csv
 import gzip
 import logging
+import os
 import urllib.request
 from collections.abc import Iterator
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 from db.models import AccommodationCalendar
 from db.session import SessionLocal, get_engine
+from sqlalchemy import delete
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -40,7 +42,16 @@ from scripts.inside_airbnb import InsideAirbnbSource
 
 logger = logging.getLogger(__name__)
 
-CALENDAR_COLUMNS = frozenset({"listing_id", "date", "available", "price"})
+# Forward-looking calendar window. We store only [snapshot_date, snapshot_date + horizon)
+# — end EXCLUSIVE — instead of the full ~365-day export, to bound storage. Configurable via
+# ACCOMMODATION_CALENDAR_HORIZON_DAYS (default 120; 90 also supported). Dates are naive ISO
+# calendar dates (no timezone) throughout, matching the source CSV's ``date`` column.
+DEFAULT_HORIZON_DAYS = int(os.environ.get("ACCOMMODATION_CALENDAR_HORIZON_DAYS", "120"))
+
+# Only these are required. ``price``/``minimum_nights``/``maximum_nights`` are optional:
+# some Inside Airbnb calendar exports omit ``price`` entirely (e.g. Budapest 2026-09), in
+# which case availability is still usable and pricing falls back to the listing's estimate.
+CALENDAR_COLUMNS = frozenset({"listing_id", "date", "available"})
 
 
 def parse_calendar_row(raw: dict[str, str]) -> dict | None:
@@ -107,17 +118,39 @@ def _upsert(session: Session, snapshot_label: str, values: list[dict]) -> None:
     session.execute(stmt)
 
 
+def _clear_city_calendar(session: Session, snapshot_label: str) -> None:
+    """Delete all of this city's calendar rows (any snapshot) before a fresh import.
+
+    The label is ``{source}-{city}-{YYYY-MM-DD}``; stripping the trailing 10-char date gives
+    the city prefix. Delete-then-insert guarantees a shorter or newer horizon never leaves
+    stale rows falsely representing current coverage.
+    """
+    prefix = snapshot_label[:-10] if len(snapshot_label) > 10 else snapshot_label
+    session.execute(
+        delete(AccommodationCalendar).where(AccommodationCalendar.snapshot_label.like(prefix + "%"))
+    )
+
+
 def import_calendar_file(
     session: Session,
     path: Path,
     *,
     snapshot_label: str,
+    snapshot_date: date,
+    horizon_days: int,
     currency: str,
     rates: EurRates,
     chunk_size: int = 5000,
     limit: int | None = None,
 ) -> int:
-    """Stream + upsert one calendar file; returns the number of rows written. Caller owns txn."""
+    """Stream + insert one calendar file, bounded to the forward horizon. Caller owns txn.
+
+    Keeps only nights in ``[snapshot_date, snapshot_date + horizon_days)`` (end exclusive),
+    filtered **during** streaming so out-of-window rows are never materialized. Clears this
+    city's prior rows first (idempotent; no stale coverage). Returns rows written.
+    """
+    window_end = snapshot_date + timedelta(days=horizon_days)
+    _clear_city_calendar(session, snapshot_label)
     written = 0
     for chunk in _iter_calendar_rows(path, chunk_size=chunk_size):
         values = []
@@ -125,13 +158,14 @@ def import_calendar_file(
             parsed = parse_calendar_row(raw)
             if parsed is None:
                 continue
+            if not (snapshot_date <= parsed["night"] < window_end):
+                continue  # outside the forward horizon -> never stored
             price_eur = rates.to_eur(parsed.pop("price_local"), currency)
             values.append({"snapshot_label": snapshot_label, "price": price_eur, **parsed})
-            if limit is not None and written + len(values) >= limit:
-                break
-        _upsert(session, snapshot_label, values)
-        session.flush()
-        written += len(values)
+        if values:
+            _upsert(session, snapshot_label, values)
+            session.flush()
+            written += len(values)
         if limit is not None and written >= limit:
             break
     return written
@@ -169,6 +203,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--chunk-size", type=int, default=5000)
     parser.add_argument("--timeout", type=float, default=300.0)
     parser.add_argument("--limit", type=int, help="cap rows per city (smoke test)")
+    parser.add_argument(
+        "--horizon-days",
+        type=int,
+        default=DEFAULT_HORIZON_DAYS,
+        help="forward window in days from the snapshot date (default from "
+        "ACCOMMODATION_CALENDAR_HORIZON_DAYS or 120; end exclusive)",
+    )
     parser.add_argument("--rates-source", default="snapshot")
     parser.add_argument("--fixture", type=Path, help="load a local calendar.csv[.gz] (offline)")
     parser.add_argument("--fixture-city", default="riga")
@@ -186,6 +227,8 @@ def main(argv: list[str] | None = None) -> int:
                 session,
                 args.fixture,
                 snapshot_label=label,
+                snapshot_date=date.fromisoformat(args.fixture_date),
+                horizon_days=args.horizon_days,
                 currency=source.currency_for(args.fixture_city),
                 rates=rates,
                 chunk_size=args.chunk_size,
@@ -212,6 +255,8 @@ def main(argv: list[str] | None = None) -> int:
                     session,
                     path,
                     snapshot_label=ref.snapshot_label,
+                    snapshot_date=ref.snapshot_date,
+                    horizon_days=args.horizon_days,
                     currency=source.currency_for(city),
                     rates=rates,
                     chunk_size=args.chunk_size,

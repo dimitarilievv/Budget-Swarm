@@ -96,3 +96,40 @@ def test_incomplete_price_is_available_without_total():
 
 def test_nonpositive_stay_is_unknown():
     assert check_availability(_cal(), CO, CI).status is AvailabilityStatus.UNKNOWN
+
+
+# --- date-specific quote pricing (listings.csv price_quote_*) -----------------
+
+from ai_engine.core.availability import DateQuote, quote_total_for_stay  # noqa: E402
+
+
+def _quote(ci=CI, co=CO, total=300.0, known=True):
+    return DateQuote(checkin=ci, checkout=co, total_price_eur=total, currency_known=known)
+
+
+def test_quote_used_when_dates_match_exactly():
+    # Total is used as-is (it already includes any fees -> no double-counting).
+    assert quote_total_for_stay(_quote(total=300.0), CI, CO) == 300.0
+
+
+def test_quote_ignored_on_checkin_mismatch():
+    assert quote_total_for_stay(_quote(ci=date(2026, 6, 9)), CI, CO) is None
+
+
+def test_quote_ignored_on_checkout_mismatch():
+    assert quote_total_for_stay(_quote(co=date(2026, 6, 14)), CI, CO) is None
+
+
+def test_quote_ignored_when_dates_missing():
+    assert quote_total_for_stay(_quote(ci=None), CI, CO) is None
+    assert quote_total_for_stay(None, CI, CO) is None
+
+
+def test_quote_ignored_when_currency_unknown():
+    assert quote_total_for_stay(_quote(known=False), CI, CO) is None
+
+
+def test_quote_ignored_when_total_invalid():
+    assert quote_total_for_stay(_quote(total=None), CI, CO) is None
+    assert quote_total_for_stay(_quote(total=0.0), CI, CO) is None
+    assert quote_total_for_stay(_quote(total=-5.0), CI, CO) is None

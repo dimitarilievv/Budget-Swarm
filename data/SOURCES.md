@@ -277,6 +277,55 @@ or a live price**. When availability or a snapshot price is unknown/incomplete, 
 existing estimated/representative price is used and flagged accordingly. The 19
 WhereNext-estimated cities have no calendar and are always `availability_unknown`.
 
+**Forward horizon.** We do **not** store the full ~365-day calendar. Ingestion keeps only
+`[snapshot_date, snapshot_date + horizon)` (end **exclusive**), default **120 days**
+(`ACCOMMODATION_CALENDAR_HORIZON_DAYS`, 90 also supported). The filter is applied **during**
+streaming (out-of-window rows are never materialized), and each city is **delete-then-insert**ed
+so shrinking the horizon (120→90) or importing a newer snapshot never leaves stale rows falsely
+representing coverage. Verified on Budapest 2026-09-21: 120d → nights ≤ 2027-01-18; 90d → nights
+≤ 2026-12-19 with 0 stale rows; idempotent re-runs. Requests outside the stored window return
+`availability_unknown`, never `snapshot_available`.
+
+**Multi-city refresh.** `scripts.refresh_calendars` refreshes all 11 covered cities: downloads run
+in a bounded thread pool, DB ingest is sequential per city under a per-city advisory lock, and each
+city is **atomic validate-before-replace** (delete-then-insert + a min-row check in one transaction;
+rollback on failure or too few rows keeps the previous snapshot). Unchanged snapshots skip; a failed
+city is isolated. The ofelia `calendar-refresh` job (Mondays 04:30 UTC) is **disabled by default**
+(`ACCOMMODATION_CALENDAR_REFRESH_ENABLED`). Verified end-to-end on all 11 cities against a disposable
+Postgres (per-city ~1s, ~3,300 in-window rows/city, 0 failures); match rates to normalized listings
+ran 71–96% for the four cities whose listings were also loaded.
+
+**Note on calendar price (real data).** Calendar exports may omit `price`. Verified: **all 11
+covered cities' current (2026-09) snapshots** carry only `listing_id,date,available,minimum_nights,
+maximum_nights` — none includes a nightly `price` column. Availability still works; the nightly
+price then falls back to the listing's EUR estimate, flagged — never invented. Consequently a
+date-specific `total_price` from the calendar is `None` for every covered city today, and the
+estimate is the price BudgetSwarm shows. `price` ingestion stays supported (optional) so a future
+snapshot that includes it is picked up automatically.
+
+### `listings.csv` price-quote fields (`price_quote_*`)
+
+`listings.csv` carries a single date-specific quote per listing: `price`,
+`price_quote_checkin_date`/`price_quote_checkout_date`, `price_quote_total_price`,
+`price_quote_price_per_night`, and `price_quote_raw` (a JSON `quote` with
+`taxes`/`cleaning_fee`/`service_fee`/`currency`/`is_available`/line items). **Verified semantics
+(Budapest 2026-09):** the quote is a **1-night window on an arbitrary sampled date** (varies per
+listing — e.g. 6020→Oct 6–7, 6022→Sep 30–Oct 1), so `total_price == price_per_night`; the
+structured `currency` is **null** (the `price_string` shows "Ft" → HUF, resolved via the per-city
+currency convention), and `taxes`/`cleaning_fee`/`service_fee` are **null** (no fees in this
+snapshot). `price` is shown as `$…` but is the listing's **local** currency (the `$` is a
+formatting artifact), consistent with how normalization already treats it.
+
+Normalization already uses `price_quote_price_per_night` (else `price`) as the EUR nightly
+estimate, so the quote's per-night value is the price BudgetSwarm shows. A date-specific **total**
+(`price_quote_total_price`) would only help a stay whose dates exactly match the quote window and
+whose quote carries fees — which does not occur in this data (1-night, no fees → `total ==
+per_night`), so using the total yields **no numeric improvement** here. The exact-match logic is
+implemented and tested as the pure `ai_engine.core.availability.quote_total_for_stay` (uses the
+total as-is to avoid double-counting fees; requires a resolved currency and an exact date match;
+otherwise falls back to the per-night estimate), ready for future snapshots with richer quotes,
+but is intentionally **not wired** into persistence/planning given the above.
+
 ## What is stored
 
 This is a **raw** import: every row is stored verbatim (all ~90 columns preserved

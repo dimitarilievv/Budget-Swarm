@@ -130,3 +130,43 @@ def check_availability(
         tuple(float(p) for p in prices),  # type: ignore[arg-type]
         "all overnight dates available",
     )
+
+
+@dataclass(frozen=True)
+class DateQuote:
+    """A listing's date-specific price quote from Inside Airbnb ``listings.csv``.
+
+    ``listings.csv`` carries one quote per listing: ``price_quote_checkin_date`` /
+    ``price_quote_checkout_date`` (the single window the source sampled — in practice a
+    1-night window on an arbitrary date, **not** the user's stay), ``price_quote_total_price``
+    (the quoted total — it already includes any taxes/cleaning/service fees, so callers must
+    NOT add fees on top) and ``price_quote_price_per_night``. The structured currency in
+    ``price_quote_raw`` is often ``null``, so ``currency_known`` records whether the amount's
+    currency was resolved (via the per-city convention used when normalizing) and converted to
+    EUR; when it is not known, the amount is not trusted.
+    """
+
+    checkin: date | None
+    checkout: date | None
+    total_price_eur: float | None
+    currency_known: bool = False
+
+
+def quote_total_for_stay(quote: DateQuote | None, check_in: date, check_out: date) -> float | None:
+    """Return the EUR accommodation **total** from a date-specific quote, else ``None``.
+
+    Used only when a quote's window **exactly** equals the requested stay and is usable
+    (currency resolved, positive total). The returned value is the quote's total *as-is* — it
+    already includes any fees, so the caller must not add fees separately (no double-counting).
+    ``None`` means "no reliable date-specific price" -> the caller keeps its per-night estimate
+    and flags it as estimated. Never invents currency, dates, prices or fees.
+    """
+    if quote is None or quote.checkin is None or quote.checkout is None:
+        return None
+    if not quote.currency_known:  # unknown currency -> do not trust the amount
+        return None
+    if quote.total_price_eur is None or not (quote.total_price_eur > 0):
+        return None
+    if quote.checkin != check_in or quote.checkout != check_out:  # exact-stay match only
+        return None
+    return round(quote.total_price_eur, 2)

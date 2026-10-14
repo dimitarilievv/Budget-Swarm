@@ -100,6 +100,15 @@ services:
       # Run on demand: docker compose exec backend python -m scripts.refresh_accommodations
       ofelia.job-exec.accommodation-refresh.schedule: "${ACCOMMODATION_REFRESH_SCHEDULE:-0 0 4 * * 1}"
       ofelia.job-exec.accommodation-refresh.command: "python -m scripts.refresh_accommodations"
+      # Weekly Inside Airbnb CALENDAR refresh (BS-calendar) for the 11 covered cities.
+      # DISABLED by default: the command no-ops unless ACCOMMODATION_CALENDAR_REFRESH_ENABLED
+      # is true (checked via --scheduled). Bounded + per-city isolated + atomic
+      # validate-before-replace (a failed city keeps its previous snapshot). Inside Airbnb
+      # publishes roughly monthly/quarterly, so a weekly check mostly skips unchanged snapshots.
+      # 6-field cron; default Mondays 04:30 UTC (after the listings refresh). Separate from it
+      # so calendar imports never run as a side effect of the listings/stats job.
+      ofelia.job-exec.calendar-refresh.schedule: "${ACCOMMODATION_CALENDAR_REFRESH_SCHEDULE:-0 30 4 * * 1}"
+      ofelia.job-exec.calendar-refresh.command: "python -m scripts.refresh_calendars --all --scheduled"
 
   scheduler:
     # Lightweight cron for Docker: reads the ofelia.* labels off other services

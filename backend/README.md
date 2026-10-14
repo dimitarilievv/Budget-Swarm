@@ -122,14 +122,48 @@ prices, honouring min/max nights. Dates outside the snapshot, missing prices, or
 
 ```bash
 python -m scripts.ingest_accommodation_calendar --cities riga            # one small city
+python -m scripts.ingest_accommodation_calendar --cities budapest --horizon-days 90
 python -m scripts.ingest_accommodation_calendar --fixture cal.csv \
     --fixture-city riga --fixture-date 2026-06-30                        # offline local file
 ```
 
+**Forward horizon.** Only `[snapshot_date, snapshot_date + horizon)` is stored (end exclusive),
+default **120** days (`ACCOMMODATION_CALENDAR_HORIZON_DAYS`; 90 supported, `--horizon-days`). The
+window is filtered during streaming (bounded memory) and each city is delete-then-inserted, so
+shrinking the horizon or importing a newer snapshot never leaves stale rows. Calendar exports may
+omit `price` — verified: **all 11 current (2026-09) snapshots** do, so date-specific nightly price
+is absent everywhere today and falls back to the flagged listing estimate (price ingestion stays
+supported for a future snapshot that includes it).
+
+**Refresh (multi-city orchestrator).** The scheduled `refresh_accommodations` job imports
+**listings/stats only**, not the calendar. `scripts.refresh_calendars` drives the calendar refresh
+across the 11 covered cities: downloads run in a bounded thread pool (default 4 workers, no DB in
+threads) while DB ingest is **sequential per city**, each under a per-city advisory lock. Every
+city is **atomic validate-before-replace** — the delete-then-insert + row-count check runs in one
+transaction and rolls back on failure or too few rows (`ACCOMMODATION_CALENDAR_MIN_ROWS`, default
+30), so a failed or truncated download **keeps the previous snapshot**. Unchanged snapshots are
+skipped; a failed city is isolated (others still import) and makes the run exit non-zero.
+
+```bash
+python -m scripts.refresh_calendars --all                      # all 11 covered cities
+python -m scripts.refresh_calendars --city budapest            # one city
+python -m scripts.refresh_calendars --cities riga,prague --horizon-days 90
+python -m scripts.refresh_calendars --city budapest --force    # re-import even if unchanged
+```
+
+**Scheduler.** An ofelia `calendar-refresh` job runs `refresh_calendars --all --scheduled` Mondays
+04:30 UTC (after the listings job; `ACCOMMODATION_CALENDAR_REFRESH_SCHEDULE`). It is **disabled by
+default** — `--scheduled` no-ops unless `ACCOMMODATION_CALENDAR_REFRESH_ENABLED` is `true`. Inside
+Airbnb publishes roughly monthly/quarterly, so most scheduled runs skip unchanged snapshots.
+
 **This is snapshot data, not live availability.** A calendar snapshot cannot guarantee a listing
 is still available or bookable at that price now; results are flagged `snapshot_available` /
 `snapshot_unavailable` / `availability_unknown` with the snapshot date and are never shown as a
-confirmed booking. Full notes: `data/SOURCES.md`.
+confirmed booking. The `listings.csv` `price_quote_*` fields are a 1-night sample on an arbitrary
+date (total == per-night, no fees, null structured currency) — the per-night value is already used
+as the nightly estimate; exact-stay total matching is implemented+tested
+(`ai_engine.core.availability.quote_total_for_stay`) but not wired, as it yields no gain for this
+data. Full notes: `data/SOURCES.md`.
 
 ## Database & migrations (BS-018)
 

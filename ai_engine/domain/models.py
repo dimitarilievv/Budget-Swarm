@@ -183,6 +183,12 @@ class Accommodation:
     neighbourhood: str | None = None
     amenities: tuple[str, ...] = ()
     accommodates: int | None = None  # guest capacity (Inside Airbnb)
+    # Snapshot date-availability (BS-calendar), set only by the post-selection stay_window
+    # hook when travel dates are known. ``availability_status`` is one of
+    # ``snapshot_available`` / ``snapshot_unavailable`` / ``availability_unknown`` (None until
+    # checked); ``snapshot_date`` is the calendar snapshot's date (ISO). Snapshot != live.
+    availability_status: str | None = None
+    snapshot_date: str | None = None
 
     def __post_init__(self) -> None:
         if self.price_per_night is None:
