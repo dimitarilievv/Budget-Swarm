@@ -104,3 +104,17 @@ def test_parse_index_omits_target_absent_from_index():
     # A target with no snapshot in the index is skipped (not invented).
     refs = InsideAirbnbSource().parse_index(_FAKE_INDEX, targets=("athens", "sofia"))
     assert "sofia" not in refs and "athens" in refs
+
+
+def test_parse_index_percent_encodes_non_ascii_region():
+    # Budapest's region ("közép-magyarország") is non-ASCII; the built URL must be
+    # ASCII-safe (percent-encoded UTF-8) so urllib can request it without crashing.
+    html = (
+        '<a href="https://data.insideairbnb.com/hungary/'
+        'közép-magyarország/budapest/2026-09-21/data/listings.csv.gz">x</a>'
+    )
+    refs = InsideAirbnbSource().parse_index(html, targets=("budapest",))
+    url = refs["budapest"].url
+    assert url.isascii()  # safe for urllib (the original bug was a UnicodeEncodeError)
+    assert "k%C3%B6z%C3%A9p-magyarorsz%C3%A1g" in url
+    assert url.endswith("/budapest/2026-09-21/data/listings.csv.gz")

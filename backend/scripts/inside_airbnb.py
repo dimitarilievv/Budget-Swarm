@@ -24,6 +24,7 @@ import logging
 import re
 import urllib.request
 from datetime import date
+from urllib.parse import quote
 
 from scripts.accommodation_sources import CsvSnapshotSource, DatasetRef
 
@@ -96,7 +97,12 @@ CITY_CURRENCY: dict[str, str] = {
 
 
 def _rebuild_url(country: str, region: str, city: str, iso: str) -> str:
-    return f"https://data.insideairbnb.com/{country}/{region}/{city}/{iso}/data/listings.csv.gz"
+    # Percent-encode each path segment: some regions are non-ASCII (e.g. Budapest's
+    # "közép-magyarország"), which urllib cannot send raw ('ascii' codec error). quote
+    # leaves ASCII/unreserved chars (incl. '-') untouched, so covered ASCII cities are
+    # unchanged; only non-ASCII bytes become %XX (UTF-8), which the server accepts.
+    seg = (quote(country, safe=""), quote(region, safe=""), quote(city, safe=""), iso)
+    return "https://data.insideairbnb.com/{}/{}/{}/{}/data/listings.csv.gz".format(*seg)
 
 
 class InsideAirbnbSource(CsvSnapshotSource):

@@ -3,9 +3,10 @@
   "model": "linear",
   "predictor": "cost_index",
   "predictor_source": "WhereNext cost-of-living index (CC BY 4.0)",
-  "created_utc": "2026-10-14T13:29:19.424744+00:00",
+  "created_utc": "2026-10-14T13:53:21.823033+00:00",
   "snapshot_dates": [
     "inside-airbnb-athens-2026-09-22",
+    "inside-airbnb-budapest-2026-09-21",
     "inside-airbnb-istanbul-2026-09-25",
     "inside-airbnb-lisbon-2026-09-19",
     "inside-airbnb-naples-2026-09-19",
@@ -17,22 +18,22 @@
     "inside-airbnb-vienna-2026-09-17"
   ],
   "coef": {
-    "intercept_eur": 38.7587,
-    "slope_eur_per_index": 1.3227
+    "intercept_eur": 40.9038,
+    "slope_eur_per_index": 1.2891
   },
   "band": {
-    "q1_ratio": 0.726,
-    "q3_ratio": 1.4205
+    "q1_ratio": 0.7291,
+    "q3_ratio": 1.4221
   },
   "predictor_range": {
     "min": 23.0,
     "max": 72.0
   },
   "metrics": {
-    "n_anchors": 10,
-    "r2_in_sample": 0.4312,
-    "loo_mape_pct": 19.41,
-    "loo_mae_eur": 19.19
+    "n_anchors": 11,
+    "r2_in_sample": 0.4412,
+    "loo_mape_pct": 17.99,
+    "loo_mae_eur": 17.67
   },
   "anchors": [
     {
@@ -44,6 +45,16 @@
       "q3_eur": 160.07,
       "sample_size": 14214,
       "snapshot_label": "inside-airbnb-athens-2026-09-22"
+    },
+    {
+      "city": "budapest",
+      "country_code": "HU",
+      "cost_index": 39.0,
+      "median_eur": 95.09,
+      "q1_eur": 72.24,
+      "q3_eur": 136.76,
+      "sample_size": 10117,
+      "snapshot_label": "inside-airbnb-budapest-2026-09-21"
     },
     {
       "city": "istanbul",
