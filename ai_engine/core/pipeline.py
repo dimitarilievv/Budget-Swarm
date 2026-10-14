@@ -113,6 +113,16 @@ FlightDetailsFn = Callable[["EngineInput", Destination, str, str], "dict[str, ob
 # ``flight`` card payload. Preferred over :data:`FlightDetailsFn` when both are wired, because
 # it determines the trip dates rather than only decorating a pre-derived window.
 FlightAvailabilityFn = Callable[["EngineInput", Destination, int, str], "dict[str, object] | None"]
+# Optional post-selection accommodation availability resolver (BS-calendar):
+# (request, chosen destination, check_in ISO, check_out ISO, the chosen candidate's current
+# accommodations) -> an availability-checked replacement list, or None to keep the current
+# accommodations unchanged. Used only after a destination is chosen and concrete travel dates
+# are derived from the selected transport; it validates/updates the stay against the Inside
+# Airbnb calendar snapshot. The fan-out itself stays date-naive. Snapshot != live availability.
+StayWindowFn = Callable[
+    ["EngineInput", Destination, str, str, "Sequence[Accommodation]"],
+    "Sequence[Accommodation] | None",
+]
 
 # Default cap on simultaneous agent calls across the whole fan-out. The short list is
 # small (k ≈ 4-6), so this bounds ~4k potential calls to a rate-limit-friendly number.
@@ -177,6 +187,11 @@ class AgentSet:
     #: precedence over ``flight_details`` for air mode; ``None`` keeps the transport-derived
     #: window + ``flight_details`` decoration.
     air_window: FlightAvailabilityFn | None = None
+    #: Optional post-selection accommodation availability check (Inside Airbnb calendar).
+    #: Not part of the parallel fan-out; the engine calls it once the destination is chosen
+    #: and travel dates are derived, to validate/update the stay for the exact overnight
+    #: window. ``None`` keeps the date-naive fan-out accommodation (backward-compatible).
+    stay_window: StayWindowFn | None = None
 
 
 async def gather_agent_outputs(

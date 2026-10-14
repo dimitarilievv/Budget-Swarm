@@ -120,6 +120,7 @@ def _accommodation_rows(listings: list[CleanListing], destination_id: int) -> li
     return [
         {
             "destination_id": destination_id,
+            "listing_id": listing.listing_id,  # links to accommodation_calendar (BS-calendar)
             "name": listing.name,
             "accom_type": normalize_accom_type(listing.accom_type),
             "price_per_night": listing.price_per_night_eur,

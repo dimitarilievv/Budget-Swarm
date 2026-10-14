@@ -40,8 +40,9 @@ from functools import lru_cache
 from math import ceil
 
 from db.accommodation_source import build_accommodation_service
+from db.calendar_availability import check_listing_availability
 from db.fuel_lookup import load_fuel_price_table
-from db.repositories import DestinationRepository
+from db.repositories import AccommodationRepository, DestinationRepository
 from sqlalchemy.orm import sessionmaker
 
 from ai_engine.agents.experience_agent import ExperienceAgent
@@ -94,6 +95,7 @@ from ai_engine.providers.weather import (
 )
 from ai_engine.utils.airports import AirportIndex
 from ai_engine.utils.geo import GeoPoint, haversine_km
+from services.stay_availability import resolve_stay_availability
 
 logger = logging.getLogger(__name__)
 
@@ -773,9 +775,9 @@ def build_agent_set(bundle: WiringBundle) -> AgentSet:
         # search candidate windows for one where a REAL round-trip flight exists (both legs on
         # the exact dates) and the destination has accommodation, and return the matched dates
         # + the flight card. The chosen destination already satisfies the optimizer's hard
-        # accommodation requirement, and the Inside Airbnb dataset carries no per-date calendar
-        # (availability is date-independent — a city with listings is bookable for any window),
-        # so the search only has to vary the flight dates. Returns None when the airports can't
+        # accommodation requirement, so the search only has to vary the flight dates; the chosen
+        # window's accommodation is then validated against the Inside Airbnb per-date calendar by
+        # the post-selection ``stay_window`` hook (BS-calendar). Returns None when the airports can't
         # be resolved, so the engine degrades to the transport-derived window.
         origin = _origin_point(engine_input)
         if origin is None:
@@ -817,6 +819,51 @@ def build_agent_set(bundle: WiringBundle) -> AgentSet:
             },
         }
 
+    def stay_window(
+        engine_input: object,
+        dest: Destination,
+        start_date: str,
+        end_date: str,
+        current: Sequence[Accommodation],
+    ) -> Sequence[Accommodation] | None:
+        # Post-selection snapshot availability (BS-calendar): validate the chosen destination's
+        # listings against the Inside Airbnb per-date calendar for the exact overnight window and
+        # return the snapshot-available, calendar-priced options. Returns None (keep current stay,
+        # reported availability_unknown) when there are no dates, no real listings, or no calendar
+        # coverage. Snapshot != live availability.
+        try:
+            check_in = date.fromisoformat(start_date)
+            check_out = date.fromisoformat(end_date)
+        except ValueError:
+            return None
+        nights = (check_out - check_in).days
+        if nights <= 0:
+            return None
+        with bundle.session_factory() as session:
+            row = DestinationRepository(session).get_by_city_country(dest.city, dest.country)
+            if row is None:
+                return None
+            listings = AccommodationRepository(session).list_by_destination(row.id)
+            if not listings:
+                return None  # estimate-only city / no real listings -> keep current (unknown)
+
+            def check(listing: object):
+                return check_listing_availability(
+                    session,
+                    getattr(listing, "listing_id", None),
+                    getattr(listing, "snapshot_label", None),
+                    check_in,
+                    check_out,
+                )
+
+            return resolve_stay_availability(
+                listings,
+                check,
+                travelers=int(getattr(engine_input, "travelers", 1) or 1),
+                nights=nights,
+                current=tuple(current),
+            )
+
     return AgentSet(
         scout=scout,
         transport=transport,
@@ -825,6 +872,7 @@ def build_agent_set(bundle: WiringBundle) -> AgentSet:
         weather=weather,
         weather_window=weather_window,
         air_window=air_window,
+        stay_window=stay_window,
     )
 
 

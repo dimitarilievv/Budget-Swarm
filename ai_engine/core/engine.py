@@ -122,6 +122,19 @@ class TripPlanEngine:
         window, flight = self._resolve_window_and_flight(
             plan, engine_input, duration_days=days, generated_at=generated_at
         )
+        # Validate the chosen accommodation against the Inside Airbnb calendar snapshot for the
+        # derived travel window (BS-calendar): snapshot-available, calendar-priced listings are
+        # preferred and re-costed (budget re-enforced); no dates / no calendar keeps the current
+        # stay. Runs before weather alignment so the final re-plan reflects both.
+        plan, aggregates = self._apply_stay_window(
+            plan,
+            aggregates,
+            coordinator,
+            engine_input,
+            window=window,
+            nights=nights,
+            duration_days=days,
+        )
         # Align the chosen plan's forecast with its actual travel dates (see the method) and
         # reschedule around it, before the explanation narrates the (possibly re-ordered) plan.
         plan = self._align_chosen_weather(
@@ -232,6 +245,95 @@ class TripPlanEngine:
         except Exception as exc:  # noqa: BLE001 - flight detail is optional; degrade quietly
             logger.warning("engine: flight-detail fetch failed (%s); no flight card", exc)
             return None
+
+    def _apply_stay_window(
+        self,
+        plan: OptimalPlan,
+        aggregates: list,
+        coordinator: CoordinatorAgent,
+        engine_input: EngineInput,
+        *,
+        window: _TripWindow,
+        nights: int,
+        duration_days: int,
+    ) -> tuple[OptimalPlan, list]:
+        """Validate/refresh the chosen accommodation against the calendar snapshot (BS-calendar).
+
+        Runs only when a ``stay_window`` hook is wired and the trip starts on a real future date
+        (so concrete check-in/check-out exist — otherwise the fan-out stays date-naive). The hook
+        returns an availability-checked replacement accommodation list (snapshot-available
+        listings, calendar-priced, availability status set); the chosen candidate is rebuilt with
+        it and re-planned so the optimizer re-costs and re-enforces the budget — never selecting an
+        over-budget stay. Returns the possibly-updated ``(plan, aggregates)``; a ``None``/empty
+        result or any failure keeps the current plan (degrade, don't crash), and the response then
+        reports ``availability_unknown`` rather than claiming availability.
+        """
+        hook = self._agents.stay_window
+        if hook is None:
+            return plan, aggregates
+        start = window.start_date
+        if start <= datetime.now(UTC).date():
+            return plan, aggregates  # no concrete future window -> keep date-naive behavior
+        idx = next(
+            (
+                i
+                for i, a in enumerate(aggregates)
+                if a.destination.city == plan.destination.city
+                and a.destination.country == plan.destination.country
+            ),
+            None,
+        )
+        if idx is None:
+            return plan, aggregates
+        chosen = aggregates[idx]
+        try:
+            from ai_engine.agents.coordinator_agent import AgentOutputs
+
+            updated = hook(
+                engine_input,
+                chosen.destination,
+                start.isoformat(),
+                window.end_date.isoformat(),
+                tuple(chosen.accommodations),
+            )
+            if not updated:
+                return plan, aggregates  # unknown / unsupported -> keep current stay
+            refreshed = coordinator.aggregate(
+                AgentOutputs(
+                    destination=chosen.destination,
+                    transport=chosen.transport,
+                    accommodations=tuple(updated),
+                    activities=chosen.activities,
+                    weather=getattr(chosen, "weather", None),
+                    nights=chosen.nights,
+                )
+            )
+            refined = self._planner.plan(
+                PlanRequest(
+                    candidates=[refreshed],
+                    budget=engine_input.budget,
+                    transport_mode=engine_input.transport_mode,
+                    nights=nights,
+                    duration_days=duration_days,
+                    preferences=engine_input.preferences,
+                    start_weekday=window.start_date.weekday(),
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 - never let availability break a valid plan/budget
+            logger.warning(
+                "engine: stay-window check failed (%s); keeping the fan-out accommodation", exc
+            )
+            return plan, aggregates
+        new_aggregates = list(aggregates)
+        new_aggregates[idx] = refreshed
+        logger.info(
+            "engine: stay availability applied for %s/%s (%s..%s)",
+            plan.destination.city,
+            plan.destination.country,
+            start.isoformat(),
+            window.end_date.isoformat(),
+        )
+        return replace(refined, ranked_candidates=plan.ranked_candidates), new_aggregates
 
     def _align_chosen_weather(
         self,
@@ -489,6 +591,11 @@ def _accommodation(plan: OptimalPlan) -> dict[str, Any] | None:
         "latitude": a.latitude,
         "longitude": a.longitude,
         "quality_flag": a.quality_flag.value,
+        # Snapshot date-availability (BS-calendar): None until the post-selection stay_window
+        # check runs, so it defaults to availability_unknown — never claim availability we
+        # haven't checked, and never present a snapshot as live/bookable.
+        "availability": a.availability_status or "availability_unknown",
+        "snapshot_date": a.snapshot_date,
         # Listing detail for the UI card (BS-104); populated for real listings only.
         "listing_url": a.listing_url,
         "picture_url": a.picture_url,

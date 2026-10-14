@@ -189,6 +189,11 @@ class PlanAccommodation(BaseModel):
     latitude: float | None = None
     longitude: float | None = None
     quality_flag: QualityFlagStr
+    # Snapshot date-availability (BS-calendar): snapshot_available / snapshot_unavailable /
+    # availability_unknown (default when not checked). Snapshot-based, NOT live/bookable;
+    # snapshot_date is the Inside Airbnb calendar snapshot's date when known.
+    availability: str = "availability_unknown"
+    snapshot_date: str | None = None
     # Listing detail for the UI card (BS-104); present only for real listings, all optional.
     listing_url: str | None = None
     picture_url: str | None = None
