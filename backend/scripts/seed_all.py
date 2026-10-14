@@ -9,14 +9,17 @@ that make a fresh BudgetSwarm database usable:
 4. ``ingest_fuel_prices --source snapshot``         — per-country fuel (car mode)
 
 All four read only committed data under ``data/`` (no network) and are idempotent
-(upserts), so the whole script is safe to re-run. After it the app can plan trips
-immediately; accommodation prices fall back to the engine's ``estimated`` source
-until the optional Inside Airbnb import is run.
+(upserts), so the whole script is safe to re-run.
 
 The Inside Airbnb accommodation import (``--with-accommodations``) is **opt-in**:
 it downloads large third-party snapshots over the network and is slow, so it is
-not part of the default one-command bring-up. Full per-step docs + flags live in
-``backend/README.md``.
+not part of the default one-command bring-up. Note the **real** decision engine
+(``ENABLE_REAL_ENGINE=true``) needs accommodation data to produce a plan — its
+``estimated`` accommodation prices are derived per city from the Airbnb price
+statistics (``accommodation_price_stats``), so without this import the real engine
+returns ``NO_PLAN_AVAILABLE`` (missing accommodation). The default stub engine
+returns a canned plan regardless. Full per-step docs + flags live in
+``backend/README.md``; engine modes are covered in the repo-root ``README.md``.
 
 Run from ``backend/`` with ``DATABASE_URL`` set (inside the backend container this
 is already the case)::

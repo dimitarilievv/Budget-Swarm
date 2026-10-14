@@ -19,8 +19,10 @@ cp .env.example .env            # then edit .env — set a real JWT_SECRET
 ```
 
 Then open **https://localhost** (accept the local Caddy certificate once — see
-[`docs/https-local-dev.md`](docs/https-local-dev.md)). The app is usable immediately:
-destinations are ranked and car-mode fuel costs are loaded.
+[`docs/https-local-dev.md`](docs/https-local-dev.md)). Out of the box the API runs the
+**stub engine** (`ENABLE_REAL_ENGINE=false`), which returns a canned demo plan (flagged
+`meta.degraded: ["engine:stub"]`). Driving the **real** engine over the seeded data needs
+one more thing — see [Engine modes & accommodation data](#engine-modes--accommodation-data).
 
 Equivalents for the same one command:
 
@@ -49,8 +51,7 @@ Because every step upserts, re-running `dev-up.sh` / `make seed` is safe.
 
 **Accommodations (Inside Airbnb)** are **opt-in** — that import downloads large
 third-party snapshots over the network and is slow, so it is not part of the default
-bring-up. Until it runs, the engine falls back to *estimated* accommodation prices
-(the app still plans trips). To include it:
+bring-up. To include it:
 
 ```bash
 ./scripts/dev-up.sh --with-accommodations        # or:
@@ -59,6 +60,25 @@ docker compose exec -T backend python -m scripts.seed_all --with-accommodations
 
 Per-step scripts, flags and the full enrichment pipeline (OSM, season, cost-of-living)
 are documented in [`backend/README.md`](backend/README.md).
+
+## Engine modes & accommodation data
+
+The compose default is `ENABLE_REAL_ENGINE=false`, so `POST /api/generate-trip` returns a
+**stub** plan (honestly flagged `meta.degraded: ["engine:stub"]`) and ignores the seeded data.
+
+To drive the **real** decision engine over the seeded destinations, set
+`ENABLE_REAL_ENGINE=true` (in `.env`). The real engine **requires accommodation data to
+produce a plan**: accommodation is an essential plan component, and its *estimated* prices are
+derived **per city from the Inside Airbnb price statistics** (`accommodation_price_stats`) — it
+is not a from-nothing estimate. So with the default offline seed (no Airbnb) the real engine
+returns `NO_PLAN_AVAILABLE` for every candidate (`missing_accommodation`). For real planning,
+run the accommodation import **and** enable the real engine:
+
+```bash
+./scripts/dev-up.sh --with-accommodations   # populate accommodation_price_stats
+# set ENABLE_REAL_ENGINE=true in .env, then recreate the backend:
+docker compose up -d backend
+```
 
 ## Everyday commands
 
