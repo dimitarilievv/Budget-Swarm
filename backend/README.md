@@ -110,6 +110,27 @@ city (`imported` / `unchanged` / `new-available` / `skipped` / `failed`) plus a 
 Idempotent and concurrency-safe (a per-city Postgres advisory lock prevents two runs importing
 the same city at once). Snapshot/model data is not live or date-specific.
 
+## Snapshot date-availability — Inside Airbnb `calendar.csv` (BS-calendar)
+
+For the 11 covered cities, `scripts.ingest_accommodation_calendar` (opt-in, heavy — a calendar
+is ~listings × 365 rows) loads per-date availability + nightly price + min/max-night limits into
+`accommodation_calendar`. `db.calendar_availability.check_listing_availability` + the pure
+`ai_engine.core.availability` decide, for an exact overnight window (`check_in .. check_out-1`;
+check-out is not an overnight), whether a listing is `snapshot_available` and sum the snapshot
+prices, honouring min/max nights. Dates outside the snapshot, missing prices, or non-covered
+(WhereNext) cities yield `availability_unknown` and the caller keeps its estimated price.
+
+```bash
+python -m scripts.ingest_accommodation_calendar --cities riga            # one small city
+python -m scripts.ingest_accommodation_calendar --fixture cal.csv \
+    --fixture-city riga --fixture-date 2026-06-30                        # offline local file
+```
+
+**This is snapshot data, not live availability.** A calendar snapshot cannot guarantee a listing
+is still available or bookable at that price now; results are flagged `snapshot_available` /
+`snapshot_unavailable` / `availability_unknown` with the snapshot date and are never shown as a
+confirmed booking. Full notes: `data/SOURCES.md`.
+
 ## Database & migrations (BS-018)
 
 - Connectivity: `db/session.py` builds the SQLAlchemy engine/`SessionLocal`

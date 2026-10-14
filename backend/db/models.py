@@ -21,6 +21,7 @@ from typing import Any
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     Date,
     DateTime,
@@ -141,6 +142,9 @@ class Accommodation(Base):
         String(12), nullable=False, server_default=text("'real'")
     )
     snapshot_label: Mapped[str | None] = mapped_column(String(60))
+    # Inside Airbnb listing id (BS-calendar): links a real listing to its per-date
+    # calendar snapshot (``accommodation_calendar``). None for price-stats estimates.
+    listing_id: Mapped[str | None] = mapped_column(String(64))
     # Listing detail carried from the source row (BS-104) for a richer UI card; all
     # optional (a price-stats-estimate option has none of them).
     listing_url: Mapped[str | None] = mapped_column(String(300))
@@ -185,6 +189,36 @@ class AccommodationPriceStats(Base):
     computed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class AccommodationCalendar(Base):
+    """Per-date Inside Airbnb calendar snapshot for one listing (BS-calendar).
+
+    One row per (snapshot_label, listing_id, night): availability, snapshot nightly
+    price (EUR after normalization is NOT applied here — stored as the source quotes;
+    callers treat it as indicative), and the listing's min/max-night restriction for
+    that date. Used for snapshot-based date availability — **never** live/bookable.
+    """
+
+    __tablename__ = "accommodation_calendar"
+    __table_args__ = (
+        UniqueConstraint(
+            "snapshot_label",
+            "listing_id",
+            "night",
+            name="accommodation_calendar_snapshot_listing_night_key",
+        ),
+        Index("idx_accom_calendar_listing_night", "listing_id", "night"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    snapshot_label: Mapped[str] = mapped_column(String(60), nullable=False)
+    listing_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    night: Mapped[date] = mapped_column(Date, nullable=False)
+    available: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    minimum_nights: Mapped[int | None] = mapped_column(Integer)
+    maximum_nights: Mapped[int | None] = mapped_column(Integer)
 
 
 class Attraction(Base):
@@ -484,6 +518,7 @@ class RawAccommodationListing(Base):
 
 __all__ = [
     "Accommodation",
+    "AccommodationCalendar",
     "AccommodationPriceStats",
     "ApiCache",
     "Attraction",

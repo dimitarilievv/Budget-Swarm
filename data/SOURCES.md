@@ -255,6 +255,28 @@ applies it offline at seed time, writing `accommodation_price_stats` rows flagge
 bookable prices**; a stored price reflects the snapshot date, with no availability
 or date-specific pricing. The WhereNext estimate is likewise indicative, not live.
 
+## Snapshot-based availability (`calendar.csv`, BS-calendar)
+
+Inside Airbnb also publishes a per-listing `calendar.csv` (~listings × 365 rows per
+city) giving, for each future date, an availability flag, a nightly price, and the
+listing's min/max-night restriction **as recorded at the snapshot date**.
+`scripts.ingest_accommodation_calendar` ingests the covered cities' calendars (opt-in,
+heavy) into `accommodation_calendar`; `db.calendar_availability` +
+`ai_engine.core.availability` decide, for an exact overnight window, whether every
+overnight date is marked available and the stay fits the min/max limits, and sum the
+snapshot nightly prices.
+
+**Snapshot availability is NOT live availability.** A calendar snapshot records what a
+listing's calendar *looked like when Inside Airbnb captured it* (often weeks or months
+earlier). It **cannot guarantee** that the listing is still available for those dates,
+that the host hasn't changed the calendar/price/rules, or that a booking would succeed
+at that price. The system therefore exposes a status — `snapshot_available`,
+`snapshot_unavailable`, or `availability_unknown` (dates outside the snapshot's
+coverage) — alongside the snapshot date, and **never presents it as a confirmed booking
+or a live price**. When availability or a snapshot price is unknown/incomplete, the
+existing estimated/representative price is used and flagged accordingly. The 19
+WhereNext-estimated cities have no calendar and are always `availability_unknown`.
+
 ## What is stored
 
 This is a **raw** import: every row is stored verbatim (all ~90 columns preserved
