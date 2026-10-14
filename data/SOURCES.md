@@ -216,11 +216,27 @@ CSV row as JSONB + `source`, `snapshot_label`, `city`, `snapshot_date`,
 free, no key/account, **CC BY 4.0** with CC0 on the data). The importer resolves
 the latest snapshot for each target city from the public index and downloads it.
 
-Of the 30 curated destinations, **11 are covered by Inside Airbnb** (verified
-2026-08-29): Athens, Budapest, Istanbul, Lisbon, Naples, Porto, Prague, Riga,
-Thessaloniki, Valencia, Vienna. The Balkan/CEE cities (Sofia, Belgrade, Skopje,
-…) are **not** published by Inside Airbnb and are handled downstream as
-`estimated` (BS-007 decision; BS-034/035), not here.
+Of the 30 curated destinations, **11 are covered by Inside Airbnb** (re-verified
+against the live index 2026-10-14): Athens, Budapest, Istanbul, Lisbon, Naples,
+Porto, Prague, Riga, Thessaloniki, Valencia, Vienna.
+
+The remaining **19 are not published by Inside Airbnb at all** (checked against the
+full get-the-data index — none appear under any slug): Sofia, Plovdiv, Belgrade,
+Novi Sad, Bucharest, Cluj-Napoca, Brno, Krakow, Warsaw, Bratislava, Ljubljana,
+Zagreb, Split, Sarajevo, Skopje, Tirana, Podgorica, Vilnius, Tallinn. Because the
+only accommodation source is Inside Airbnb, these cities have **no listings and no
+price statistics**; the price-stats *estimate* fallback needs a stats row, so it
+cannot synthesise a price for them. The optimizer therefore excludes them
+(`missing_accommodation`) rather than inventing a price — intended data-quality
+behaviour, not a bug. Expanding coverage requires a destination Inside Airbnb
+genuinely publishes (confirm in the index, then add it to `TARGET_CITIES` +
+`CITY_CURRENCY`; guarded by `backend/tests/test_inside_airbnb.py`) or — out of
+scope here — an additional accommodation source behind the existing provider
+abstraction.
+
+**Note:** Inside Airbnb snapshots are periodic point-in-time exports, **not live or
+bookable prices**; a stored price reflects the snapshot date, with no availability
+or date-specific pricing.
 
 ## What is stored
 

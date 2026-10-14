@@ -36,8 +36,15 @@ _LISTINGS_RE = re.compile(
     r"(\d{4}-\d{2}-\d{2})/data/listings\.csv\.gz"
 )
 
-# Target cities Inside Airbnb covers (subset of data/curated_destinations.csv,
-# verified against the get-the-data index on 2026-08-29).
+# Target cities Inside Airbnb covers (subset of data/curated_destinations.csv).
+# Re-verified against the live get-the-data index on 2026-10-14: of the 30 curated
+# destinations, Inside Airbnb publishes exactly these 11. The other 19 (Sofia,
+# Plovdiv, Belgrade, Novi Sad, Bucharest, Cluj-Napoca, Brno, Krakow, Warsaw,
+# Bratislava, Ljubljana, Zagreb, Split, Sarajevo, Skopje, Tirana, Podgorica,
+# Vilnius, Tallinn) are not published by Inside Airbnb at all, so they have no
+# listings/stats and are excluded by the optimizer (missing_accommodation) rather
+# than given invented prices. Add a city here only after confirming a real snapshot
+# exists in the index (see tests/test_inside_airbnb.py).
 TARGET_CITIES: tuple[str, ...] = (
     "athens",
     "budapest",
