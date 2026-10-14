@@ -17,20 +17,32 @@ from scripts.seed_all import Step, build_plan, main, run_step
 
 def test_build_plan_default_is_offline_core_in_order():
     plan = build_plan(skip_migrate=False, with_accommodations=False)
-    assert [s.name for s in plan] == ["migrate", "destinations", "features", "fuel"]
+    assert [s.name for s in plan] == [
+        "migrate",
+        "destinations",
+        "features",
+        "accommodation-estimates",
+        "fuel",
+    ]
     required = {s.name: s.required for s in plan}
-    # Schema + the data the app needs to rank must succeed; fuel can degrade.
+    # Schema + the data the app needs to rank must succeed; fuel + estimates can degrade.
     assert required == {
         "migrate": True,
         "destinations": True,
         "features": True,
+        "accommodation-estimates": False,
         "fuel": False,
     }
 
 
 def test_build_plan_skip_migrate_drops_only_migrate():
     plan = build_plan(skip_migrate=True, with_accommodations=False)
-    assert [s.name for s in plan] == ["destinations", "features", "fuel"]
+    assert [s.name for s in plan] == [
+        "destinations",
+        "features",
+        "accommodation-estimates",
+        "fuel",
+    ]
 
 
 def test_build_plan_with_accommodations_appends_best_effort_steps():

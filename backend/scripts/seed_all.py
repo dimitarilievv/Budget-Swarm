@@ -92,6 +92,14 @@ def build_plan(*, skip_migrate: bool, with_accommodations: bool) -> list[Step]:
                 description="compute Scout ranking features (offline snapshots)",
             ),
             Step(
+                name="accommodation-estimates",
+                argv=_py("scripts.estimate_accommodation_prices"),
+                description="model estimated accommodation prices for uncovered cities (offline)",
+                # Best-effort: skips cleanly if the calibration model is absent/weak, and
+                # never overwrites real Inside Airbnb stats.
+                required=False,
+            ),
+            Step(
                 name="fuel",
                 argv=_py("scripts.ingest_fuel_prices", "--source", "snapshot"),
                 description="load per-country fuel prices (offline snapshot)",

@@ -1,0 +1,140 @@
+{
+  "method": "wherenext-cost-model",
+  "model": "linear",
+  "predictor": "cost_index",
+  "predictor_source": "WhereNext cost-of-living index (CC BY 4.0)",
+  "created_utc": "2026-10-14T13:29:19.424744+00:00",
+  "snapshot_dates": [
+    "inside-airbnb-athens-2026-09-22",
+    "inside-airbnb-istanbul-2026-09-25",
+    "inside-airbnb-lisbon-2026-09-19",
+    "inside-airbnb-naples-2026-09-19",
+    "inside-airbnb-porto-2026-09-19",
+    "inside-airbnb-prague-2026-09-20",
+    "inside-airbnb-riga-2026-09-25",
+    "inside-airbnb-thessaloniki-2026-09-22",
+    "inside-airbnb-valencia-2026-09-20",
+    "inside-airbnb-vienna-2026-09-17"
+  ],
+  "coef": {
+    "intercept_eur": 38.7587,
+    "slope_eur_per_index": 1.3227
+  },
+  "band": {
+    "q1_ratio": 0.726,
+    "q3_ratio": 1.4205
+  },
+  "predictor_range": {
+    "min": 23.0,
+    "max": 72.0
+  },
+  "metrics": {
+    "n_anchors": 10,
+    "r2_in_sample": 0.4312,
+    "loo_mape_pct": 19.41,
+    "loo_mae_eur": 19.19
+  },
+  "anchors": [
+    {
+      "city": "athens",
+      "country_code": "GR",
+      "cost_index": 52.0,
+      "median_eur": 112.0,
+      "q1_eur": 81.6,
+      "q3_eur": 160.07,
+      "sample_size": 14214,
+      "snapshot_label": "inside-airbnb-athens-2026-09-22"
+    },
+    {
+      "city": "istanbul",
+      "country_code": "TR",
+      "cost_index": 23.0,
+      "median_eur": 66.05,
+      "q1_eur": 41.0,
+      "q3_eur": 108.15,
+      "sample_size": 24553,
+      "snapshot_label": "inside-airbnb-istanbul-2026-09-25"
+    },
+    {
+      "city": "lisbon",
+      "country_code": "PT",
+      "cost_index": 54.0,
+      "median_eur": 140.0,
+      "q1_eur": 97.0,
+      "q3_eur": 207.0,
+      "sample_size": 22043,
+      "snapshot_label": "inside-airbnb-lisbon-2026-09-19"
+    },
+    {
+      "city": "naples",
+      "country_code": "IT",
+      "cost_index": 63.0,
+      "median_eur": 111.0,
+      "q1_eur": 84.0,
+      "q3_eur": 150.63,
+      "sample_size": 10826,
+      "snapshot_label": "inside-airbnb-naples-2026-09-19"
+    },
+    {
+      "city": "porto",
+      "country_code": "PT",
+      "cost_index": 54.0,
+      "median_eur": 121.0,
+      "q1_eur": 90.09,
+      "q3_eur": 168.0,
+      "sample_size": 14139,
+      "snapshot_label": "inside-airbnb-porto-2026-09-19"
+    },
+    {
+      "city": "prague",
+      "country_code": "CZ",
+      "cost_index": 44.0,
+      "median_eur": 116.24,
+      "q1_eur": 84.98,
+      "q3_eur": 164.69,
+      "sample_size": 10342,
+      "snapshot_label": "inside-airbnb-prague-2026-09-20"
+    },
+    {
+      "city": "riga",
+      "country_code": "LV",
+      "cost_index": 47.0,
+      "median_eur": 71.0,
+      "q1_eur": 53.0,
+      "q3_eur": 99.0,
+      "sample_size": 2885,
+      "snapshot_label": "inside-airbnb-riga-2026-09-25"
+    },
+    {
+      "city": "thessaloniki",
+      "country_code": "GR",
+      "cost_index": 52.0,
+      "median_eur": 80.0,
+      "q1_eur": 63.0,
+      "q3_eur": 108.0,
+      "sample_size": 4627,
+      "snapshot_label": "inside-airbnb-thessaloniki-2026-09-22"
+    },
+    {
+      "city": "valencia",
+      "country_code": "ES",
+      "cost_index": 60.0,
+      "median_eur": 134.1,
+      "q1_eur": 98.33,
+      "q3_eur": 183.0,
+      "sample_size": 7197,
+      "snapshot_label": "inside-airbnb-valencia-2026-09-20"
+    },
+    {
+      "city": "vienna",
+      "country_code": "AT",
+      "cost_index": 72.0,
+      "median_eur": 125.33,
+      "q1_eur": 90.0,
+      "q3_eur": 174.0,
+      "sample_size": 9869,
+      "snapshot_label": "inside-airbnb-vienna-2026-09-17"
+    }
+  ],
+  "notes": "Nightly EUR median predicted from a country-level cost-of-living index; a proxy, not a city-level or live price. Snapshot-based, point-in-time. Apply only within predictor_range (interpolation)."
+}

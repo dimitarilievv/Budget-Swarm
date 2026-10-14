@@ -45,7 +45,9 @@ that make a fresh database usable (all read committed data under `data/`, no net
 1. `alembic upgrade head` — schema
 2. `ingest_destinations` — curated candidate cities (`data/curated_destinations.csv`)
 3. `compute_destination_features --cost-source snapshot` — Scout ranking features
-4. `ingest_fuel_prices --source snapshot` — per-country fuel prices (car mode)
+4. `estimate_accommodation_prices` — modeled `estimated` accommodation prices for the
+   19 cities Inside Airbnb does not cover (offline, from the committed WhereNext model)
+5. `ingest_fuel_prices --source snapshot` — per-country fuel prices (car mode)
 
 Because every step upserts, re-running `dev-up.sh` / `make seed` is safe.
 
@@ -67,17 +69,26 @@ The compose default is `ENABLE_REAL_ENGINE=false`, so `POST /api/generate-trip` 
 **stub** plan (honestly flagged `meta.degraded: ["engine:stub"]`) and ignores the seeded data.
 
 To drive the **real** decision engine over the seeded destinations, set
-`ENABLE_REAL_ENGINE=true` (in `.env`). The real engine **requires accommodation data to
-produce a plan**: accommodation is an essential plan component, and its *estimated* prices are
-derived **per city from the Inside Airbnb price statistics** (`accommodation_price_stats`) — it
-is not a from-nothing estimate. So with the default offline seed (no Airbnb) the real engine
-returns `NO_PLAN_AVAILABLE` for every candidate (`missing_accommodation`). For real planning,
-run the accommodation import **and** enable the real engine:
+`ENABLE_REAL_ENGINE=true` (in `.env`). Accommodation is an essential plan component, and the
+default seed now provides it for **all 30** destinations:
+
+- **11 covered cities** use real Inside Airbnb snapshot statistics (`quality_flag=real`) —
+  but only after the opt-in `--with-accommodations` import has been run; otherwise they have
+  no real data yet.
+- **19 uncovered cities** get **modeled `estimated`** price statistics from the committed
+  WhereNext cost-of-living model (step 4 above), written offline by the default seed
+  (`source='wherenext-cost-model'`, `sample_size=0`). These are indicative, not live/bookable.
+
+The source-priority policy (ADR-015) prefers a viable real-data destination over an estimated
+one, and estimated picks are surfaced as `accommodation:estimated` in `meta.degraded_sources`
+and the UI "estimated" flag. A destination with neither real nor estimated data (e.g. no cost
+anchor) is still excluded (`missing_accommodation`) — never given an invented price.
 
 ```bash
-./scripts/dev-up.sh --with-accommodations   # populate accommodation_price_stats
-# set ENABLE_REAL_ENGINE=true in .env, then recreate the backend:
-docker compose up -d backend
+# refresh real data for the 11 covered cities (network-heavy, occasional):
+./scripts/dev-up.sh --with-accommodations
+# the 19 estimates are produced by the default seed; recalibrate the model when needed:
+docker compose exec -T backend python -m scripts.calibrate_accommodation_model
 ```
 
 ## Everyday commands

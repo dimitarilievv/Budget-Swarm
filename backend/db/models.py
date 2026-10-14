@@ -179,6 +179,9 @@ class AccommodationPriceStats(Base):
     price_q3: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
     price_max: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
     snapshot_label: Mapped[str | None] = mapped_column(String(60))
+    # Provenance: 'inside-airbnb' for real snapshot stats (sample_size > 0) vs
+    # 'wherenext-cost-model' for modeled cost-of-living estimates (sample_size == 0).
+    source: Mapped[str | None] = mapped_column(String(40))
     computed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
