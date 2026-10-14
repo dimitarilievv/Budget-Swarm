@@ -16,9 +16,10 @@ from alembic import command
 from alembic.config import Config
 from config import get_settings
 from db.models import ApiCache
-from scripts import wherenext
 from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.orm import Session
+
+from scripts import wherenext
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 

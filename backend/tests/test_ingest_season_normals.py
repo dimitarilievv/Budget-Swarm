@@ -10,6 +10,7 @@ import datetime as dt
 import json
 
 import pytest
+
 from scripts import ingest_season_normals as season
 
 

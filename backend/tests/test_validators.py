@@ -9,8 +9,9 @@ from __future__ import annotations
 from datetime import date
 
 import pytest
-from scripts import validators as v
 from scripts.currency import EurRates, parse_payload
+
+from scripts import validators as v
 
 # --- validators -------------------------------------------------------------
 

@@ -23,9 +23,10 @@ from alembic.config import Config
 from config import get_settings
 from db.models import FuelPrice
 from db.session import SessionLocal
-from scripts import fuel_prices as fp
 from scripts.ingest_fuel_prices import ingest
 from sqlalchemy import create_engine, func, select, text
+
+from scripts import fuel_prices as fp
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 

@@ -9,8 +9,9 @@ from __future__ import annotations
 from dataclasses import FrozenInstanceError
 
 import pytest
-from scripts import validation as val
 from scripts.validation import FieldSpec, Issue
+
+from scripts import validation as val
 
 SPECS = (
     FieldSpec("city", required=True),

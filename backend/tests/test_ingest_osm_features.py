@@ -8,6 +8,7 @@ exercise query construction, the fetch loop's resilience, and the CSV rewrite
 import csv
 
 import pytest
+
 from scripts import ingest_osm_features as osm
 
 

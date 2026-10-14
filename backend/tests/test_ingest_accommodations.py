@@ -25,10 +25,11 @@ from alembic.config import Config
 from config import get_settings
 from db.models import RawAccommodationListing
 from db.session import SessionLocal
-from scripts import accommodation_sources as acs
 from scripts.ingest_accommodations import import_file
 from scripts.inside_airbnb import InsideAirbnbSource
 from sqlalchemy import create_engine, func, select, text
+
+from scripts import accommodation_sources as acs
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 FIXTURE = BACKEND_DIR / "tests" / "fixtures" / "airbnb_sample_listings.csv"

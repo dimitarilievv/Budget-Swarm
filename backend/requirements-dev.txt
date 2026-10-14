@@ -1,5 +1,7 @@
 -r requirements.txt
 pytest
 httpx
-ruff
+# Pin ruff: its isort rules change between releases, and an unpinned bump has twice
+# broken previously-green CI on import ordering. Bump deliberately + reformat together.
+ruff==0.17.0
 black
