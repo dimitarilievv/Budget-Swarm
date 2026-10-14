@@ -79,9 +79,10 @@ def test_translating_engine_converts_engine_no_plan_to_api_error():
 
 
 def test_translating_engine_maps_candidate_load_failure_to_503_service_unavailable():
-    from ai_engine.core.pipeline import CandidateLoadError
     from errors import SERVICE_UNAVAILABLE
     from errors import ServiceUnavailableError as ApiServiceUnavailableError
+
+    from ai_engine.core.pipeline import CandidateLoadError
 
     class _CandidateLoadFails:
         def generate_trip(self, request):
