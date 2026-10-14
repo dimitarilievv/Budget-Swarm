@@ -1,0 +1,5 @@
+# Keep LF endings on files that break with CRLF, regardless of core.autocrlf.
+# A CRLF shebang (`#!/usr/bin/env bash\r`) fails to execute on Linux/CI, and
+# Makefile recipes expect Unix line endings.
+*.sh text eol=lf
+Makefile text eol=lf

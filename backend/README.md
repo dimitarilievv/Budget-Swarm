@@ -44,6 +44,20 @@ view, edit and delete only their own trips.
 with its owner and scopes all access by it, so no new unowned rows are created, while any
 pre-existing anonymous rows remain valid and simply unreachable through the API.
 
+## One-command migrate + seed (BS-104)
+
+For a fresh database, `scripts.seed_all` applies migrations then runs the offline,
+idempotent seed steps (destinations → features → fuel) in order. It is what the
+repo-root `./scripts/dev-up.sh` / `make up` bring-up runs inside the backend
+container. The individual steps below remain available for targeted re-runs.
+
+```bash
+# Run from backend/ with DATABASE_URL set (or: docker compose exec backend ...)
+python -m scripts.seed_all                     # migrate + offline core seed
+python -m scripts.seed_all --with-accommodations  # also import Inside Airbnb (network, slow)
+python -m scripts.seed_all --dry-run           # print the plan, run nothing
+```
+
 ## Database & migrations (BS-018)
 
 - Connectivity: `db/session.py` builds the SQLAlchemy engine/`SessionLocal`

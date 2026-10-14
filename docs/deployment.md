@@ -24,6 +24,17 @@ is served over HTTPS at **https://localhost** via Caddy (`/api/*` → backend, e
 else → the Vite dev server). See [`https-local-dev.md`](https-local-dev.md) for the
 local CA / certificate note.
 
+`docker compose up` does **not** migrate or seed by itself. For a usable app from a
+fresh clone in one command, use the bring-up wrapper (BS-104), which starts the stack,
+waits for health, then applies migrations and seeds data:
+
+```bash
+./scripts/dev-up.sh            # or: make up
+```
+
+See the repo [`README.md`](../README.md) for what gets seeded (offline by default;
+Inside Airbnb accommodations are opt-in via `--with-accommodations`).
+
 Validate the compose file without starting anything:
 
 ```bash
@@ -72,9 +83,9 @@ The `production` images carry their own `HEALTHCHECK` instructions
 
 ## Notes / out of scope for this change
 
-- Database migrations are **not** run automatically on startup; run
-  `alembic upgrade head` (or `docker compose exec backend alembic upgrade head`)
-  as a deploy step.
+- Database migrations are **not** run automatically on container startup. In dev,
+  `./scripts/dev-up.sh` (or `make up`) applies them and seeds data via
+  `scripts.seed_all`; for a bare deploy run `alembic upgrade head` as a deploy step.
 - The `production` backend image bakes the API but expects `ai_engine/` + `data/`
   to be provided at deploy time (compose mounts them); the real engine stays gated
   behind `ENABLE_REAL_ENGINE`.
