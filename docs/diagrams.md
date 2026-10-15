@@ -85,13 +85,16 @@ sequenceDiagram
 erDiagram
     destinations ||--|| destination_features : has
     destinations ||--o{ accommodations : located_in
+    destinations ||--|| accommodation_price_stats : priced_by
     destinations ||--o{ attractions : located_in
     destinations ||--o{ weather_forecasts : forecast_for
     destinations ||--o{ transport_options : destination_of
     destinations ||--o{ trips : chosen_in
+    accommodations ||--o{ accommodation_calendar : dated_by
     trips ||--o{ trip_activities : contains
     attractions ||--o{ trip_activities : referenced_by
     users ||--o{ trips : owns
+    users ||--o{ refresh_tokens : authenticates
     fuel_prices }o--|| destinations : priced_by_country
 
     destinations {
@@ -101,6 +104,7 @@ erDiagram
         char country_code
         float latitude
         float longitude
+        bool active
     }
     destination_features {
         int destination_id PK,FK
@@ -115,6 +119,28 @@ erDiagram
         numeric price_per_night
         numeric rating
         string quality_flag
+        string listing_id
+    }
+    accommodation_price_stats {
+        int destination_id PK,FK
+        int sample_size
+        numeric price_median
+        string source
+    }
+    accommodation_calendar {
+        bigint id PK
+        string snapshot_label
+        string listing_id
+        date night
+        bool available
+        numeric price
+    }
+    refresh_tokens {
+        int id PK
+        int user_id FK
+        string token_hash
+        timestamptz expires_at
+        timestamptz revoked_at
     }
     attractions {
         int id PK
@@ -166,6 +192,12 @@ erDiagram
     }
 ```
 
+> Simplified view (key columns only). `accommodation_calendar` links to a listing by
+> the text `listing_id` (shared with `accommodations.listing_id`), not a hard FK, so a
+> snapshot can be loaded independently of normalization. Not shown: the
+> `raw_accommodation_listings` **staging** table (full source rows as JSONB, before
+> cleaning) and the generic `api_cache` table.
+
 ---
 
 ## 4. Optimization pipeline
@@ -181,6 +213,12 @@ flowchart LR
     F --> G["Maximize objective<br/>(weighted overall_score)"]
     G --> H["Optimal destination<br/>+ itinerary"]
 ```
+
+> Two refinements to the feasible-set step: **source-priority** (ADR-015) restricts
+> selection to real-accommodation candidates when any is viable (estimated cities are a
+> fallback tier), and after selection the engine aligns the chosen plan's **weather** to
+> its travel window and checks **snapshot date-availability** (ADR-017), re-planning so
+> the hard budget stays enforced.
 
 ---
 

@@ -18,7 +18,7 @@ React (TS) → FastAPI → AI Engine (6 agents) → OR-Tools → LLM explanation
 
 Agents: **ScoutAgent** (destinations) · **TransportAgent** · **StayAgent** · **ExperienceAgent** · **WeatherAgent** · **CoordinatorAgent** (aggregate + score + optimize).
 
-Full design: see [`docs/BudgetSwarm-Technical-Documentation.md`](docs/BudgetSwarm-Technical-Documentation.md).
+Full design: see [`BudgetSwarm-Technical-Documentation.md`](BudgetSwarm-Technical-Documentation%20.md).
 
 ---
 
@@ -49,8 +49,9 @@ Full design: see [`docs/BudgetSwarm-Technical-Documentation.md`](docs/BudgetSwar
 │   └── db/models.py
 ├── ai_engine/
 │   ├── agents/                # scout, transport, stay, experience, weather, coordinator
-│   ├── core/                  # pipeline.py, scorer.py, optimizer.py
-│   └── utils/api_clients.py   # provider abstractions
+│   ├── core/                  # pipeline, scorer, optimizer, planner, scheduler, engine, availability
+│   ├── providers/             # provider abstractions (flight, route, weather, accommodation, …)
+│   └── utils/api_clients.py   # the shared provider contract + cross-cutting behaviour
 └── docs/
     ├── BudgetSwarm-Technical-Documentation.md
     ├── schema.sql
@@ -65,6 +66,11 @@ Full design: see [`docs/BudgetSwarm-Technical-Documentation.md`](docs/BudgetSwar
 ---
 
 ## Getting started
+
+> **Authoritative quickstart:** the root [`README.md`](../README.md) one-command bring-up
+> (`cp .env.example .env` → `./scripts/dev-up.sh`) builds, waits for health, migrates **and**
+> seeds, and serves the app over HTTPS at `https://localhost` via Caddy. The steps below are
+> the conceptual equivalent.
 
 > Prerequisites: Docker + Docker Compose installed.
 
@@ -99,6 +105,7 @@ See `.env.example` for the full list. Keys are **only** used server-side — nev
 | Variable | Purpose | Required? |
 |----------|---------|-----------|
 | `DATABASE_URL` | PostgreSQL connection | yes |
+| `JWT_SECRET` | signs auth access/refresh tokens; the app **fails fast** at startup if unset | yes |
 | `ORS_API_KEY` | OpenRouteService (car routing) | yes (car mode) |
 | `TRAVELPAYOUTS_TOKEN` | flight prices | yes (air mode) |
 | `PUBLIC_TRANSPORT_API_KEY` | Rome2Rio/Omio wrapper (bus/train) | optional (fallback exists) |

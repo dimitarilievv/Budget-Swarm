@@ -34,6 +34,7 @@ CREATE TABLE destinations (
     country_code CHAR(2),                      -- ISO 3166-1 alpha-2 (links to fuel_prices)
     latitude     DOUBLE PRECISION NOT NULL,
     longitude    DOUBLE PRECISION NOT NULL,
+    active       BOOLEAN NOT NULL DEFAULT true, -- soft enable/disable (migration 0009); inactive cities keep their data but leave the candidate pool / public listing
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (city, country)
 );
@@ -81,7 +82,19 @@ CREATE TABLE accommodations (
     longitude       DOUBLE PRECISION,
     quality_flag    VARCHAR(12) NOT NULL DEFAULT 'real'
                      CHECK (quality_flag IN ('real','cached','estimated')),
-    snapshot_label  VARCHAR(60),              -- e.g. 'inside-airbnb-2026-06'
+    snapshot_label  VARCHAR(60),              -- e.g. 'inside-airbnb-budapest-2026-09-21'
+    -- Inside Airbnb listing id (migration 0011): links a real listing to its per-date
+    -- calendar snapshot (accommodation_calendar). NULL for price-stats estimates.
+    listing_id      VARCHAR(64),
+    -- Listing detail carried from the source row (migration 0004) for a richer UI card;
+    -- all optional (a price-stats estimate option has none of them).
+    listing_url     VARCHAR(300),
+    picture_url     VARCHAR(500),
+    review_count    INTEGER,
+    location_score  NUMERIC(3,2),
+    neighbourhood   VARCHAR(120),
+    amenities       JSONB,                    -- list of amenity strings
+    accommodates    INTEGER,                  -- sleeping capacity (migration 0005)
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_accommodations_destination ON accommodations(destination_id);
@@ -102,8 +115,35 @@ CREATE TABLE accommodation_price_stats (
     price_q3       NUMERIC(10,2),
     price_max      NUMERIC(10,2),
     snapshot_label VARCHAR(60),
+    -- Provenance (migration 0010): 'inside-airbnb' for real snapshot stats
+    -- (sample_size > 0) vs 'wherenext-cost-model' for modeled cost-of-living
+    -- estimates (sample_size == 0). See ADR-015 / ADR-016.
+    source         VARCHAR(40),
     computed_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- ============================================================================
+-- [RFR] accommodation_calendar — per-date Inside Airbnb calendar snapshot for one
+--       listing (BS-calendar, migration 0011). One row per
+--       (snapshot_label, listing_id, night): availability + the snapshot nightly
+--       price (where the export carries one) + the listing's min/max-night limit
+--       as recorded at the snapshot date. Powers SNAPSHOT date-availability —
+--       never live/bookable. The forward window actually stored is bounded to
+--       [snapshot_date, snapshot_date + horizon) (default 120 days); a city is
+--       delete-then-inserted so a shorter/newer window never leaves stale rows.
+-- ============================================================================
+CREATE TABLE accommodation_calendar (
+    id             BIGSERIAL PRIMARY KEY,
+    snapshot_label VARCHAR(60) NOT NULL,      -- '<source>-<city>-<date>' (matches accommodations.snapshot_label)
+    listing_id     VARCHAR(64) NOT NULL,      -- joins to accommodations.listing_id
+    night          DATE NOT NULL,             -- the overnight date this row describes
+    available      BOOLEAN NOT NULL,          -- marked available in the snapshot
+    price          NUMERIC(10,2),             -- snapshot nightly price (NULL when the export omits price)
+    minimum_nights INTEGER,
+    maximum_nights INTEGER,
+    UNIQUE (snapshot_label, listing_id, night)
+);
+CREATE INDEX idx_accom_calendar_listing_night ON accommodation_calendar(listing_id, night);
 
 -- ============================================================================
 -- [RFR] attractions — POIs per destination with indoor/outdoor class

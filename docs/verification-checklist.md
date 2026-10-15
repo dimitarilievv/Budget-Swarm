@@ -162,6 +162,26 @@ Fill in these columns as you register and test each source:
   A future source (e.g. a Booking export) is one class + one registry entry, no
   schema change. BS-034 will normalize into `accommodations`. Verified against real
   data (Riga 3,471 rows, all 90 columns preserved).
+- **IMPLEMENTED (BS-034/035):** `scripts.clean_accommodations` validates +
+  EUR-normalizes raw rows (drops listings with no location/invalid price; sentinel
+  min/max nights nulled) and `scripts.normalize_accommodations` writes the
+  `accommodations` rows (carrying `listing_id`, lat/lon, detail fields,
+  `quality_flag = 'real'`) plus per-destination `accommodation_price_stats`
+  (min/Q1/median/Q3/max, EUR) used by StayAgent for representative selection and as
+  the estimate fallback. Re-verified across all 11 covered cities (Athens … Vienna);
+  the earlier Budapest non-ASCII-URL download bug is fixed (commit `8d1cc7a`).
+- **IMPLEMENTED (ADR-016 — uncovered cities):** `scripts.estimate_accommodation_prices`
+  applies the committed `data/accommodation_estimate_model.json` **offline** to the 19
+  cities Inside Airbnb does not cover, writing `accommodation_price_stats` flagged
+  `source = 'wherenext-cost-model'` (`sample_size = 0`). Real stats are never
+  overwritten; the optimizer prefers real over estimated (ADR-015).
+- **IMPLEMENTED (ADR-017 — date-availability):** Inside Airbnb also publishes a
+  per-listing `calendar.csv.gz` (availability + min/max nights per date, nightly
+  price optional — **all 11 current 2026-09 snapshots omit it**). `scripts.ingest_accommodation_calendar`
+  / `scripts.refresh_calendars` load a bounded forward window into
+  `accommodation_calendar`; the engine exposes a **snapshot** verdict
+  (`snapshot_available`/`snapshot_unavailable`/`availability_unknown`) — never live or
+  bookable. See ADR-017 and `data/SOURCES.md`.
 
 ### Makcorps  `[optional live touch]`
 - [ ] ⚠️ Confirm current free trial size (research: ~30 calls)
@@ -253,8 +273,8 @@ Fill in these columns as you register and test each source:
 
 ## Cross-cutting
 
-- [ ] Every provider wired through its **provider interface** (Section 21), not called directly from agents
-- [ ] Every value carries a **`quality_flag`** (real/cached/estimated)
-- [ ] **Caching** in place for weather, routes, flight/train prices
-- [ ] Secrets only in `.env` (never committed); `.env.example` provided
-- [ ] A **"fallback drill"** test exists (disable a provider → still get a valid, flagged plan) for the evaluation chapter
+- [x] Every provider wired through its **provider interface** (Section 21), not called directly from agents (ADR-004)
+- [x] Every value carries a **`quality_flag`** (real/cached/estimated), propagated to the optimizer and response `degraded_sources`
+- [x] **Caching** in place for weather, routes, flight/train prices (`api_cache` + TTL, `db/cache_ttl.py`)
+- [x] Secrets only in `.env` (never committed); `.env.example` provided; `JWT_SECRET` is env-only and fails fast if missing
+- [x] A **"fallback drill"** test exists (disable a provider → still get a valid, flagged plan) — see `backend/tests/test_api_failure.py` and the agent/provider degradation tests
