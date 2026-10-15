@@ -64,9 +64,13 @@ The single primary endpoint. Takes user constraints, runs the full agent → opt
 | `travelers` | integer | yes | number of travelers, ≥ 1 |
 | `transport_mode` | string | yes | one of `airplane`, `car`, `bus`, `train` |
 | `preferences` | object | yes | preference→weight map, e.g. `{"culture":0.9,"food":0.8}` |
-| `origin_label` | string | yes | origin city, e.g. `"Skopje"` |
+| `origin_label` | string | yes | origin city, e.g. `"Skopje"` (geocoded server-side when no coordinates are sent) |
+| `origin_lat` | number | no | origin latitude (e.g. from the browser's geolocation); must be sent together with `origin_lon` |
+| `origin_lon` | number | no | origin longitude (paired with `origin_lat`) |
 | `vehicle_consumption` | number | conditional | required when `transport_mode = "car"` (L/100 km) |
 | `fuel_type` | string | no | `petrol` (default) or `diesel`; used only for car-mode fuel costing |
+
+> The request is **date-agnostic**: callers send `duration_days`, not fixed dates. The concrete travel window is derived server-side (from the cheapest/available transport) and returned as `chosen_plan.start_date`/`end_date`. Unknown request fields are rejected (`422`).
 
 ```json
 {
@@ -95,6 +99,8 @@ The single primary endpoint. Takes user constraints, runs the full agent → opt
     },
     "overall_score": 0.8734,
     "total_cost": 812.50,
+    "start_date": "2026-09-10",
+    "end_date": "2026-09-15",
     "cost_breakdown": {
       "transport": 151.00,
       "accommodation": 240.00,
@@ -105,7 +111,9 @@ The single primary endpoint. Takes user constraints, runs the full agent → opt
       "cost": 151.00,
       "duration_min": 780,
       "distance_km": 1300,
-      "quality_flag": "estimated"
+      "quality_flag": "estimated",
+      "depart_time": null,
+      "flight": null
     },
     "accommodation": {
       "name": "Central apartment",
@@ -114,7 +122,16 @@ The single primary endpoint. Takes user constraints, runs the full agent → opt
       "rating": 4.6,
       "latitude": 47.4970,
       "longitude": 19.0510,
-      "quality_flag": "real"
+      "quality_flag": "real",
+      "availability": "snapshot_available",
+      "snapshot_date": "2026-09-21",
+      "listing_url": "https://www.airbnb.com/rooms/12345",
+      "picture_url": "https://…/photo.jpg",
+      "review_count": 214,
+      "location_score": 4.8,
+      "neighbourhood": "District V",
+      "amenities": ["Wifi", "Kitchen"],
+      "accommodates": 4
     },
     "itinerary": [
       {
@@ -128,7 +145,8 @@ The single primary endpoint. Takes user constraints, runs the full agent → opt
             "end_time": "12:30",
             "was_rescheduled": false,
             "latitude": 47.496,
-            "longitude": 19.0396
+            "longitude": 19.0396,
+            "opening_hours": "Mo-Su 09:00-18:00"
           }
         ]
       }
@@ -170,7 +188,7 @@ The single primary endpoint. Takes user constraints, runs the full agent → opt
   ],
   "explanation": "Budapest was selected because it stays within your €1000 budget, best matches your culture and food preferences, and its rainy day 3 is handled by moving outdoor sightseeing to day 4.",
   "meta": {
-    "trip_id": 341,
+    "trip_id": null,
     "generated_at": "2026-08-15T10:22:00Z",
     "degraded_sources": ["transport:estimated"],
     "elapsed_ms": 2140
@@ -182,8 +200,27 @@ The single primary endpoint. Takes user constraints, runs the full agent → opt
 
 - `ranked_candidates` powers the **Destination Comparison** page. `feasible: false` means the candidate violated a hard constraint (e.g. over budget) and was excluded from selection — it is shown for transparency, not chosen.
 - `quality_flag` (`real` / `cached` / `estimated`) appears on every value that came through a fallback, so the UI can label estimated figures honestly.
+- `chosen_plan.start_date`/`end_date` are the **server-derived** travel window (the request carries no dates). They may be absent for an older/legacy response shape.
+- `accommodation.availability` is a **snapshot** date-availability verdict (BS-calendar, ADR-017): `snapshot_available` / `snapshot_unavailable` / `availability_unknown` (the default). It reflects the Inside Airbnb **calendar snapshot** taken on `snapshot_date` — it is **not** a live or bookable guarantee, and a missing/uncertain lookup stays `availability_unknown` rather than claiming availability. The 19 estimate-only cities are always `availability_unknown`. The nightly price is still the listing/estimate value (today's snapshots carry no calendar price).
+- `accommodation` listing detail (`listing_url`, `picture_url`, `review_count`, `location_score`, `neighbourhood`, `amenities`, `accommodates`) is present only for **real** listings and powers the richer UI card; a price-stats estimate has none of it (`amenities` defaults to `[]`).
+- `transport.flight` carries rich per-leg detail (both legs + an Aviasales booking deep link) for **air mode** only; it and `depart_time` are `null` for car/bus/train.
+- `meta.trip_id` is **always `null`** here (generate-trip never persists). `meta.saved_at` is set only when serving a stored snapshot via `GET /api/trips/{id}`.
 - `meta.degraded_sources` lists any provider that fell back, useful for demos and evaluation (Section 22 & 25 of the technical documentation).
 - `explanation` is LLM-generated and may be `null` if the explanation provider is disabled — the plan is still complete without it.
+
+---
+
+## `GET /api/destinations`
+
+Public, read-only listing of the **active** curated destinations — the data source the destination surfaces build on. Query param `limit` (default `50`, range `1–200`). Inactive destinations (soft-disabled) are excluded.
+
+Response `200`:
+
+```json
+[
+  { "id": 12, "city": "Budapest", "country": "Hungary", "country_code": "HU", "latitude": 47.4979, "longitude": 19.0402 }
+]
+```
 
 ---
 
