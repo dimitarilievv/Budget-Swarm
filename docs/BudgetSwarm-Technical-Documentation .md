@@ -1245,12 +1245,18 @@ Stated honestly — acknowledging limits is part of academic defensibility.
 - **Incomplete datasets** — curated destination data, Inside Airbnb snapshots, and POI coverage are not exhaustive. Coverage is bounded by the dataset, and gaps are handled by estimates.
 - **Weather uncertainty** — forecasts are probabilistic and less reliable further out; weather-based replanning is best-effort, not guaranteed-correct.
 - **Transportation coverage** — no free pan-European bus/train *fare* API exists; those numbers are indicative or estimated (Section 9.3).
-- **Accommodation coverage** — Inside Airbnb availability is historical (snapshot), not live; prices are representative, not bookable.
-- **Free-tier limits** — several sources have small free quotas (Travelpayouts, Rome2Rio/Omio wrappers, Makcorps). Mitigated by aggressive caching (Section 23).
+- **Accommodation coverage** — Inside Airbnb covers 11 of 30 cities with *snapshot* listings (representative, not bookable). Per-date **availability** is also snapshot-based (ADR-017): reported as `snapshot_available`/`snapshot_unavailable`/`availability_unknown` with the snapshot date, **never live or bookable**, can be stale between snapshots, and current snapshots carry no nightly calendar price (it falls back to the flagged estimate).
+- **Estimated accommodation (uncovered cities)** — the other 19 cities use a *modeled* country-level WhereNext cost-of-living estimate (ADR-016; LOO MAPE ≈ 19%), a proxy, not a market price. Flagged `estimated`; the source-priority policy (ADR-015) prefers real data, which can occasionally set aside a better-value estimated city.
+- **Free-tier limits** — several sources have small free quotas (Travelpayouts, ORS, Open-Meteo, Apify, Makcorps). Mitigated by aggressive caching (Section 23) and per-client rate limiting.
 - **Estimated fuel costs** — computed from national averages, not the exact station price paid; a modeled figure by design.
+- **Unofficial / scraper sources & ToS** — the optional, post-MVP bus/train and extra-flight sources (FlixBus Apify scraper, Sky Scrapper, Rome2Rio/Omio wrappers) are unofficial and fall outside the target sites' terms of service. Disclosed and treated responsibly: optional only, cached, non-commercial, not redistributed, never load-bearing (the distance estimate is always the fallback); booking-link scraping is **not** done (Travelpayouts ToS) — the app builds its own Aviasales search deep link. Gated/rejected official APIs are recorded with reasons (ADR-002/003/011).
+- **LLM explanation** — the natural-language explanation is LLM-generated (non-deterministic wording) and may be unavailable → templated fallback; it **never** affects the decision (ADR-001).
+- **No live booking** — BudgetSwarm plans and links out; it never reserves inventory or charges, and prices/availability must be reconfirmed at checkout.
 - **API response inconsistencies** — providers change field shapes; the adapter layer isolates and absorbs these, but breakage is possible (self-healing/monitored wrappers reduce, not eliminate, this).
 
-**How the design reduces these risks:** provider abstraction + layered fallbacks + local/curated datasets + caching + explicit data-quality flags. The system is built to *always produce a plan* and to be *transparent about the firmness of its numbers*, which is the realistic and honest posture for a project built on free, third-party data.
+**How the design reduces these risks:** provider abstraction + layered fallbacks + local/curated datasets + caching + explicit data-quality flags (`quality_flag` → `meta.degraded_sources` → UI) over a deterministic, budget-provable optimizer. The system is built to *always produce a plan* and to be *transparent about the firmness of its numbers*, which is the realistic and honest posture for a project built on free, third-party data.
+
+> Full disclosure (data-quality & ToS table, per-category mitigations) — see [`docs/limitations.md`](limitations.md).
 
 ---
 
